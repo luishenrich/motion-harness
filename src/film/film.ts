@@ -204,16 +204,40 @@ export const mixFilm = async (
     const inputs: string[] = ["-i", picture];
     const chains: string[] = [];
     const mixIn: string[] = ["[0:a]"];
-    cues.forEach((cue, i) => {
+    let nextInput = 1;
+    const pre: string[] = [];
+    for (const [i, cue] of cues.entries()) {
       const file = cue.file.startsWith("/") ? cue.file : join(opts.audioRoot ?? cfg.projectDir, cue.file);
       if (!existsSync(file)) throw new Error(`audio cue "${cue.id}": file not found: ${file}`);
       // a cue may start before the film (e.g. "product - 9s" so the music's build lands on the product half): trim the head instead
       const raw = resolveUnclamped(c, cue.at).filmSeconds;
       const start = Math.max(0, raw);
       const headTrim = raw < 0 ? -raw : 0;
-      if (cue.loop) inputs.push("-stream_loop", "-1");
-      inputs.push("-i", file);
       const idx = i + 1;
+      let src = `[${nextInput}:a]`;
+      if (cue.loop) {
+        // a loop is not a restart: the file is chained with itself under a crossfade, so the seam is never heard
+        const xf = cue.loopCrossfade ?? 2;
+        const dur = await ffprobeDuration(file);
+        const need = total - start + headTrim;
+        const copies = Math.max(2, Math.ceil(need / Math.max(1, dur - xf)) + 1);
+        const labels: string[] = [];
+        for (let k = 0; k < copies; k++) {
+          inputs.push("-i", file);
+          labels.push(`[${nextInput + k}:a]`);
+        }
+        let acc = labels[0];
+        for (let k = 1; k < copies; k++) {
+          const out = `[l${idx}_${k}]`;
+          pre.push(`${acc}${labels[k]}acrossfade=d=${xf}:c1=tri:c2=tri${out}`);
+          acc = out;
+        }
+        src = acc;
+        nextInput += copies;
+      } else {
+        inputs.push("-i", file);
+        nextInput += 1;
+      }
       const f: string[] = [];
       if (cue.trim) f.push(`atrim=${cue.trim[0]}:${cue.trim[1]}`, "asetpts=N/SR/TB");
       if (headTrim > 0) f.push(`atrim=start=${headTrim.toFixed(3)}`, "asetpts=N/SR/TB");
@@ -222,10 +246,10 @@ export const mixFilm = async (
       if (cue.fadeOut) f.push(`afade=t=out:st=${(total - start - cue.fadeOut).toFixed(3)}:d=${cue.fadeOut}`);
       const delay = Math.round(start * 1000);
       if (delay > 0) f.push(`adelay=${delay}|${delay}`);
-      chains.push(`[${idx}:a]${f.join(",")}[a${idx}]`);
+      chains.push(`${src}${f.join(",")}[a${idx}]`);
       mixIn.push(`[a${idx}]`);
-    });
-    const graph = `${chains.join(";")};${mixIn.join("")}amix=inputs=${mixIn.length}:normalize=0:duration=first[a]`;
+    }
+    const graph = `${[...pre, ...chains].join(";")};${mixIn.join("")}amix=inputs=${mixIn.length}:normalize=0:duration=first[a]`;
     const t0 = performance.now();
     await run(["ffmpeg", "-y", "-v", "error", ...inputs, "-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", master]);
     log(`mixed ${cues.length} cue${cues.length === 1 ? "" : "s"} in ${ms(t0)}`);

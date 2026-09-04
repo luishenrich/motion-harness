@@ -70,6 +70,8 @@ export type AudioCue = {
   fadeOut?: number;
   /** repeat the file until the film ends */
   loop?: boolean;
+  /** seconds of crossfade at every loop seam (default 2) */
+  loopCrossfade?: number;
   /** trim the source before use, seconds */
   trim?: [number, number];
 };
