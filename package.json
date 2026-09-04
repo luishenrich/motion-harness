@@ -1,0 +1,39 @@
+{
+  "name": "motion-harness",
+  "version": "0.1.0",
+  "description": "Agent-first harness around Remotion: timeline as data, scene renders in seconds, contact sheets with scene knowledge, DOM probes, design lint, motion and audio metrics, review player with scene-addressed feedback.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "mh": "./bin/mh" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./timeline": "./src/timeline/schema.ts",
+    "./config": "./src/config.ts"
+  },
+  "scripts": {
+    "mh": "bun run src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "example": "bun run src/cli.ts --project examples/basic"
+  },
+  "peerDependencies": {
+    "@remotion/bundler": "4.0.475",
+    "@remotion/renderer": "4.0.475",
+    "remotion": "4.0.475"
+  },
+  "dependencies": {
+    "sharp": "^0.34.3"
+  },
+  "devDependencies": {
+    "@remotion/bundler": "4.0.475",
+    "@remotion/cli": "4.0.475",
+    "@remotion/renderer": "4.0.475",
+    "@types/bun": "^1.2.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "react": "19.1.2",
+    "react-dom": "19.1.2",
+    "remotion": "4.0.475",
+    "typescript": "^5.9.3"
+  }
+}
