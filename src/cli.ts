@@ -19,6 +19,8 @@ import { lintStaticColors, lintTimeline, lintProbe, formatFindings, type Finding
 import { diffSets } from "./diff/diff.ts";
 import { measureScene, sparkline } from "./motion/metrics.ts";
 import { audioProfile, rmsAt, db } from "./audio/probe.ts";
+import { decodeMono, onsetStrength, pickOnsets, beatGrid, nearest } from "./audio/beats.ts";
+import { resolveUnclamped } from "./timeline/resolve.ts";
 import { renderSegments, renderPartAudio, concatParts, mixFilm, partDurationCheck } from "./film/film.ts";
 import { startReviewServer, loadComments, feedbackMarkdown, commentsPath } from "./review/server.ts";
 import { ensureDir, readJson, writeJson, stamp, table, ms, run } from "./util.ts";
@@ -400,6 +402,96 @@ const cmdAudio = async (args: Args) => {
   }
 };
 
+
+const cmdBeats = async (args: Args) => {
+  const x = await ctx(args);
+  const file = args._[0] ?? join(x.cfg.cachePath, "out", `${x.filmName}-${x.format}.mp4`);
+  if (!existsSync(file)) die(`no such film: ${file} (run mh render first)`);
+  const sr = 8000;
+  const tol = num(args, "tolerance", 60) / 1000;
+  const mix = await decodeMono(file, sr);
+  const mixA = onsetStrength(mix, sr);
+  const onsets = pickOnsets(mixA, { k: num(args, "k", 2.2) });
+  log(`${file}: ${mixA.seconds.toFixed(2)}s, ${onsets.length} onsets in the mix (energy rises)`);
+
+  // beat grid from the music bed, shifted to film time
+  let grid: { bpm: number; ticks: number[]; confidence: number; cueId: string } | null = null;
+  const music = (x.c.timeline.audio ?? []).find((a) => a.kind === "music");
+  if (music && !flag(args, "no-music")) {
+    const mf = music.file.startsWith("/") ? music.file : join(x.cfg.projectDir, music.file);
+    if (existsSync(mf)) {
+      const m = await decodeMono(mf, sr);
+      const mA = onsetStrength(m, sr);
+      const g = beatGrid(mA, { minBpm: num(args, "min-bpm", 60), maxBpm: num(args, "max-bpm", 200) });
+      const raw = resolveUnclamped(x.c, music.at).filmSeconds;
+      const trimHead = (music.trim?.[0] ?? 0) + (raw < 0 ? -raw : 0);
+      const start = Math.max(0, raw);
+      let ticks = g.ticks.map((t) => t - trimHead + start).filter((t) => t >= 0 && t <= x.c.seconds);
+      if (music.loop && ticks.length) {
+        // a looped bed keeps its pulse: extend the grid to the end of the film
+        for (let t = ticks[ticks.length - 1] + g.period; t <= x.c.seconds; t += g.period) ticks.push(t);
+      }
+      grid = { bpm: g.bpm, ticks, confidence: g.confidence, cueId: music.id };
+      log(`music "${music.id}": ${g.bpm.toFixed(1)} bpm (confidence ${(g.confidence * 100).toFixed(0)}%), ${ticks.length} beat ticks in the film, first tick at ${ticks[0]?.toFixed(2)}s`);
+    } else log(`music file not found, no beat grid: ${mf}`);
+  }
+
+  const rows: (string | number)[][] = [];
+  let onBeat = 0, near = 0, off = 0;
+  const cuts = x.c.scenes.filter((s) => s.index > 0);
+  for (const s of cuts) {
+    const t = s.filmStart / x.c.fps;
+    const o = nearest(t, onsets.map((k) => k.t));
+    const b = grid ? nearest(t, grid.ticks) : null;
+    const dOn = o ? Math.round(o.delta * 1000) : null;
+    const dBeat = b ? Math.round(b.delta * 1000) : null;
+    const best = Math.min(Math.abs(dOn ?? 1e9), Math.abs(dBeat ?? 1e9)) / 1000;
+    const verdict = best <= tol ? "on" : best <= tol * 2 ? "near" : "off";
+    if (verdict === "on") onBeat++; else if (verdict === "near") near++; else off++;
+    rows.push([s.id, fmtTime(s.filmStart, x.c.fps), s.enter.type, dOn === null ? "" : `${dOn > 0 ? "+" : ""}${dOn}ms`, dBeat === null ? "" : `${dBeat > 0 ? "+" : ""}${dBeat}ms`, verdict]);
+  }
+  log("");
+  log(table(rows, ["cut into", "film", "enter", "vs onset", "vs beat", "verdict"]));
+  log(`${cuts.length} cuts: ${onBeat} on (<= ${Math.round(tol * 1000)}ms), ${near} near, ${off} off. Positive = cut after the sound, negative = cut before it.`);
+
+  const sfx = (x.c.timeline.audio ?? []).filter((a) => a.kind === "sfx");
+  if (sfx.length) {
+    log("");
+    for (const cue of sfx) {
+      const t = resolveUnclamped(x.c, cue.at).filmSeconds;
+      const o = nearest(t, onsets.map((k) => k.t));
+      log(`sfx ${cue.id} at ${t.toFixed(2)}s: nearest onset ${o ? `${Math.round(o.delta * 1000)}ms` : "none"}${o && Math.abs(o.delta) > tol ? "  NOT HEARD WHERE PLACED" : ""}`);
+    }
+  }
+  if (flag(args, "suggest") && grid) {
+    // quantize: walk the scenes, and for each cut propose the duration change that lands it on the nearest tick
+    log("");
+    const maxShift = num(args, "max-shift", 10);
+    const sugg: (string | number)[][] = [];
+    let drift = 0; // frames already added/removed before this scene
+    const minDur = Math.max(1, { ...(x.c.timeline.rules ?? {}), ...(x.cfg.rules ?? {}) }.minSceneDur ?? 1);
+    const wanted = new Set(scenesOf(x.c, args).map((s) => s.id));
+    for (const s of x.c.scenes) {
+      if (s.index === x.c.scenes.length - 1) break;
+      if (!wanted.has(s.id)) continue;
+      const cut = (s.filmEnd + drift) / x.c.fps;
+      const b = nearest(cut, grid.ticks);
+      if (!b) continue;
+      let delta = Math.round(-b.delta * x.c.fps); // frames to add so the cut lands on the tick
+      if (Math.abs(delta) > maxShift || s.dur + delta < minDur) delta = 0;
+      if (delta !== 0) sugg.push([s.id, s.dur, s.dur + delta, delta > 0 ? `+${delta}` : String(delta), `${fmtTime(s.filmEnd + drift, x.c.fps)} -> ${fmtTime(s.filmEnd + drift + delta, x.c.fps)}`]);
+      drift += delta;
+    }
+    log(table(sugg, ["scene", "dur", "new dur", "change", "cut moves"]));
+    log(`${sugg.length} duration changes would put every following cut on the ${grid.bpm.toFixed(0)} bpm grid (max shift ${maxShift}f); film length changes by ${drift} frames. Apply them in the timeline, then re-render and run beats again.`);
+  }
+  if (flag(args, "onsets")) {
+    log("");
+    log(`onsets: ${onsets.map((k) => k.t.toFixed(2)).join(" ")}`);
+  }
+  if (flag(args, "json")) log(JSON.stringify({ file, onsets, grid, cuts: rows }, null, 2));
+};
+
 const cmdRender = async (args: Args) => {
   const x = await ctx(args);
   const t0 = performance.now();
@@ -471,6 +563,8 @@ const help = `mh <command> [--project dir] [--film name] [--format wide]
   motion --scene a[,b] [--width 320]
                                     frame-to-frame motion curve: when it settles, how long it holds, where it jumps
   audio [file] [--window 0.25]      rms profile of the film, silence, and every cue of the timeline checked
+  beats [file] [--tolerance 60] [--suggest]
+                                    onsets in the mix, beat grid from the music, every cut measured; --suggest quantizes scene lengths to the grid
 
   render [--scene a,b] [--force] [--crf 18] [--web] [--no-audio] [--out file]
                                     scene segments (cached), parts by concat, music and sfx mixed from the timeline
@@ -493,6 +587,7 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   diff: cmdDiff,
   motion: cmdMotion,
   audio: cmdAudio,
+  beats: cmdBeats,
   render: cmdRender,
   review: cmdReview,
   feedback: cmdFeedback,

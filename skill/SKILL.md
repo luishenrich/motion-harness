@@ -43,7 +43,8 @@ Never guess where something is in time and never guess what a frame looks like. 
    the rules in the timeline.
 6. Before handing over: `mh lint --rendered` (painted colors vs design tokens, safe zone,
    expected probes visible), `mh doctor` (composition length vs timeline), `mh render --web`,
-   `mh audio` (silence, every cue checked), then tell the human to open `mh review`.
+   `mh audio` (silence, every cue checked), `mh beats` (cuts vs onsets and the music's beat grid),
+   then tell the human to open `mh review`.
 
 ## What each command answers
 
@@ -59,6 +60,7 @@ Never guess where something is in time and never guess what a frame looks like. 
 | wrong colors anywhere | `mh lint --static` (source) and `mh lint --rendered` (painted) |
 | give me the film | `mh render --web` (segments are cached per scene, music is mixed from the timeline) |
 | is there sound where there should be | `mh audio` |
+| do the cuts land on the beat, which scene lengths to change | `mh beats --suggest --part <id>` |
 | what did the human say | `mh feedback` (`--all` includes done items) |
 | the edit list as markdown for docs | `mh docs --out path.md` |
 

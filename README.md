@@ -27,6 +27,9 @@ motion-harness sits next to a Remotion project and gives the agent:
   concatenated, music and sfx mixed from the cues. A music change is a mux, a scene change is
   one segment
 - **an audio probe**: RMS profile, silence, every cue of the timeline checked
+- **cuts against the beat**: onsets from the mix, tempo and beat grid from the music bed, every scene cut
+  and sfx cue measured against them, and `--suggest` proposes the scene-length changes that put the
+  cuts on the grid
 - **a review player** for humans: the film, a scene bar, hotkeys, and comments that land as
   `scene+frame` instead of seconds. `mh feedback` hands them to the agent
 - **an agent skill** (`skill/SKILL.md`) that teaches the loop
@@ -60,7 +63,7 @@ mh probe probe.pick1 --find "Next"      # box, color, font, visible
 mh frames --scene probe --tag after && mh diff before after
 mh motion --scene probe
 mh lint --rendered && mh doctor
-mh render --web && mh audio
+mh render --web && mh audio && mh beats
 mh review                               # the human comments, then:
 mh feedback
 ```
