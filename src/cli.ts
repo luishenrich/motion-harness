@@ -292,7 +292,7 @@ const cmdProbe = async (args: Args) => {
       if (key) {
         // one element, its centre: what a cursor needs
         const it = o.probe.items.find((i) => i.key === key);
-        if (!it) die(`${ref}: no element with data-probe="${key}" at that frame (visible keys: ${o.probe.items.filter((i) => i.kind === "probe").map((i) => i.key).join(", ") || "none"})`);
+        if (!it) throw new Error(`${ref}: no element with data-probe="${key}" at that frame (visible keys: ${o.probe.items.filter((i) => i.kind === "probe").map((i) => i.key).join(", ") || "none"})`);
         const centre = { ref, location: L.label, partFrame: L.partFrame, filmFrame: L.filmFrame, key, x: Math.round(it.x + it.w / 2), y: Math.round(it.y + it.h / 2), box: { x: it.x, y: it.y, w: it.w, h: it.h }, visible: it.visible };
         if (flag(args, "json")) out(JSON.stringify(centre));
         else log(`${ref} -> ${L.label}   ${key}: centre ${centre.x},${centre.y}   box ${it.x},${it.y} ${it.w}x${it.h}${it.visible ? "" : "   NOT VISIBLE"}`);
