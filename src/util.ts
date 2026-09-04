@@ -81,10 +81,19 @@ export const nextPort = () => {
   return portCursor;
 };
 
-/** swallow stdout lines that contain `needle` while `fn` runs (remotion echoes browser console lines) */
+/** swallow stdout lines that contain `needle` while `fn` runs (remotion echoes browser console lines).
+ *  Bun's console.* does not go through process.stdout.write, so the console methods are wrapped too. */
 export const muteStdout = async <T,>(needle: string, fn: () => Promise<T>): Promise<T> => {
   const streams = [process.stdout, process.stderr];
   const origs = streams.map((st) => st.write.bind(st));
+  const methods = ["log", "info", "debug", "warn", "error"] as const;
+  const origConsole = methods.map((m) => console[m]);
+  methods.forEach((m, i) => {
+    console[m] = (...a: unknown[]) => {
+      if (a.some((x) => typeof x === "string" && x.includes(needle))) return;
+      origConsole[i](...a);
+    };
+  });
   streams.forEach((st, i) => {
     (st as any).write = (chunk: any, ...rest: any[]) => {
       const s = typeof chunk === "string" ? chunk : chunk?.toString?.() ?? "";
@@ -100,6 +109,7 @@ export const muteStdout = async <T,>(needle: string, fn: () => Promise<T>): Prom
     return await fn();
   } finally {
     streams.forEach((st, i) => ((st as any).write = origs[i]));
+    methods.forEach((m, i) => (console[m] = origConsole[i]));
   }
 };
 

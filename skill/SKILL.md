@@ -64,6 +64,26 @@ Never guess where something is in time and never guess what a frame looks like. 
 | what did the human say | `mh feedback` (`--all` includes done items) |
 | the edit list as markdown for docs | `mh docs --out path.md` |
 
+## One hand for the whole film (cursor targets from the probe)
+
+Do not keep a cursor per scene with hand-typed coordinates. Give every click target a
+`data-probe` key, put ONE cursor component above all scenes in film px, and let the probe
+measure the targets at their event frames:
+
+```bash
+mh probe probe.pick1 --key opt-0 --json     # -> {"partFrame":324,"x":960,"y":439,...}
+mh probe exam.day --key day7 --json
+```
+
+A small project script loops over `scene.event -> key`, writes a generated `cursor-targets.ts`
+(part frame, x, y, click), and adds parking spots off frame after each group. The cursor swings
+between targets (leave late, arrive on the frame, an arc, a trail), presses on click targets, and
+is never in a scene's coordinate space, so it survives every cut and wipe. Re-run the script
+after any layout change; `mh doctor` does not catch stale targets, the sheet does.
+
+Contact sheets are too small to judge a 50 px cursor, its trail or a ripple. For those, crop the
+full frame (`out/.../frames/<tag>/<part>/f<partFrame>.png`) and read the crop.
+
 ## Reading a contact sheet
 
 Each cell: title `scene+local`, subtitle `film time · film frame · part frame · reason`. Border

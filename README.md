@@ -32,6 +32,9 @@ motion-harness sits next to a Remotion project and gives the agent:
   cuts on the grid
 - **a review player** for humans: the film, a scene bar, hotkeys, and comments that land as
   `scene+frame` instead of seconds. `mh feedback` hands them to the agent
+- **cursor targets from the DOM**: `mh probe <scene.event> --key <data-probe> --json` prints an
+  element's centre in film px, so one global cursor can swing through every cut with measured
+  targets instead of hand-typed coordinates (recipe in the skill)
 - **an agent skill** (`skill/SKILL.md`) that teaches the loop
 
 Nothing here replaces Remotion. It is the harness Remotion does not ship.

@@ -46,7 +46,10 @@ const num = (a: Args, k: string, d: number) => (typeof a[k] === "string" ? parse
 const flag = (a: Args, k: string) => a[k] === true || a[k] === "true";
 const list = (a: Args, k: string): string[] | undefined => (typeof a[k] === "string" ? (a[k] as string).split(",").map((s) => s.trim()).filter(Boolean) : undefined);
 
-const log = (s: string) => console.log(s);
+/* with --json every other line goes to stderr, so stdout is one parseable document */
+const JSON_MODE = process.argv.includes("--json");
+const log = (s: string) => (JSON_MODE ? console.error(s) : console.log(s));
+const out = (s: string) => console.log(s);
 const die = (s: string): never => {
   console.error(`mh: ${s}`);
   process.exit(1);
@@ -275,8 +278,9 @@ const printProbe = (p: ProbeResult, find?: string) => {
 
 const cmdProbe = async (args: Args) => {
   const x = await ctx(args);
-  if (!args._.length) die("usage: mh probe <ref> [--mode probe|text|all] [--find text] [--json]");
-  const mode = (str(args, "mode", "text") as "probe" | "text" | "all");
+  if (!args._.length) die("usage: mh probe <ref> [--mode probe|text|all] [--find text] [--key data-probe] [--json]");
+  const key = str(args, "key");
+  const mode = (str(args, "mode", key ? "probe" : "text") as "probe" | "text" | "all");
   await withRenderer(x, async (r, serveUrl) => {
     for (const ref of args._) {
       const L = resolveRef(x.c, ref);
@@ -285,7 +289,16 @@ const cmdProbe = async (args: Args) => {
       const file = join(ensureDir(join(x.cfg.cachePath, "probe")), `${compId}-f${String(L.partFrame).padStart(5, "0")}.png`);
       const [o] = await renderFrameSet(r, serveUrl, compId, [{ frame: L.partFrame, file }], { probe: mode, settleMs: num(args, "settle", 150) });
       if (!o.probe) return log(`${ref}: no probe result (is the harness wrapper in use? run mh bundle --force)`);
-      if (flag(args, "json")) log(JSON.stringify({ ref, location: L.label, file, ...o.probe }));
+      if (key) {
+        // one element, its centre: what a cursor needs
+        const it = o.probe.items.find((i) => i.key === key);
+        if (!it) die(`${ref}: no element with data-probe="${key}" at that frame (visible keys: ${o.probe.items.filter((i) => i.kind === "probe").map((i) => i.key).join(", ") || "none"})`);
+        const centre = { ref, location: L.label, partFrame: L.partFrame, filmFrame: L.filmFrame, key, x: Math.round(it.x + it.w / 2), y: Math.round(it.y + it.h / 2), box: { x: it.x, y: it.y, w: it.w, h: it.h }, visible: it.visible };
+        if (flag(args, "json")) out(JSON.stringify(centre));
+        else log(`${ref} -> ${L.label}   ${key}: centre ${centre.x},${centre.y}   box ${it.x},${it.y} ${it.w}x${it.h}${it.visible ? "" : "   NOT VISIBLE"}`);
+        continue;
+      }
+      if (flag(args, "json")) out(JSON.stringify({ ref, location: L.label, file, ...o.probe }));
       else {
         log(`${ref} -> ${L.label}${L.inTransition ? " IN TRANSITION" : ""}   still: ${file}`);
         printProbe(o.probe, str(args, "find"));
@@ -489,7 +502,7 @@ const cmdBeats = async (args: Args) => {
     log("");
     log(`onsets: ${onsets.map((k) => k.t.toFixed(2)).join(" ")}`);
   }
-  if (flag(args, "json")) log(JSON.stringify({ file, onsets, grid, cuts: rows }, null, 2));
+  if (flag(args, "json")) out(JSON.stringify({ file, onsets, grid, cuts: rows }, null, 2));
 };
 
 const cmdRender = async (args: Args) => {
@@ -555,7 +568,7 @@ const help = `mh <command> [--project dir] [--film name] [--format wide]
                                     render the check frames of each scene (enter, settled, events, mid, last)
   sheet [--scene a,b] [--from tag] [--all] [--columns 4]
                                     contact sheets with frame numbers, scene addresses and transition marks
-  probe <ref> [--mode text|probe|all] [--find text] [--json]
+  probe <ref> [--mode text|probe|all] [--find text] [--key k] [--json]   --key prints one element's centre (cursor targets)
                                     where is what: element boxes, colors, fonts at a frame, straight from the DOM
   lint [--static] [--timeline] [--rendered] [--no-fail]
                                     colors vs tokens (source and painted), text durations, events, safe zone
