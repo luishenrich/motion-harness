@@ -35,7 +35,7 @@ export const bundleProject = async (cfg: LoadedConfig, opts: { force?: boolean; 
 
   const outDir = join(cfg.cachePath, "bundle");
   const hashFile = join(cfg.cachePath, "bundle.hash");
-  const hash = hashDir(cfg.projectDir, { ignore: ["public"] }) + ":" + hashString(src) + ":" + (cfg.webpackOverride ? "wo" : "plain");
+  const hash = hashDir(cfg.projectDir, { ignore: ["public", "harness.config.ts"] }) + ":" + hashString(src) + ":" + (cfg.webpackOverride ? "wo" : "plain");
   if (!opts.force && existsSync(hashFile) && readFileSync(hashFile, "utf8") === hash && existsSync(join(outDir, "index.html"))) {
     log(`bundle up to date (${hash.slice(0, 12)})`);
     return { serveUrl: outDir, hash, fresh: false };
