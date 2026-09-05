@@ -10,14 +10,19 @@ import type { LoadedConfig } from "../config.ts";
 import { compositionFor, type Compiled, type CompiledPart, type CompiledScene, type AudioCue } from "../timeline/schema.ts";
 import { resolve as resolveRef, resolveUnclamped } from "../timeline/resolve.ts";
 import { cuesInSpan, volumeExprFor, type Span } from "./mix.ts";
+import { partHash } from "../render/deps.ts";
 import { getComposition, type Renderer } from "../render/frames.ts";
 import { ensureDir, hashString, run, ffprobeDuration, ms, nextPort } from "../util.ts";
 import { cuePlacement, cueSpan, sourceSeconds } from "../audio/coverage.ts";
 
 export type SegmentResult = { scene: CompiledScene; file: string; cached: boolean; ms: number };
 
-export const segmentKey = (bundleHash: string, compositionId: string, s: CompiledScene, crf: number) =>
-  hashString(JSON.stringify([bundleHash, compositionId, s.id, s.start, s.end, s.scene, crf]));
+export type Quality = { crf: number; scale: number; preset: string };
+export const FULL: Quality = { crf: 18, scale: 1, preset: "medium" };
+/** half size, fast encoder, coarse crf: a review render, not a delivery */
+export const DRAFT: Quality = { crf: 28, scale: 0.5, preset: "veryfast" };
+export const segmentKey = (sourceHash: string, compositionId: string, s: CompiledScene, q: Quality) =>
+  hashString(JSON.stringify([sourceHash, compositionId, s.id, s.start, s.end, s.scene, q]));
 
 export const renderSegments = async (
   cfg: LoadedConfig,
@@ -27,10 +32,10 @@ export const renderSegments = async (
   c: Compiled,
   film: string,
   format: string,
-  opts: { only?: string[]; subset?: string[]; crf?: number; log?: (s: string) => void; concurrency?: number; force?: boolean } = {},
+  opts: { only?: string[]; subset?: string[]; quality?: Quality; log?: (s: string) => void; concurrency?: number; force?: boolean } = {},
 ): Promise<Map<string, SegmentResult[]>> => {
   const log = opts.log ?? (() => {});
-  const crf = opts.crf ?? 18;
+  const q = opts.quality ?? FULL;
   const out = new Map<string, SegmentResult[]>();
   for (const part of c.parts) {
     // subset: only these scenes exist for this call (a preview); the others are neither rendered nor listed
@@ -41,10 +46,12 @@ export const renderSegments = async (
     if (composition.durationInFrames !== part.dur) {
       throw new Error(`part "${part.id}": composition ${compId} has ${composition.durationInFrames} frames, timeline says ${part.dur}. Fix the timeline (or the composition) before rendering.`);
     }
-    const dir = ensureDir(join(cfg.cachePath, "segments", `${film}-${format}`, part.id));
+    const dir = ensureDir(join(cfg.cachePath, "segments", `${film}-${format}${q.scale === 1 ? "" : "-draft"}`, part.id));
+    // the key follows the part's own sources when it declares them, else the whole bundle
+    const sourceHash = partHash(cfg, part, bundleHash);
     const results: SegmentResult[] = [];
     for (const s of wantedScenes) {
-      const key = segmentKey(bundleHash, compId, s, crf);
+      const key = segmentKey(sourceHash, compId, s, q);
       const file = join(dir, `${String(s.indexInPart).padStart(2, "0")}-${s.id}-${key}.mp4`);
       const wanted = !opts.only || opts.only.includes(s.id);
       if (existsSync(file) && !(opts.force && wanted)) {
@@ -58,7 +65,9 @@ export const renderSegments = async (
         composition,
         serveUrl,
         codec: "h264",
-        crf,
+        crf: q.crf,
+        scale: q.scale,
+        x264Preset: q.preset as "medium",
         outputLocation: file,
         frameRange: [s.start, s.end - 1],
         inputProps: {},
@@ -102,7 +111,7 @@ export const renderPartAudio = async (
   for (const part of c.parts) {
     if (opts.parts && !opts.parts.includes(part.id)) continue;
     const compId = compositionFor(part, format);
-    const file = join(dir, `${part.id}-${hashString(bundleHash + compId)}.m4a`);
+    const file = join(dir, `${part.id}-${hashString(partHash(cfg, part, bundleHash) + compId)}.m4a`);
     if (!existsSync(file)) {
       const composition = await getComposition(serveUrl, compId);
       const t0 = performance.now();

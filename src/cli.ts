@@ -29,7 +29,8 @@ import { spanOf, cuePlacement } from "./audio/coverage.ts";
 import { analyzeFile, looksLikeHit, hitWarnings, type SfxAnalysis } from "./audio/sfx.ts";
 import { vetDurations } from "./audio/suggest.ts";
 import { resolveUnclamped, locate } from "./timeline/resolve.ts";
-import { renderSegments, renderPartAudio, concatParts, concatScenes, mixFilm, partDurationCheck, picturePath } from "./film/film.ts";
+import { renderSegments, renderPartAudio, concatParts, concatScenes, mixFilm, partDurationCheck, picturePath, FULL, DRAFT } from "./film/film.ts";
+import { cpus } from "node:os";
 import { startReviewServer, loadComments, feedbackMarkdown, commentsPath } from "./review/server.ts";
 import { ensureDir, readJson, writeJson, stamp, table, ms, run, dirSize, mb, withLock, ffprobeDuration } from "./util.ts";
 
@@ -915,7 +916,7 @@ const cmdBeats = async (args: Args) => {
 const cmdRender = async (args: Args) => {
   const x = await ctx(args);
   const t0 = performance.now();
-  const mixOpts = { out: str(args, "out"), web: flag(args, "web"), log, audioRoot: str(args, "audio-root") };
+  const mixOpts = { out: str(args, "out"), web: flag(args, "web") && !flag(args, "draft"), log, audioRoot: str(args, "audio-root") };
   const res = await withLock(x.cfg.cachePath, `render ${x.filmName} ${x.format}`, async () => {
     if (flag(args, "remix")) {
       // no picture step at all: the concatenated picture from the cache, mixed again
@@ -925,13 +926,16 @@ const cmdRender = async (args: Args) => {
       return mixFilm(x.cfg, x.c, picture, x.filmName, x.format, mixOpts);
     }
     return withRenderer(x, async (r, serveUrl, bundleHash) => {
-      const conc = num(args, "concurrency", 4);
+      // a 12-core machine renders four tabs at a time by default: use most of the cores, leave two for the encoder
+      const conc = num(args, "concurrency", Math.max(2, Math.min(10, cpus().length - 2)));
+      const quality = flag(args, "draft") ? DRAFT : { ...FULL, crf: num(args, "crf", 18) };
+      if (flag(args, "draft") && flag(args, "web")) log("--draft skips the web copy");
       if (flag(args, "preview")) {
         // only these scenes: their segments, the parts' own sound trimmed to them, the cues that sound in that span
         const scenes = scenesOf(x.c, args);
         if (!list(args, "scene") && !str(args, "part")) die("--preview needs --scene a[,b] (or --part)");
         const ids = scenes.map((s) => s.id);
-        const segs = await renderSegments(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { subset: ids, crf: num(args, "crf", 18), log, concurrency: conc, force: flag(args, "force") });
+        const segs = await renderSegments(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { subset: ids, quality, log, concurrency: conc, force: flag(args, "force") });
         const all = [...segs.values()].flat();
         log(`${all.filter((s) => s.cached).length} segments cached, ${all.filter((s) => !s.cached).length} rendered`);
         const parts = [...new Set(scenes.map((s) => s.part))];
@@ -941,7 +945,7 @@ const cmdRender = async (args: Args) => {
         if (flag(args, "no-audio")) return { master: picture };
         return mixFilm(x.cfg, x.c, picture, x.filmName, x.format, { ...mixOpts, out: str(args, "out") ?? join(ensureDir(join(x.cfg.cachePath, "out")), `${name}.mp4`), span });
       }
-      const segs = await renderSegments(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { only: list(args, "scene"), crf: num(args, "crf", 18), log, concurrency: conc, force: flag(args, "force") });
+      const segs = await renderSegments(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { only: list(args, "scene"), quality, log, concurrency: conc, force: flag(args, "force") });
       const all = [...segs.values()].flat();
       log(`${all.filter((s) => s.cached).length} segments cached, ${all.filter((s) => !s.cached).length} rendered`);
       const audio = flag(args, "no-audio") ? new Map<string, string>() : await renderPartAudio(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { log, concurrency: conc });
@@ -1173,7 +1177,7 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
   beats [file] [--tolerance 60] [--suggest]
                                     onsets in the mix, beat grid from the music, every cut measured; --suggest quantizes scene lengths to the grid (timeline rules veto)
 
-  render [--scene a,b] [--force] [--crf 18] [--web] [--no-audio] [--out file]
+  render [--scene a,b] [--force] [--draft] [--crf 18] [--web] [--no-audio] [--out file]
                                     scene segments (cached), parts by concat, music and sfx mixed from the timeline
   render --scene a[,b] --preview    only those scenes as a clip, with the cues that sound in them (contiguous scenes)
   render --remix                    no picture work: the cached picture mixed again (music/sfx/gain changes)

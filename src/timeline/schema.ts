@@ -53,6 +53,8 @@ export type Part = {
   enterFrames?: number;
   /** frames of black/gap between the previous part and this one in the assembled film */
   gap?: number;
+  /** the part's own entry file (project-relative): segment caches then depend only on what it imports, not on the whole bundle */
+  source?: string;
 };
 
 export type AudioRef = string | number;
@@ -145,6 +147,7 @@ export type CompiledPart = {
   overlap: number;
   enterFrames: number;
   scenes: CompiledScene[];
+  source?: string;
 };
 
 export type Compiled = {
@@ -229,6 +232,7 @@ export const compile = (t: Timeline): Compiled => {
       overlap,
       enterFrames,
       scenes: cs,
+      source: p.source,
     });
     filmAt = partStart + at;
   }
