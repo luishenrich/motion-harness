@@ -218,13 +218,17 @@ export const mixFilm = async (
       if (cue.loop) {
         // a loop is not a restart: the file is chained with itself under a crossfade, so the seam is never heard
         const xf = cue.loopCrossfade ?? 2;
-        const dur = await ffprobeDuration(file);
+        // a trimmed loop repeats the trimmed segment, so the trim goes on every copy before the crossfades
+        const dur = cue.trim ? cue.trim[1] - cue.trim[0] : await ffprobeDuration(file);
         const need = total - start + headTrim;
         const copies = Math.max(2, Math.ceil(need / Math.max(1, dur - xf)) + 1);
         const labels: string[] = [];
         for (let k = 0; k < copies; k++) {
           inputs.push("-i", file);
-          labels.push(`[${nextInput + k}:a]`);
+          if (cue.trim) {
+            pre.push(`[${nextInput + k}:a]atrim=${cue.trim[0]}:${cue.trim[1]},asetpts=N/SR/TB[t${idx}_${k}]`);
+            labels.push(`[t${idx}_${k}]`);
+          } else labels.push(`[${nextInput + k}:a]`);
         }
         let acc = labels[0];
         for (let k = 1; k < copies; k++) {
@@ -239,7 +243,7 @@ export const mixFilm = async (
         nextInput += 1;
       }
       const f: string[] = [];
-      if (cue.trim) f.push(`atrim=${cue.trim[0]}:${cue.trim[1]}`, "asetpts=N/SR/TB");
+      if (cue.trim && !cue.loop) f.push(`atrim=${cue.trim[0]}:${cue.trim[1]}`, "asetpts=N/SR/TB");
       if (headTrim > 0) f.push(`atrim=start=${headTrim.toFixed(3)}`, "asetpts=N/SR/TB");
       f.push(`atrim=0:${(total - start).toFixed(3)}`, "asetpts=N/SR/TB");
       f.push(`volume='${volumeExpr(cue, c, start)}':eval=frame`);
