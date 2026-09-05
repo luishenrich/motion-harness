@@ -8,9 +8,10 @@ import { join } from "node:path";
 import { renderMedia } from "@remotion/renderer";
 import type { LoadedConfig } from "../config.ts";
 import { compositionFor, type Compiled, type CompiledPart, type CompiledScene, type AudioCue } from "../timeline/schema.ts";
-import { resolve as resolveRef, resolveUnclamped } from "../timeline/resolve.ts";
+import { resolve as resolveRef } from "../timeline/resolve.ts";
 import { getComposition, type Renderer } from "../render/frames.ts";
 import { ensureDir, hashString, run, ffprobeDuration, ms, nextPort } from "../util.ts";
+import { cuePlacement, cueSpan, sourceSeconds } from "../audio/coverage.ts";
 
 export type SegmentResult = { scene: CompiledScene; file: string; cached: boolean; ms: number };
 
@@ -210,18 +211,15 @@ export const mixFilm = async (
       const file = cue.file.startsWith("/") ? cue.file : join(opts.audioRoot ?? cfg.projectDir, cue.file);
       if (!existsSync(file)) throw new Error(`audio cue "${cue.id}": file not found: ${file}`);
       // a cue may start before the film (e.g. "product - 9s" so the music's build lands on the product half): trim the head instead
-      const raw = resolveUnclamped(c, cue.at).filmSeconds;
-      const start = Math.max(0, raw);
-      const headTrim = raw < 0 ? -raw : 0;
+      const { start, headTrim } = cuePlacement(c, cue);
       const idx = i + 1;
       let src = `[${nextInput}:a]`;
       if (cue.loop) {
         // a loop is not a restart: the file is chained with itself under a crossfade, so the seam is never heard
         const xf = cue.loopCrossfade ?? 2;
         // a trimmed loop repeats the trimmed segment, so the trim goes on every copy before the crossfades
-        const dur = cue.trim ? cue.trim[1] - cue.trim[0] : await ffprobeDuration(file);
-        const need = total - start + headTrim;
-        const copies = Math.max(2, Math.ceil(need / Math.max(1, dur - xf)) + 1);
+        const dur = sourceSeconds(cue, cue.trim ? 0 : await ffprobeDuration(file));
+        const { copies } = cueSpan({ start, headTrim, sourceDur: dur, total, loop: true, loopCrossfade: xf });
         const labels: string[] = [];
         for (let k = 0; k < copies; k++) {
           inputs.push("-i", file);
