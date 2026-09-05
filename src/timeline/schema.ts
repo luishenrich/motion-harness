@@ -55,6 +55,8 @@ export type Part = {
   gap?: number;
   /** the part's own entry file (project-relative): segment caches then depend only on what it imports, not on the whole bundle */
   source?: string;
+  /** false when the composition carries no <Audio>/<Video> sound of its own: skips a whole second render of the part just to get silence */
+  audio?: boolean;
 };
 
 export type AudioRef = string | number;
@@ -148,6 +150,7 @@ export type CompiledPart = {
   enterFrames: number;
   scenes: CompiledScene[];
   source?: string;
+  audio: boolean;
 };
 
 export type Compiled = {
@@ -233,6 +236,7 @@ export const compile = (t: Timeline): Compiled => {
       enterFrames,
       scenes: cs,
       source: p.source,
+      audio: p.audio ?? true,
     });
     filmAt = partStart + at;
   }

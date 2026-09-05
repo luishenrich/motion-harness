@@ -83,6 +83,8 @@ export const renderSegments = async (
       // drop stale segments of the same scene
       for (const f of readdirSync(dir)) if (f.startsWith(`${String(s.indexInPart).padStart(2, "0")}-${s.id}-`) && join(dir, f) !== file) unlinkSync(join(dir, f));
       const t = Math.round(performance.now() - t0);
+      const fps = (s.dur / (t / 1000));
+      if (fps < 8) log(`  SLOW ${compId}/${s.id}: ${fps.toFixed(1)} f/s (video decode, blur or filters in this scene; see mh bench)`);
       log(`  ${part.id}/${s.id} ${s.dur}f rendered in ${(t / 1000).toFixed(1)}s`);
       results.push({ scene: s, file, cached: false, ms: t });
     }
@@ -111,6 +113,7 @@ export const renderPartAudio = async (
   const dir = ensureDir(join(cfg.cachePath, "segments", `${film}-${format}`, "audio"));
   for (const part of c.parts) {
     if (opts.parts && !opts.parts.includes(part.id)) continue;
+    if (!part.audio) continue; // the part says it is silent: the concat pads it with silence
     const compId = compositionFor(part, format);
     const file = join(dir, `${part.id}-${hashString(partHash(cfg, part, bundleHash) + compId)}.m4a`);
     if (!existsSync(file)) {
