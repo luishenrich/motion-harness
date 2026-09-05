@@ -66,9 +66,10 @@ const __measure = (mode, settleMs) => {
     const lines = linesAttr !== null && linesAttr !== "" && !isNaN(parseInt(linesAttr, 10)) ? parseInt(linesAttr, 10) : undefined;
     let brs = 0;
     for (const c of el.childNodes) if (c.nodeType === 1 && c.tagName === "BR") brs++;
+    const lint = el.getAttribute("data-lint") || undefined; // e.g. "no-collision" for a mask that covers text on purpose
     items.push({
       id, ancestors: [], key, kind, tag: el.tagName.toLowerCase(),
-      lineHeight: cs.lineHeight, lines, brs,
+      lineHeight: cs.lineHeight, lines, brs, lint,
       x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height),
       visible, opacity: Math.round(op * 100) / 100,
       color: cs.color, bg: cs.backgroundColor, fontSize: cs.fontSize, fontWeight: cs.fontWeight, fontFamily: cs.fontFamily.split(",")[0].replace(/"/g, ""),

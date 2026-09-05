@@ -90,7 +90,7 @@ export const lintTimeline = (cfg: LoadedConfig, c: Compiled): Finding[] => {
 };
 
 /** what the probe adds on top of the box: ids for the ancestor exclusion, line metrics for the wrap rule */
-export type LayoutItem = ProbeItem & { id?: number; ancestors?: number[]; lineHeight?: string; lines?: number; brs?: number };
+export type LayoutItem = ProbeItem & { id?: number; ancestors?: number[]; lineHeight?: string; lines?: number; brs?: number; lint?: string };
 
 export type ProbeFrame = { label: string; sceneId: string; probe: ProbeResult; local?: number; partFrame?: number };
 
@@ -132,7 +132,8 @@ export const lintWrap = (label: string, probe: ProbeResult): Finding[] => {
     const declared = it.lines !== undefined && it.lines > 0;
     const expected = declared ? it.lines! : (it.brs ?? 0) + 1;
     // padded chips and buttons sit above one line height without wrapping: count lines, do not measure slack
-    const got = Math.max(1, Math.round((it.h - WRAP_PX) / lh));
+    // a button's line box is taller than its line height without wrapping: only a full extra line counts
+    const got = Math.max(1, Math.floor(it.h / lh + 0.15));
     if (got <= expected) continue;
     out.push({ level: declared ? "error" : "warn", rule: "wrap", where: `${label} ${it.key}`, message: `wraps to ${got} lines, ${declared ? "declared" : "expected"} ${expected} (ink ${it.h}px, line ${lh}px)` });
   }
@@ -147,7 +148,7 @@ const COLLISION_OPACITY = 0.6;
 
 export const lintCollision = (label: string, probe: ProbeResult): Finding[] => {
   const out: Finding[] = [];
-  const items = (probe.items as LayoutItem[]).filter((it) => it.visible && it.opacity >= COLLISION_OPACITY && it.w > 0 && it.h > 0 && (it.kind === "probe" || it.kind === "text"));
+  const items = (probe.items as LayoutItem[]).filter((it) => it.visible && it.opacity >= COLLISION_OPACITY && it.w > 0 && it.h > 0 && (it.kind === "probe" || it.kind === "text") && it.lint !== "no-collision");
   for (let i = 0; i < items.length; i++) {
     for (let j = i + 1; j < items.length; j++) {
       const a = items[i], b = items[j];
