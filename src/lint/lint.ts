@@ -131,9 +131,9 @@ export const lintWrap = (label: string, probe: ProbeResult): Finding[] => {
     if (!lh) continue;
     const declared = it.lines !== undefined && it.lines > 0;
     const expected = declared ? it.lines! : (it.brs ?? 0) + 1;
-    const limit = lh * expected + WRAP_PX;
-    if (it.h <= limit) continue;
-    const got = Math.round(it.h / lh);
+    // padded chips and buttons sit above one line height without wrapping: count lines, do not measure slack
+    const got = Math.max(1, Math.round((it.h - WRAP_PX) / lh));
+    if (got <= expected) continue;
     out.push({ level: declared ? "error" : "warn", rule: "wrap", where: `${label} ${it.key}`, message: `wraps to ${got} lines, ${declared ? "declared" : "expected"} ${expected} (ink ${it.h}px, line ${lh}px)` });
   }
   return out;
@@ -142,9 +142,12 @@ export const lintWrap = (label: string, probe: ProbeResult): Finding[] => {
 const related = (a: LayoutItem, b: LayoutItem) =>
   a.id !== undefined && b.id !== undefined && ((a.ancestors ?? []).includes(b.id) || (b.ancestors ?? []).includes(a.id));
 
+/** while two scenes crossfade, both sit in the DOM at half opacity: only elements that are clearly there count */
+const COLLISION_OPACITY = 0.6;
+
 export const lintCollision = (label: string, probe: ProbeResult): Finding[] => {
   const out: Finding[] = [];
-  const items = (probe.items as LayoutItem[]).filter((it) => it.visible && it.w > 0 && it.h > 0 && (it.kind === "probe" || it.kind === "text"));
+  const items = (probe.items as LayoutItem[]).filter((it) => it.visible && it.opacity >= COLLISION_OPACITY && it.w > 0 && it.h > 0 && (it.kind === "probe" || it.kind === "text"));
   for (let i = 0; i < items.length; i++) {
     for (let j = i + 1; j < items.length; j++) {
       const a = items[i], b = items[j];
@@ -228,7 +231,11 @@ export const lintProbe = (cfg: LoadedConfig, c: Compiled, format: string, frames
         else if (!it.visible) out.push({ level: "warn", rule: "probe-visible", where: `${f.label} ${key}`, message: `present but not visible (opacity ${it.opacity}, ${it.w}x${it.h} at ${it.x},${it.y})` });
       }
     }
-    out.push(...lintOverflow(f.label, f.probe), ...lintCollision(f.label, f.probe));
+    // during a part's overlap the previous scene is still rendered under this one: its elements are not this scene's
+    const overlap = c.parts.find((p) => p.id === scene?.part)?.overlap ?? 0;
+    const local = f.local ?? (Number(f.label.split("+")[1]) || 0);
+    out.push(...lintOverflow(f.label, f.probe));
+    if (local >= overlap) out.push(...lintCollision(f.label, f.probe));
     // a wrapped line stays wrapped for the whole scene, one finding per scene and element is enough
     for (const w of lintWrap(f.label, f.probe)) {
       const k = `${f.sceneId} ${w.where.slice(f.label.length + 1)}`;
