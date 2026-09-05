@@ -11,6 +11,11 @@ export default defineConfig({
       timeline,
       formats: { wide: { width: 1920, height: 1080 }, vertical: { width: 1080, height: 1920 } },
       defaultFormat: "wide",
+      // the one hand: [moment, data-probe key], measured per format by `mh cursor` (also part of `mh check`)
+      cursor: {
+        legs: [["card.hover", "option-1"], ["card.click", "option-1"], ["card.reveal", "check-button"], ["card.reveal+12", "park"], ["map.score", "row-1"], ["map.score+16", "park"]],
+        out: { wide: "src/cursor-targets.ts", vertical: "src/cursor-targets-vertical.ts" },
+      },
     },
   },
   tokens: {

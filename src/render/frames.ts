@@ -29,6 +29,9 @@ export type ProbeColor = { prop: "color" | "bg" | "border"; value: string; count
 export type ProbeResult = { viewport: { w: number; h: number }; items: ProbeItem[]; colors: ProbeColor[]; error?: string };
 
 export type FrameJob = { frame: number; file: string };
+
+/** check frames are named by scene address: <runDir>/<part>/<scene>+<local>.png (the part frame stays in the manifest) */
+export const frameFile = (runDir: string, part: string, scene: string, local: number) => join(runDir, part, `${scene}+${local}.png`);
 export type FrameOut = FrameJob & { ms: number; probe?: ProbeResult };
 
 export type Renderer = {

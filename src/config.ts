@@ -14,6 +14,19 @@ export type Film = {
   formats: Record<string, { width: number; height: number }>;
   /** default format for commands that need one */
   defaultFormat?: string;
+  /** the one hand of the film: where it is at which moment, measured by the DOM probe (mh cursor) */
+  cursor?: Cursor;
+};
+
+export type CursorLeg = [ref: string, key: string];
+
+export type Cursor = {
+  /** [moment ref, data-probe key] in film order; key "park" leaves the frame after the previous target */
+  legs: CursorLeg[];
+  /** per format: the TS module to write, relative to the project (exports CURSOR_TARGETS) */
+  out: Record<string, string>;
+  /** which side the hand parks on, default "right" */
+  park?: "right" | "left";
 };
 
 export type Tokens = {

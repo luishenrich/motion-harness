@@ -71,6 +71,23 @@ mh review                               # the human comments, then:
 mh feedback
 ```
 
+One edit round in one command: `mh check --scene probe --format all` runs the project's
+typecheck, one bundle, static and timeline lint, doctor, the cursor targets (below), check
+frames with contact sheets and the rendered lint of the touched scenes, per format, and prints
+one pass/fail table (exit 2 on failure).
+
+The film's one hand is timeline data too. Declare it on the film in `harness.config.ts`, and
+`mh cursor` (or `mh check`) measures every leg with the DOM probe per format and writes the
+`CURSOR_TARGETS` module the composition reads. Frame files are named by scene address
+(`probe+14.png`); the part frame stays in `manifest.json`.
+
+```ts
+cursor: {
+  legs: [["probe.pick1", "opt-0"], ["probe.next", "next"], ["probe.next+16", "park"]],
+  out: { wide: "src/cursor-targets.ts", vertical: "src/cursor-targets-vertical.ts" },
+}
+```
+
 `mh help` lists every command and flag.
 
 ## Timeline
@@ -113,6 +130,7 @@ scenes); `mh doctor` checks the totals against the compositions.
 src/timeline/   schema (defineTimeline, compile), resolve, docs
 src/render/     bundle (wrapper entry + cache), frames (renderStill through one browser, probe capture)
 src/probe/      the injected DOM probe (plain JS, runs inside the page)
+src/cursor/     cursor legs -> probe-measured targets module per format
 src/sheet/      contact sheets (sharp)
 src/lint/       static colors, timeline rules, painted colors / safe zone / expected probes
 src/diff/       frame set comparison with diff images

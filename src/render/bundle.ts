@@ -26,6 +26,9 @@ registerRoot(HarnessRoot);
 
 export type Bundled = { serveUrl: string; hash: string; fresh: boolean };
 
+/** one bundle per source hash within a process: check, cursor and frames share it */
+const memo = new Map<string, Bundled>();
+
 export const bundleProject = async (cfg: LoadedConfig, opts: { force?: boolean; log?: (s: string) => void } = {}): Promise<Bundled> => {
   const log = opts.log ?? (() => {});
   const entryDir = ensureDir(join(cfg.cachePath, "entry"));
@@ -36,8 +39,11 @@ export const bundleProject = async (cfg: LoadedConfig, opts: { force?: boolean; 
   const outDir = join(cfg.cachePath, "bundle");
   const hashFile = join(cfg.cachePath, "bundle.hash");
   const hash = hashDir(cfg.projectDir, { ignore: ["public", "harness.config.ts"] }) + ":" + hashString(src) + ":" + (cfg.webpackOverride ? "wo" : "plain");
+  const had = memo.get(outDir);
+  if (had && had.hash === hash && !opts.force) return { ...had, fresh: false };
   if (!opts.force && existsSync(hashFile) && readFileSync(hashFile, "utf8") === hash && existsSync(join(outDir, "index.html"))) {
     log(`bundle up to date (${hash.slice(0, 12)})`);
+    memo.set(outDir, { serveUrl: outDir, hash, fresh: false });
     return { serveUrl: outDir, hash, fresh: false };
   }
   const t0 = performance.now();
@@ -55,5 +61,6 @@ export const bundleProject = async (cfg: LoadedConfig, opts: { force?: boolean; 
   });
   writeFileSync(hashFile, hash);
   log(`bundled in ${ms(t0)} -> ${serveUrl}`);
+  memo.set(outDir, { serveUrl, hash, fresh: true });
   return { serveUrl, hash, fresh: true };
 };

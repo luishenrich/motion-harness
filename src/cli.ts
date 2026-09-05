@@ -13,7 +13,8 @@ import { compile, compositionFor, fmtTime, type Compiled, type CompiledScene } f
 import { resolve as resolveRef, checkFramesFor, type CheckFrame } from "./timeline/resolve.ts";
 import { timelineMarkdown, timelineJson } from "./timeline/docs.ts";
 import { bundleProject } from "./render/bundle.ts";
-import { openRenderer, renderFrameSet, getComposition, type ProbeResult, type Renderer } from "./render/frames.ts";
+import { openRenderer, renderFrameSet, getComposition, frameFile, type ProbeResult, type Renderer } from "./render/frames.ts";
+import { measureLegs, writeTargets } from "./cursor/cursor.ts";
 import { makeSheet, type SheetCell } from "./sheet/sheet.ts";
 import { lintStaticColors, lintTimeline, lintProbe, formatFindings, type Finding } from "./lint/lint.ts";
 import { diffSets } from "./diff/diff.ts";
@@ -65,6 +66,17 @@ const ctx = async (args: Args): Promise<Ctx> => {
   const { name: filmName, film } = pickFilm(cfg, str(args, "film"));
   const format = pickFormat(film, str(args, "format"));
   return { cfg, filmName, c: compile(film.timeline), format, size: film.formats[format], args };
+};
+
+/** "--format all" fans a command out over every format of the film; everything else is one format */
+const formatsOf = async (args: Args): Promise<string[]> => {
+  const cfg = await loadConfig(resolvePath(str(args, "project", process.cwd())!));
+  const { film } = pickFilm(cfg, str(args, "film"));
+  const f = str(args, "format");
+  return f === "all" ? Object.keys(film.formats) : [pickFormat(film, f)];
+};
+const eachFormat = async (args: Args, fn: (a: Args) => Promise<void>) => {
+  for (const format of await formatsOf(args)) await fn({ ...args, format });
 };
 
 const scenesOf = (c: Compiled, args: Args): CompiledScene[] => {
@@ -157,23 +169,32 @@ const withRenderer = async <T,>(x: Ctx, fn: (r: Renderer, serveUrl: string, bund
   }
 };
 
-const cmdDoctor = async (args: Args) => {
-  const x = await ctx(args);
+/** what doctor found wrong, as lines; empty means healthy */
+const doctorRun = async (x: Ctx): Promise<string[]> => {
+  const bad: string[] = [];
   const ff = await run(["ffmpeg", "-version"], { quiet: true });
   log(`ffmpeg: ${ff.code === 0 ? ff.out.split("\n")[0] : "MISSING"}`);
+  if (ff.code !== 0) bad.push("ffmpeg missing");
   log(`project: ${x.cfg.projectDir}`);
   log(`root: ${x.cfg.rootPath} (${x.cfg.rootExport ?? "Root"})`);
   log(`cache: ${x.cfg.cachePath}`);
   log(`film ${x.filmName} format ${x.format}: ${x.c.parts.length} parts, ${x.c.scenes.length} scenes, ${x.c.dur}f`);
   const tl = lintTimeline(x.cfg, x.c);
   log(tl.length ? formatFindings(tl) : "timeline: ok");
+  bad.push(...tl.filter((f) => f.level === "error").map((f) => `${f.rule} ${f.where}`));
   await withRenderer(x, async (_r, serveUrl) => {
     const checks = await partDurationCheck(serveUrl, x.c, x.format);
     for (const k of checks) {
       const ok = k.actual === k.expected;
       log(`${ok ? "ok  " : "DRIFT"} part ${k.part.id} -> ${k.composition}: composition ${k.actual}f, timeline ${k.expected}f${ok ? "" : ` (off by ${k.actual - k.expected})`}`);
+      if (!ok) bad.push(`part ${k.part.id} drifts by ${k.actual - k.expected}f`);
     }
   });
+  return bad;
+};
+
+const cmdDoctor = async (args: Args) => {
+  await doctorRun(await ctx(args));
 };
 
 const cmdFrames = async (args: Args) => {
@@ -193,7 +214,7 @@ const cmdFrames = async (args: Args) => {
       const jobs = ps.flatMap((s) =>
         checkFramesFor(s, { dense }).map((cf) => ({
           frame: cf.partFrame,
-          file: join(dir, part.id, `f${String(cf.partFrame).padStart(5, "0")}.png`),
+          file: frameFile(dir, part.id, s.id, cf.local),
           scene: s,
           cf,
         })),
@@ -307,8 +328,7 @@ const cmdProbe = async (args: Args) => {
   });
 };
 
-const cmdLint = async (args: Args) => {
-  const x = await ctx(args);
+const lintRun = async (x: Ctx, args: Args): Promise<Finding[]> => {
   const findings: Finding[] = [];
   const which = { static: flag(args, "static"), timeline: flag(args, "timeline"), rendered: flag(args, "rendered") };
   const none = !which.static && !which.timeline && !which.rendered;
@@ -329,6 +349,12 @@ const cmdLint = async (args: Args) => {
     const frames = m.frames.filter((f) => f.probeFile && f.kind !== "transition").map((f) => ({ label: `${f.scene}+${f.local}`, sceneId: f.scene, probe: readJson<ProbeResult>(f.probeFile!) }));
     findings.push(...lintProbe(x.cfg, x.c, x.format, frames));
   }
+  return findings;
+};
+
+const cmdLint = async (args: Args) => {
+  const x = await ctx(args);
+  const findings = await lintRun(x, args);
   log(formatFindings(findings));
   const errors = findings.filter((f) => f.level === "error").length;
   log(`${findings.length} finding${findings.length === 1 ? "" : "s"}, ${errors} error${errors === 1 ? "" : "s"}`);
@@ -542,6 +568,83 @@ const cmdFeedback = async (args: Args) => {
   log(feedbackMarkdown(x.c, flag(args, "all") ? ks : ks.filter((k) => !k.done)));
 };
 
+/** measure the declared cursor legs for one format and write the targets module; returns the file */
+const cursorRun = async (x: Ctx): Promise<string> => {
+  const cursor = x.cfg.films[x.filmName].cursor;
+  if (!cursor?.legs?.length) throw new Error(`film "${x.filmName}" declares no cursor legs (films.${x.filmName}.cursor.legs)`);
+  const rel = cursor.out?.[x.format];
+  if (!rel) throw new Error(`films.${x.filmName}.cursor.out has no file for format "${x.format}" (has: ${Object.keys(cursor.out ?? {}).join(", ") || "none"})`);
+  const targets = await withRenderer(x, (r, serveUrl) => measureLegs(r, serveUrl, x.cfg, x.c, x.format, x.size.width, cursor, { settleMs: num(x.args, "settle", 150), concurrency: num(x.args, "concurrency", 4), log }));
+  const w = writeTargets(resolvePath(x.cfg.projectDir, rel), targets);
+  log(table(targets.map((t) => [t.id, `f${t.frame}`, t.x, t.y, t.click ? "click" : "park"]), ["leg", "part f", "x", "y", ""]));
+  log(`${x.format}: ${targets.length} targets -> ${rel}${w.changed ? "" : " (unchanged)"}`);
+  return `${rel}${w.changed ? " updated" : " unchanged"}`;
+};
+
+const cmdCursor = (args: Args) => eachFormat(args, async (a) => void (await cursorRun(await ctx(a))));
+
+/** one bundle, then every gate of an edit round; a summary table, exit 2 when a step fails */
+const cmdCheck = async (args: Args) => {
+  const rows: (string | number)[][] = [];
+  let failed = 0;
+  const step = async (name: string, fn: () => Promise<string | void>) => {
+    const t0 = performance.now();
+    log(`\n== ${name}`);
+    try {
+      rows.push([name, "pass", (await fn()) ?? "", ms(t0)]);
+    } catch (e) {
+      failed++;
+      const msg = (e as Error).message ?? String(e);
+      log(`FAIL ${msg}`);
+      rows.push([name, "FAIL", msg.split("\n")[0].slice(0, 100), ms(t0)]);
+    }
+  };
+  const gate = (findings: Finding[]) => {
+    log(formatFindings(findings));
+    const errors = findings.filter((f) => f.level === "error").length;
+    if (errors) throw new Error(`${errors} lint error${errors === 1 ? "" : "s"}`);
+    return `${findings.length} warning${findings.length === 1 ? "" : "s"}`;
+  };
+  const formats = await formatsOf(args);
+  const first = await ctx({ ...args, format: formats[0] });
+  const scenes = list(args, "scene");
+  if (scenes) scenesOf(first.c, args);
+  const tsconfig = join(first.cfg.projectDir, "tsconfig.json");
+  if (existsSync(tsconfig)) {
+    await step("typecheck", async () => {
+      const r = await run(["bunx", "tsc", "--noEmit", "-p", first.cfg.projectDir], { quiet: true });
+      if (r.code !== 0) throw new Error(`tsc: ${r.out.trim().split("\n").slice(0, 8).join("\n")}`);
+    });
+  } else rows.push(["typecheck", "skip", "no tsconfig.json in the project", ""]);
+  await step("bundle", async () => {
+    const b = await bundleProject(first.cfg, { force: flag(args, "rebundle"), log });
+    return `${b.fresh ? "built" : "reused"} ${b.hash.slice(0, 12)}`;
+  });
+  await step("lint static+timeline", async () => gate(await lintRun(first, { ...args, static: true, timeline: true })));
+  const xs = await Promise.all(formats.map((format) => ctx({ ...args, format })));
+  // cursor targets first: they are source the film reads, so a changed layout re-bundles once here, not per format later
+  if (first.cfg.films[first.filmName].cursor?.legs?.length) for (const x of xs) await step(`cursor ${x.format}`, () => cursorRun(x));
+  for (const x of xs) {
+    const { format } = x;
+    await step(`doctor ${format}`, async () => {
+      const bad = await doctorRun(x);
+      if (bad.length) throw new Error(bad.join("; "));
+    });
+    if (scenes) {
+      const tag = `check-${stamp()}-${format}`;
+      await step(`frames+sheets ${format}`, async () => {
+        await cmdFrames({ ...args, format, probe: "text", quiet: true, sheet: true, tag });
+        return `${scenes.join(",")} -> run ${tag}`;
+      });
+      await step(`lint rendered ${format}`, async () => gate(await lintRun(x, { ...args, format, rendered: true, from: tag })));
+    }
+  }
+  log("");
+  log(table(rows, ["step", "", "detail", "took"]));
+  log(failed ? `${failed} step${failed === 1 ? "" : "s"} failed` : "all steps passed");
+  if (failed) process.exit(2);
+};
+
 const cmdBundle = async (args: Args) => {
   const x = await ctx(args);
   const b = await bundleProject(x.cfg, { force: flag(args, "force") || true, log });
@@ -556,13 +659,16 @@ const cmdInit = async (args: Args) => {
   log(`wrote ${file}. Fill in root, films and tokens, then run: mh doctor`);
 };
 
-const help = `mh <command> [--project dir] [--film name] [--format wide]
+const help = `mh <command> [--project dir] [--film name] [--format wide|all]
 
   timeline [--json]                 the compiled timeline: scenes, frames, film time, events, audio
   resolve <ref...> [--json]         20.5s | f616 | probe | probe.pick1 | probe+12 | product:f120 | #7
   docs [--out file]                 the edit decision list as markdown, generated, never hand-edited
   doctor                            ffmpeg, config, and composition length vs timeline (catches drift)
   bundle [--force]                  bundle the project through the harness wrapper
+  check [--scene a,b] [--format x|all]
+                                    one edit round: typecheck, bundle, lint, doctor, cursor targets, frames + sheets and rendered lint of the touched scenes
+  cursor [--format x|all]           measure the film's cursor legs with the DOM probe, write the CURSOR_TARGETS module per format
 
   frames [--scene a,b] [--dense N] [--probe text] [--tag t] [--sheet]
                                     render the check frames of each scene (enter, settled, events, mid, last)
@@ -593,6 +699,8 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   docs: cmdDocs,
   doctor: cmdDoctor,
   bundle: cmdBundle,
+  check: cmdCheck,
+  cursor: cmdCursor,
   frames: cmdFrames,
   sheet: cmdSheet,
   probe: cmdProbe,
