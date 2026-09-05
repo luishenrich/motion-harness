@@ -6,13 +6,14 @@
  *   mh frames | sheet | probe | lint | diff | motion | audio
  *   mh render | review | feedback
  */
-import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, rmSync } from "node:fs";
+import { join, resolve as resolvePath, dirname } from "node:path";
+import { getCompositions } from "@remotion/renderer";
 import { loadConfig, pickFilm, pickFormat, type LoadedConfig } from "./config.ts";
 import { compile, compositionFor, fmtTime, type Compiled, type CompiledScene } from "./timeline/schema.ts";
 import { resolve as resolveRef, checkFramesFor, type CheckFrame } from "./timeline/resolve.ts";
 import { timelineMarkdown, timelineJson } from "./timeline/docs.ts";
-import { bundleProject } from "./render/bundle.ts";
+import { bundleProject, staleBundleWarnings, projectSrcDir } from "./render/bundle.ts";
 import { openRenderer, renderFrameSet, getComposition, type ProbeResult, type Renderer } from "./render/frames.ts";
 import { makeSheet, type SheetCell } from "./sheet/sheet.ts";
 import { lintStaticColors, lintTimeline, lintProbe, formatFindings, type Finding } from "./lint/lint.ts";
@@ -21,9 +22,9 @@ import { measureScene, sparkline } from "./motion/metrics.ts";
 import { audioProfile, rmsAt, db } from "./audio/probe.ts";
 import { decodeMono, onsetStrength, pickOnsets, beatGrid, nearest } from "./audio/beats.ts";
 import { resolveUnclamped } from "./timeline/resolve.ts";
-import { renderSegments, renderPartAudio, concatParts, mixFilm, partDurationCheck } from "./film/film.ts";
+import { renderSegments, renderPartAudio, concatParts, concatScenes, mixFilm, partDurationCheck, picturePath } from "./film/film.ts";
 import { startReviewServer, loadComments, feedbackMarkdown, commentsPath } from "./review/server.ts";
-import { ensureDir, readJson, writeJson, stamp, table, ms, run } from "./util.ts";
+import { ensureDir, readJson, writeJson, stamp, table, ms, run, dirSize, mb, withLock, ffprobeDuration } from "./util.ts";
 
 /* ---------- args ---------- */
 
@@ -121,12 +122,14 @@ const cmdTimeline = async (args: Args) => {
 const cmdResolve = async (args: Args) => {
   const x = await ctx(args);
   if (!args._.length) die("usage: mh resolve <ref> [<ref>...]   e.g. 20.5s  f616  probe.pick1  probe+12  product:f120  #7");
+  // piped (an agent reading the output): JSON without asking
+  const json = flag(args, "json") || !process.stdout.isTTY;
   for (const ref of args._) {
     try {
       const L = resolveRef(x.c, ref);
       const s = L.scene;
-      if (flag(args, "json")) {
-        log(JSON.stringify({ ref, part: L.part, scene: s.id, local: L.local, partFrame: L.partFrame, filmFrame: L.filmFrame, filmSeconds: L.filmSeconds, event: L.event, inTransition: L.inTransition, sceneStart: s.start, sceneEnd: s.end, sceneDur: s.dur, composition: compositionFor(x.c.parts.find((p) => p.id === L.part)!, x.format) }));
+      if (json) {
+        out(JSON.stringify({ ref, part: L.part, scene: s.id, local: L.local, partFrame: L.partFrame, filmFrame: L.filmFrame, filmSeconds: L.filmSeconds, event: L.event, inTransition: L.inTransition, sceneStart: s.start, sceneEnd: s.end, sceneDur: s.dur, composition: compositionFor(x.c.parts.find((p) => p.id === L.part)!, x.format) }));
       } else {
         log(`${ref.padEnd(16)} -> ${s.id}+${L.local}   part ${L.part} f${L.partFrame}   film f${L.filmFrame} ${fmtTime(L.filmFrame, x.c.fps)}${L.event ? `   after ${L.event.name}+${L.event.distance}` : ""}${L.inTransition ? "   IN TRANSITION" : ""}`);
         log(`${"".padEnd(16)}    scene ${s.id}: part frames ${s.start}-${s.end - 1} (${s.dur}f), enter ${s.enter.type}${s.enter.dur ? ` ${s.enter.dur}f` : ""}, events ${s.events.map((e) => `${e.name}@${e.local}`).join(" ") || "none"}${s.why ? `, why: ${s.why}` : ""}`);
@@ -148,6 +151,7 @@ const cmdDocs = async (args: Args) => {
 };
 
 const withRenderer = async <T,>(x: Ctx, fn: (r: Renderer, serveUrl: string, bundleHash: string) => Promise<T>): Promise<T> => {
+  for (const w of staleBundleWarnings(x.cfg)) log(w);
   const b = await bundleProject(x.cfg, { force: flag(x.args, "rebundle"), log });
   const r = await openRenderer(x.cfg);
   try {
@@ -157,23 +161,117 @@ const withRenderer = async <T,>(x: Ctx, fn: (r: Renderer, serveUrl: string, bund
   }
 };
 
+/** the package.json of `pkg` as seen from `from`, walking up through node_modules dirs like a resolver would */
+const findPackage = (from: string, pkg: string): { dir: string; version: string } | null => {
+  let d = from;
+  for (let i = 0; i < 12; i++) {
+    const p = join(d, "node_modules", pkg, "package.json");
+    if (existsSync(p)) return { dir: dirname(p), version: readJson<{ version: string }>(p).version };
+    const up = dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return null;
+};
+
+/** files the timeline points at: the audio cues, plus staticFile("...") literals in the project's source */
+const referencedFiles = (x: Ctx): { what: string; file: string }[] => {
+  const out: { what: string; file: string }[] = [];
+  for (const cue of x.c.timeline.audio ?? []) out.push({ what: `cue ${cue.id}`, file: cue.file.startsWith("/") ? cue.file : join(x.cfg.projectDir, cue.file) });
+  const walk = (d: string) => {
+    if (!existsSync(d)) return;
+    for (const name of readdirSync(d)) {
+      if (name === "node_modules" || name.startsWith(".")) continue;
+      const p = join(d, name);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.(tsx?|jsx?)$/.test(name)) {
+        const src = readFileSync(p, "utf8");
+        for (const m of src.matchAll(/staticFile\(\s*(["'`])([^"'`$]+)\1\s*\)/g)) out.push({ what: `staticFile in ${p.replace(x.cfg.projectDir + "/", "")}`, file: join(x.cfg.publicPath, m[2]) });
+      }
+    }
+  };
+  walk(projectSrcDir(x.cfg));
+  return out;
+};
+
 const cmdDoctor = async (args: Args) => {
   const x = await ctx(args);
+  let problems = 0;
+  const bad = (s: string) => {
+    problems++;
+    log(s);
+  };
   const ff = await run(["ffmpeg", "-version"], { quiet: true });
   log(`ffmpeg: ${ff.code === 0 ? ff.out.split("\n")[0] : "MISSING"}`);
+  if (ff.code === 0) {
+    const fl = await run(["ffmpeg", "-hide_banner", "-filters"], { quiet: true });
+    const have = new Set(fl.out.split("\n").map((l) => l.trim().split(/\s+/)[1]).filter(Boolean));
+    // the mix needs these; drawtext is what a project's own ffmpeg scripts (burned-in labels) tend to need
+    const need = ["acrossfade", "amix", "volume", "afade", "adelay", "concat"];
+    const missing = need.filter((f) => !have.has(f));
+    if (missing.length) bad(`ffmpeg filters: MISSING ${missing.join(", ")} (this ffmpeg build cannot mix the film)`);
+    else log(`ffmpeg filters: ok (${need.join(", ")})`);
+    if (!have.has("drawtext")) log("warning: ffmpeg has no drawtext filter (a build without libfreetype); the harness does not need it, scripts that burn in labels do");
+  } else bad("ffmpeg: not on PATH, nothing renders");
+  const fp = await run(["ffprobe", "-version"], { quiet: true });
+  if (fp.code !== 0) bad("ffprobe: MISSING");
+
+  const pkgs = ["remotion", "@remotion/bundler", "@remotion/renderer"].map((p) => ({ p, found: findPackage(x.cfg.projectDir, p) }));
+  const versions = new Set(pkgs.map((k) => k.found?.version ?? "missing"));
+  const line = pkgs.map((k) => `${k.p}@${k.found?.version ?? "MISSING"}`).join(", ");
+  if (versions.size === 1 && !versions.has("missing")) log(`remotion: ${line} (from ${pkgs[0].found!.dir.replace(/\/node_modules\/.*$/, "/node_modules")})`);
+  else bad(`remotion: VERSION MISMATCH ${line}. Remotion needs the three at one version, pin them together.`);
+
   log(`project: ${x.cfg.projectDir}`);
   log(`root: ${x.cfg.rootPath} (${x.cfg.rootExport ?? "Root"})`);
-  log(`cache: ${x.cfg.cachePath}`);
+  log(`cache: ${x.cfg.cachePath} (${mb(dirSize(x.cfg.cachePath))}, "mh clean" frees it)`);
   log(`film ${x.filmName} format ${x.format}: ${x.c.parts.length} parts, ${x.c.scenes.length} scenes, ${x.c.dur}f`);
   const tl = lintTimeline(x.cfg, x.c);
   log(tl.length ? formatFindings(tl) : "timeline: ok");
+
+  for (const cue of x.c.timeline.audio ?? []) {
+    const file = cue.file.startsWith("/") ? cue.file : join(x.cfg.projectDir, cue.file);
+    if (!existsSync(file)) {
+      bad(`cue ${cue.id}: MISSING ${file}`);
+      continue;
+    }
+    const d = await ffprobeDuration(file).catch(() => NaN);
+    if (!Number.isFinite(d)) bad(`cue ${cue.id}: ${file} does not decode (ffprobe found no duration)`);
+    else log(`cue ${cue.id}: ok ${d.toFixed(2)}s ${cue.file}`);
+  }
+
+  // an asset the film depends on that git ignores is a file the next checkout will not have
+  const seen = new Set<string>();
+  for (const r of referencedFiles(x)) {
+    if (seen.has(r.file) || !existsSync(r.file)) continue;
+    seen.add(r.file);
+    const g = await run(["git", "check-ignore", "-q", "--", r.file], { cwd: x.cfg.projectDir, quiet: true });
+    if (g.code === 0) log(`warning: ${r.file.replace(x.cfg.projectDir + "/", "")} is gitignored but the film needs it (${r.what})`);
+    else if (g.code !== 1) break; // not a git repo: nothing to say
+  }
+
+  const { film } = pickFilm(x.cfg, str(args, "film"));
   await withRenderer(x, async (_r, serveUrl) => {
+    const registered = new Set((await getCompositions(serveUrl, { logLevel: "error" })).map((k) => k.id));
+    let missingHere = 0;
+    for (const fmt of Object.keys(film.formats)) {
+      for (const part of x.c.parts) {
+        const id = compositionFor(part, fmt);
+        if (registered.has(id)) continue;
+        if (fmt === x.format) missingHere++;
+        bad(`MISSING composition "${id}" (part ${part.id}, format ${fmt}) is not registered in the Root; registered: ${[...registered].join(", ") || "none"}`);
+      }
+    }
+    if (missingHere) return log(`drift check skipped: ${missingHere} composition${missingHere === 1 ? "" : "s"} of format ${x.format} missing`);
     const checks = await partDurationCheck(serveUrl, x.c, x.format);
     for (const k of checks) {
       const ok = k.actual === k.expected;
+      if (!ok) problems++;
       log(`${ok ? "ok  " : "DRIFT"} part ${k.part.id} -> ${k.composition}: composition ${k.actual}f, timeline ${k.expected}f${ok ? "" : ` (off by ${k.actual - k.expected})`}`);
     }
   });
+  log(problems ? `${problems} problem${problems === 1 ? "" : "s"}` : "doctor: all clear");
+  if (problems) process.exit(2);
 };
 
 const cmdFrames = async (args: Args) => {
@@ -183,7 +281,7 @@ const cmdFrames = async (args: Args) => {
   const tag = str(args, "tag", stamp())!;
   const dense = num(args, "dense", 0) || undefined;
   const t0 = performance.now();
-  const manifest = await withRenderer(x, async (r, serveUrl, bundleHash) => {
+  const manifest = await withLock(x.cfg.cachePath, `frames ${x.filmName} ${x.format} ${tag}`, () => withRenderer(x, async (r, serveUrl, bundleHash) => {
     const dir = ensureDir(join(runsDir(x), tag));
     const m: Manifest = { film: x.filmName, format: x.format, tag, createdAt: new Date().toISOString(), bundleHash, probe, frames: [] };
     for (const part of x.c.parts) {
@@ -225,7 +323,7 @@ const cmdFrames = async (args: Args) => {
     writeJson(join(dir, "manifest.json"), m);
     writeFileSync(join(runsDir(x), "latest"), tag);
     return m;
-  });
+  }), log);
   log(`${manifest.frames.length} frames in ${ms(t0)} -> ${join(runsDir(x), tag)}`);
   if (!flag(args, "quiet")) log(table(manifest.frames.map((f) => [f.scene, `+${f.local}`, `f${f.partFrame}`, fmtTime(f.filmFrame, x.c.fps), f.kind, f.label, `${f.ms}ms`, f.file.replace(x.cfg.cachePath + "/", "")]), ["scene", "local", "part", "film", "kind", "label", "took", "file"]));
   if (flag(args, "sheet")) await cmdSheet({ ...args, from: tag });
@@ -508,16 +606,109 @@ const cmdBeats = async (args: Args) => {
 const cmdRender = async (args: Args) => {
   const x = await ctx(args);
   const t0 = performance.now();
-  const res = await withRenderer(x, async (r, serveUrl, bundleHash) => {
-    const segs = await renderSegments(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { only: list(args, "scene"), crf: num(args, "crf", 18), log, concurrency: num(args, "concurrency", 4), force: flag(args, "force") });
-    const all = [...segs.values()].flat();
-    log(`${all.filter((s) => s.cached).length} segments cached, ${all.filter((s) => !s.cached).length} rendered`);
-    const audio = flag(args, "no-audio") ? new Map<string, string>() : await renderPartAudio(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { log, concurrency: num(args, "concurrency", 4) });
-    const picture = await concatParts(x.cfg, x.c, segs, audio, x.filmName, x.format, x.size, { log });
-    if (flag(args, "no-audio")) return { master: picture };
-    return mixFilm(x.cfg, x.c, picture, x.filmName, x.format, { out: str(args, "out"), web: flag(args, "web"), log, audioRoot: str(args, "audio-root") });
-  });
+  const mixOpts = { out: str(args, "out"), web: flag(args, "web"), log, audioRoot: str(args, "audio-root") };
+  const res = await withLock(x.cfg.cachePath, `render ${x.filmName} ${x.format}`, async () => {
+    if (flag(args, "remix")) {
+      // no picture step at all: the concatenated picture from the cache, mixed again
+      const picture = picturePath(x.cfg, x.filmName, x.format);
+      if (!existsSync(picture)) die(`--remix needs a rendered picture, none in the cache for ${x.filmName} ${x.format} (expected ${picture}). Run "mh render" once without --remix.`);
+      log(`remix from ${picture} (${new Date(statSync(picture).mtimeMs).toISOString()})`);
+      return mixFilm(x.cfg, x.c, picture, x.filmName, x.format, mixOpts);
+    }
+    return withRenderer(x, async (r, serveUrl, bundleHash) => {
+      const conc = num(args, "concurrency", 4);
+      if (flag(args, "preview")) {
+        // only these scenes: their segments, the parts' own sound trimmed to them, the cues that sound in that span
+        const scenes = scenesOf(x.c, args);
+        if (!list(args, "scene") && !str(args, "part")) die("--preview needs --scene a[,b] (or --part)");
+        const ids = scenes.map((s) => s.id);
+        const segs = await renderSegments(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { subset: ids, crf: num(args, "crf", 18), log, concurrency: conc, force: flag(args, "force") });
+        const all = [...segs.values()].flat();
+        log(`${all.filter((s) => s.cached).length} segments cached, ${all.filter((s) => !s.cached).length} rendered`);
+        const parts = [...new Set(scenes.map((s) => s.part))];
+        const audio = flag(args, "no-audio") ? new Map<string, string>() : await renderPartAudio(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { log, concurrency: conc, parts });
+        const { picture, span } = await concatScenes(x.cfg, x.c, scenes, segs, audio, x.filmName, x.format, x.size, { log });
+        const name = `${x.filmName}-${x.format}-preview-${scenes.map((s) => s.id).join("+")}`;
+        if (flag(args, "no-audio")) return { master: picture };
+        return mixFilm(x.cfg, x.c, picture, x.filmName, x.format, { ...mixOpts, out: str(args, "out") ?? join(ensureDir(join(x.cfg.cachePath, "out")), `${name}.mp4`), span });
+      }
+      const segs = await renderSegments(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { only: list(args, "scene"), crf: num(args, "crf", 18), log, concurrency: conc, force: flag(args, "force") });
+      const all = [...segs.values()].flat();
+      log(`${all.filter((s) => s.cached).length} segments cached, ${all.filter((s) => !s.cached).length} rendered`);
+      const audio = flag(args, "no-audio") ? new Map<string, string>() : await renderPartAudio(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { log, concurrency: conc });
+      const picture = await concatParts(x.cfg, x.c, segs, audio, x.filmName, x.format, x.size, { log });
+      if (flag(args, "no-audio")) return { master: picture };
+      return mixFilm(x.cfg, x.c, picture, x.filmName, x.format, mixOpts);
+    });
+  }, log);
   log(`film -> ${res.master}${res.web ? `\nweb  -> ${res.web}` : ""}  (${ms(t0)})`);
+};
+
+/**
+ * Empty the cache: frames, motion curves, segments, film pictures and outputs.
+ * Approved frame runs and review comments stay unless --all. --older-than N keeps
+ * anything touched in the last N days.
+ */
+const cmdClean = async (args: Args) => {
+  const projectDir = resolvePath(str(args, "project", process.cwd())!);
+  const cfg = await loadConfig(projectDir);
+  const cache = cfg.cachePath;
+  if (!existsSync(cache)) return log(`nothing to clean, no cache at ${cache}`);
+  const keepApproved = !flag(args, "all") && args["keep-approved"] !== "false";
+  const keepReview = !flag(args, "all");
+  const days = num(args, "older-than", 0);
+  const cutoff = Date.now() - days * 86400_000;
+  const isApproved = (dir: string) => /(^|\/)approved(\/|$)/.test(dir) || existsSync(join(dir, "approved.json")) || existsSync(join(dir, "approved"));
+  const newest = (p: string): number => {
+    const st = statSync(p);
+    if (!st.isDirectory()) return st.mtimeMs;
+    return Math.max(st.mtimeMs, ...readdirSync(p).map((n) => newest(join(p, n))));
+  };
+  let freed = 0;
+  let kept = 0;
+  const removed: string[] = [];
+  const drop = (p: string) => {
+    if (!existsSync(p)) return;
+    if (days > 0 && newest(p) > cutoff) {
+      kept++;
+      return;
+    }
+    freed += dirSize(p) || statSync(p).size;
+    rmSync(p, { recursive: true, force: true });
+    removed.push(p.replace(cache + "/", ""));
+  };
+  await withLock(cache, "clean", async () => {
+    // frames: per film-format, per run tag; "latest" pointers go when their run goes
+    const frames = join(cache, "frames");
+    if (existsSync(frames)) {
+      for (const ff of readdirSync(frames)) {
+        const fdir = join(frames, ff);
+        if (!statSync(fdir).isDirectory()) continue;
+        for (const tag of readdirSync(fdir)) {
+          const run = join(fdir, tag);
+          if (tag === "latest") continue;
+          if (keepApproved && isApproved(run)) {
+            kept++;
+            continue;
+          }
+          drop(run);
+        }
+        const latest = join(fdir, "latest");
+        if (existsSync(latest) && !existsSync(join(fdir, readFileSync(latest, "utf8").trim()))) rmSync(latest);
+        if (!readdirSync(fdir).length) rmSync(fdir, { recursive: true });
+      }
+      if (!readdirSync(frames).length) rmSync(frames, { recursive: true });
+    }
+    for (const top of ["motion", "segments", "film", "out", "probe"]) {
+      const d = join(cache, top);
+      if (!existsSync(d)) continue;
+      for (const n of readdirSync(d)) drop(join(d, n));
+      if (!readdirSync(d).length) rmSync(d, { recursive: true });
+    }
+    if (!keepReview) drop(join(cache, "review"));
+  }, log);
+  if (flag(args, "verbose")) for (const r of removed) log(`  removed ${r}`);
+  log(`freed ${mb(freed)}: ${removed.length} item${removed.length === 1 ? "" : "s"} removed${kept ? `, ${kept} kept (${keepApproved ? "approved, " : ""}${days > 0 ? `newer than ${days}d` : ""})`.replace(/, \)$/, ")") : ""}${keepReview ? "; review comments kept" : ""}. Bundle and entry stay (rebuilt when the source changes).`);
 };
 
 const cmdReview = async (args: Args) => {
@@ -561,7 +752,7 @@ const help = `mh <command> [--project dir] [--film name] [--format wide]
   timeline [--json]                 the compiled timeline: scenes, frames, film time, events, audio
   resolve <ref...> [--json]         20.5s | f616 | probe | probe.pick1 | probe+12 | product:f120 | #7
   docs [--out file]                 the edit decision list as markdown, generated, never hand-edited
-  doctor                            ffmpeg, config, and composition length vs timeline (catches drift)
+  doctor                            ffmpeg + filters, remotion versions, cues decode, gitignored assets, compositions registered, drift, cache size
   bundle [--force]                  bundle the project through the harness wrapper
 
   frames [--scene a,b] [--dense N] [--probe text] [--tag t] [--sheet]
@@ -581,6 +772,10 @@ const help = `mh <command> [--project dir] [--film name] [--format wide]
 
   render [--scene a,b] [--force] [--crf 18] [--web] [--no-audio] [--out file]
                                     scene segments (cached), parts by concat, music and sfx mixed from the timeline
+  render --scene a[,b] --preview    only those scenes as a clip, with the cues that sound in them (contiguous scenes)
+  render --remix                    no picture work: the cached picture mixed again (music/sfx/gain changes)
+  clean [--older-than days] [--keep-approved=false] [--all] [--verbose]
+                                    empty the cache (frames, motion, segments, film, out); keeps approved runs and review comments
   review [file] [--port 4848]       the player with the scene bar, comments land as scene+frame
   feedback [--all] [--json] [--clear]
                                     the comments as an agent-readable list, grouped by scene
@@ -602,6 +797,7 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   audio: cmdAudio,
   beats: cmdBeats,
   render: cmdRender,
+  clean: cmdClean,
   review: cmdReview,
   feedback: cmdFeedback,
   init: cmdInit,

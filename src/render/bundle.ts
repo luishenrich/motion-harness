@@ -3,12 +3,32 @@
  * project's Root plus the harness probe. The wrapper lives inside the project
  * (cacheDir/entry) so `remotion` and `react` resolve to the project's copies.
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { join, relative, dirname } from "node:path";
 import { bundle } from "@remotion/bundler";
 import type { LoadedConfig } from "../config.ts";
-import { ensureDir, hashDir, hashString, ms } from "../util.ts";
+import { ensureDir, hashDir, hashString, ms, newestMtime, readJson, writeJson } from "../util.ts";
 import { PROBE_SOURCE } from "../probe/inject.ts";
+
+export type BundleInfo = { hash: string; builtAt: string };
+const infoPath = (cfg: LoadedConfig) => join(cfg.cachePath, "bundle.json");
+export const bundleInfo = (cfg: LoadedConfig): BundleInfo | null => (existsSync(infoPath(cfg)) ? readJson<BundleInfo>(infoPath(cfg)) : null);
+
+/** the project's source dir: `src/` next to the config when it exists, else the Root's dir */
+export const projectSrcDir = (cfg: LoadedConfig) => (existsSync(join(cfg.projectDir, "src")) ? join(cfg.projectDir, "src") : dirname(cfg.rootPath));
+
+/** files changed on disk after the current bundle was built: the config (never part of the bundle hash) and the compositions */
+export const staleBundleWarnings = (cfg: LoadedConfig): string[] => {
+  const info = bundleInfo(cfg);
+  if (!info) return [];
+  const built = Date.parse(info.builtAt);
+  const out: string[] = [];
+  const cfgM = statSync(cfg.configPath).mtimeMs;
+  if (cfgM > built) out.push(`warning: ${cfg.configPath} changed after the bundle was built (${info.builtAt})`);
+  const src = newestMtime(projectSrcDir(cfg));
+  if (src && src.mtimeMs > built) out.push(`warning: ${src.file} changed after the bundle was built (${info.builtAt}); the next render or frames call rebundles`);
+  return out;
+};
 
 const wrapperSource = (cfg: LoadedConfig, entryDir: string) => {
   let rootImport = relative(entryDir, cfg.rootPath).replace(/\\/g, "/").replace(/\.tsx?$/, "");
@@ -54,6 +74,7 @@ export const bundleProject = async (cfg: LoadedConfig, opts: { force?: boolean; 
     },
   });
   writeFileSync(hashFile, hash);
+  writeJson(infoPath(cfg), { hash, builtAt: new Date().toISOString() } satisfies BundleInfo);
   log(`bundled in ${ms(t0)} -> ${serveUrl}`);
   return { serveUrl, hash, fresh: true };
 };
