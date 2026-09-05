@@ -53,12 +53,25 @@ const __measure = (mode, settleMs) => {
     const r = range.getBoundingClientRect();
     return r.width > 0 ? r : el.getBoundingClientRect();
   };
+  // what the eye gets: the box cut down by every ancestor that clips (overflow hidden/clip); a file flying in
+  // behind a clipped edge is not an overflow, it is off screen
+  const __clipped = (el, r) => {
+    let x0 = r.left, y0 = r.top, x1 = r.right, y1 = r.bottom;
+    for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+      const o = getComputedStyle(a);
+      if (!/hidden|clip/.test(o.overflow + o.overflowX + o.overflowY)) continue;
+      const b = a.getBoundingClientRect();
+      x0 = Math.max(x0, b.left); y0 = Math.max(y0, b.top); x1 = Math.min(x1, b.right); y1 = Math.min(y1, b.bottom);
+    }
+    const w = Math.max(0, x1 - x0), h = Math.max(0, y1 - y0);
+    return { left: x0, top: y0, right: x0 + w, bottom: y0 + h, width: w, height: h };
+  };
   const add = (el, key, kind) => {
     if (seen.has(el)) return;
     const id = items.length;
     seen.set(el, id);
     els.push(el);
-    const r = __inkRect(el);
+    const r = __clipped(el, __inkRect(el));
     const cs = getComputedStyle(el);
     const op = __effectiveOpacity(el);
     const visible = op > 0.02 && r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < W && r.top < H;
