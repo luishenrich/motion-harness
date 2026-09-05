@@ -7,7 +7,7 @@
  *   mh render | review | feedback
  */
 import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
+import { join, resolve as resolvePath, basename } from "node:path";
 import { loadConfig, pickFilm, pickFormat, type LoadedConfig } from "./config.ts";
 import { compile, compositionFor, fmtTime, type Compiled, type CompiledScene } from "./timeline/schema.ts";
 import { resolve as resolveRef, checkFramesFor, type CheckFrame } from "./timeline/resolve.ts";
@@ -19,12 +19,15 @@ import { makeSheet, type SheetCell } from "./sheet/sheet.ts";
 import { lintStaticColors, lintTimeline, lintProbe, lintFormatParity, cursorLegFrames, formatFindings, type Finding, type ProbeFrame } from "./lint/lint.ts";
 import { diffSets } from "./diff/diff.ts";
 import { measureScene, sparkline } from "./motion/metrics.ts";
-import { audioProfile, rmsAt, db } from "./audio/probe.ts";
+import { audioProfile, rmsAt, db, loudSpan } from "./audio/probe.ts";
 import { decodeMono, onsetStrength, pickOnsets, beatGrid, nearest } from "./audio/beats.ts";
-import { resolveUnclamped } from "./timeline/resolve.ts";
+import { spanOf, cuePlacement } from "./audio/coverage.ts";
+import { analyzeFile, looksLikeHit, hitWarnings, type SfxAnalysis } from "./audio/sfx.ts";
+import { vetDurations } from "./audio/suggest.ts";
+import { resolveUnclamped, locate } from "./timeline/resolve.ts";
 import { renderSegments, renderPartAudio, concatParts, mixFilm, partDurationCheck } from "./film/film.ts";
 import { startReviewServer, loadComments, feedbackMarkdown, commentsPath } from "./review/server.ts";
-import { ensureDir, readJson, writeJson, stamp, table, ms, run } from "./util.ts";
+import { ensureDir, readJson, writeJson, stamp, table, ms, run, ffprobeDuration } from "./util.ts";
 
 /* ---------- args ---------- */
 
@@ -430,10 +433,102 @@ const cmdMotion = async (args: Args) => {
   });
 };
 
+const cueFile = (x: Ctx, cue: { file: string }) => (cue.file.startsWith("/") ? cue.file : join(str(x.args, "audio-root") ?? x.cfg.projectDir, cue.file));
+const sceneAtSeconds = (c: Compiled, t: number): CompiledScene => locate(c, Math.round(t * c.fps)).scene;
+const sec = (t: number) => `${t.toFixed(2)}s`;
+
+/** music coverage from the timeline and the cue files alone, no rendered film needed */
+const audioCoverage = async (x: Ctx) => {
+  const cues = x.c.timeline.audio ?? [];
+  const total = x.c.seconds;
+  const music = cues.filter((a) => a.kind === "music");
+  if (!music.length) return log("no music cue in the timeline");
+  log(`music coverage (film ${sec(total)}, ${x.c.scenes.length} scenes)`);
+  let latestEnd = 0;
+  for (const cue of music) {
+    const file = cueFile(x, cue);
+    if (!existsSync(file)) {
+      log(`  ${cue.id}: file not found: ${file}`);
+      continue;
+    }
+    const fileSeconds = await ffprobeDuration(file);
+    const span = spanOf(x.c, cue, fileSeconds);
+    const p = cuePlacement(x.c, cue);
+    latestEnd = Math.max(latestEnd, span.end);
+    const how = cue.loop ? `loop x${span.copies}, crossfade ${cue.loopCrossfade ?? 2}s` : "plays once";
+    const trim = cue.trim ? `, trim ${cue.trim[0]}-${cue.trim[1]}s` : "";
+    const head = p.headTrim > 0 ? `, placed ${sec(p.headTrim)} before the film so the head is cut` : "";
+    log(`  ${cue.id}: ${basename(file)} ${sec(fileSeconds)}${trim}, ${how}${head}`);
+    log(`    covers ${sec(span.start)} -> ${sec(span.end)} (${sceneAtSeconds(x.c, span.start).id} -> ${sceneAtSeconds(x.c, Math.max(0, span.end - 0.001)).id})`);
+    if (span.shortBy > 0.05) {
+      const s = sceneAtSeconds(x.c, span.end);
+      const local = span.end - s.filmStart / x.c.fps;
+      log(`    WARNING bed ends ${sec(span.shortBy)} before the film, in scene ${s.id} at ${sec(local)} of ${sec(s.dur / x.c.fps)}${cue.loop ? "" : " (loop: true, or a longer file, or trim less)"}`);
+    }
+    for (const seam of span.seams) {
+      const s = sceneAtSeconds(x.c, seam.at);
+      const local = seam.at - s.filmStart / x.c.fps;
+      log(`    loop seam at ${sec(seam.at)} (crossfade ${sec(seam.from)} -> ${sec(seam.to)}) falls in scene ${s.id} at ${sec(local)}`);
+    }
+    if (span.fadeStart !== null && !span.fadeAudible) log(`    WARNING fadeOut ${cue.fadeOut}s starts at ${sec(span.fadeStart)}, after the audio already stopped at ${sec(span.end)}: the fade is silent`);
+    // the file's own loud span, so trim comes from numbers
+    const prof = await audioProfile(file, 0.25);
+    const loud = loudSpan(prof, 12);
+    if (loud) log(`    loud span ${sec(loud.first)} -> ${sec(loud.last)} of ${sec(prof.seconds)} (250 ms rms within 12 dB of the max ${db(loud.maxRms).toFixed(1)} dBFS)${cue.trim && (cue.trim[1] < loud.last - 0.5 || cue.trim[0] > loud.first + 0.5) ? "  note: the trim cuts inside the loud span" : ""}`);
+    else log(`    loud span: the file is silent`);
+  }
+  if (total - latestEnd > 1) log(`  WARNING film is ${sec(total - latestEnd)} longer than all music (music ends at ${sec(latestEnd)}, film at ${sec(total)})`);
+};
+
+/** every cue that starts inside or is still sounding during the scene, with scene-local times */
+const audioInScene = async (x: Ctx, ids: string[]) => {
+  const cues = x.c.timeline.audio ?? [];
+  const durations = new Map<string, number>();
+  for (const id of ids) {
+    const s = x.c.scenes.find((k) => k.id === id);
+    if (!s) throw new Error(`unknown scene "${id}". Scenes: ${x.c.scenes.map((k) => k.id).join(", ")}`);
+    const s0 = s.filmStart / x.c.fps, s1 = s.filmEnd / x.c.fps;
+    log(`scene ${s.id} (${sec(s0)} -> ${sec(s1)}, ${s.dur}f)`);
+    let n = 0;
+    for (const cue of cues) {
+      const file = cueFile(x, cue);
+      if (!existsSync(file)) {
+        log(`  ${cue.id}: file not found: ${file}`);
+        continue;
+      }
+      if (!durations.has(file)) durations.set(file, await ffprobeDuration(file));
+      const span = spanOf(x.c, cue, durations.get(file)!);
+      if (span.end <= s0 || span.start >= s1) continue;
+      n++;
+      const startsInside = span.start >= s0;
+      const endsInside = span.end < s1;
+      const where = startsInside ? `starts at +${sec(span.start - s0)}` : `sounding since ${sec(s0 - span.start)} before the scene`;
+      const until = endsInside ? `, stops at +${sec(span.end - s0)}` : `, still sounding at the cut`;
+      const gain = cue.gain !== undefined ? `, gain ${cue.gain}` : "";
+      log(`  ${cue.id} (${cue.kind}) ${basename(file)}: ${where}${until}${gain}`);
+      for (const rmp of cue.ramps ?? []) {
+        const rt = resolveRef(x.c, rmp.at).filmSeconds;
+        if (rt >= s0 && rt < s1) log(`    ramp -> ${rmp.to} at +${sec(rt - s0)}${rmp.over ? ` over ${rmp.over}s` : ""}`);
+      }
+      for (const seam of span.seams) if (seam.at >= s0 && seam.at < s1) log(`    loop seam at +${sec(seam.at - s0)}`);
+      if (span.fadeStart !== null && span.fadeStart >= s0 && span.fadeStart < s1) log(`    fade out from +${sec(span.fadeStart - s0)}`);
+    }
+    if (!n) log("  nothing sounds in this scene");
+  }
+};
+
 const cmdAudio = async (args: Args) => {
   const x = await ctx(args);
-  const file = args._[0] ?? join(x.cfg.cachePath, "out", `${x.filmName}-${x.format}.mp4`);
-  if (!existsSync(file)) die(`no such file: ${file}`);
+  const only = list(args, "scene");
+  if (only) return audioInScene(x, only);
+  await audioCoverage(x);
+  log("");
+  const explicit = args._[0];
+  const file = explicit ?? join(x.cfg.cachePath, "out", `${x.filmName}-${x.format}.mp4`);
+  if (!existsSync(file)) {
+    if (explicit) die(`no such file: ${file}`);
+    return log(`no rendered film at ${file} (run mh render for the mix profile)`);
+  }
   const p = await audioProfile(file, num(args, "window", 0.25));
   log(`${file}: ${p.seconds.toFixed(2)}s, peak ${p.peak.toFixed(2)} (${db(p.peak).toFixed(1)} dBFS), first sound at ${p.silentUntil === null ? "0.00" : p.silentUntil.toFixed(2)}s`);
   log(`  rms   ${sparkline(p.rms)}`);
@@ -456,6 +551,48 @@ const cmdAudio = async (args: Args) => {
   }
 };
 
+
+const cmdSfx = async (args: Args) => {
+  const x = await ctx(args);
+  const cues = x.c.timeline.audio ?? [];
+  const wanted = flag(args, "all") ? cues : cues.filter((a) => a.kind === "sfx");
+  if (!wanted.length) return log(flag(args, "all") ? "no audio cues in the timeline" : "no sfx cues in the timeline (--all includes music)");
+  const byFile = new Map<string, { cues: typeof cues; a?: SfxAnalysis; seconds?: number }>();
+  for (const cue of wanted) {
+    const file = cueFile(x, cue);
+    const e = byFile.get(file) ?? { cues: [] };
+    e.cues.push(cue);
+    byFile.set(file, e);
+  }
+  const rows: (string | number)[][] = [];
+  const warnings: string[] = [];
+  const msOf = (t: number) => `${Math.round(t * 1000)}ms`;
+  for (const [file, e] of byFile) {
+    const ids = e.cues.map((c) => c.id).join(",");
+    if (!existsSync(file)) {
+      rows.push([basename(file), ids, "missing", "", "", ""]);
+      warnings.push(`${ids}: file not found: ${file}`);
+      continue;
+    }
+    const a = await analyzeFile(file);
+    e.a = a;
+    rows.push([basename(file), ids, a.seconds.toFixed(2) + "s", a.silent ? "-" : msOf(a.attack), a.silent ? "-" : msOf(a.tail), a.silent ? "silent" : `${a.peakDb.toFixed(1)} dBFS`]);
+    for (const cue of e.cues) {
+      if (cue.kind === "sfx" && looksLikeHit(cue.id, file)) for (const w of hitWarnings(a)) warnings.push(`${cue.id}: named like a hit but ${w}`);
+      if (cue.kind === "music") {
+        const span = spanOf(x.c, cue, a.seconds);
+        if (span.shortBy > 0.05 && !cue.loop) warnings.push(`${cue.id}: ${a.seconds.toFixed(2)}s of music${cue.trim ? ` (trim ${cue.trim[0]}-${cue.trim[1]}s)` : ""} must cover ${sec(x.c.seconds - span.start)} from ${sec(span.start)}, ends ${sec(span.shortBy)} early in scene ${sceneAtSeconds(x.c, span.end).id}`);
+      }
+    }
+  }
+  log(table(rows, ["file", "cues", "length", "attack", "tail", "peak"]));
+  log(`attack = first sample above -40 dBFS to the peak, tail = peak to the last sample above -40 dBFS`);
+  if (warnings.length) {
+    log("");
+    for (const w of warnings) log(`WARNING ${w}`);
+  }
+  if (flag(args, "json")) out(JSON.stringify([...byFile].map(([file, e]) => ({ file, cues: e.cues.map((c) => c.id), ...(e.a ?? {}) })), null, 2));
+};
 
 const cmdBeats = async (args: Args) => {
   const x = await ctx(args);
@@ -522,8 +659,9 @@ const cmdBeats = async (args: Args) => {
     log("");
     const maxShift = num(args, "max-shift", 10);
     const sugg: (string | number)[][] = [];
+    const dropped: string[] = [];
+    const accepted: Record<string, number> = {}; // scene id -> new duration, so every later check sees the earlier changes
     let drift = 0; // frames already added/removed before this scene
-    const minDur = Math.max(1, { ...(x.c.timeline.rules ?? {}), ...(x.cfg.rules ?? {}) }.minSceneDur ?? 1);
     const wanted = new Set(scenesOf(x.c, args).map((s) => s.id));
     for (const s of x.c.scenes) {
       if (s.index === x.c.scenes.length - 1) break;
@@ -532,12 +670,27 @@ const cmdBeats = async (args: Args) => {
       const b = nearest(cut, grid.ticks);
       if (!b) continue;
       let delta = Math.round(-b.delta * x.c.fps); // frames to add so the cut lands on the tick
-      if (Math.abs(delta) > maxShift || s.dur + delta < minDur) delta = 0;
-      if (delta !== 0) sugg.push([s.id, s.dur, s.dur + delta, delta > 0 ? `+${delta}` : String(delta), `${fmtTime(s.filmEnd + drift, x.c.fps)} -> ${fmtTime(s.filmEnd + drift + delta, x.c.fps)}`]);
+      if (Math.abs(delta) > maxShift || s.dur + delta < 1) delta = 0;
+      if (delta !== 0) {
+        // the timeline rules get the last word: a shorter scene may break minSceneDur, the enter length or the text time
+        const findings = vetDurations(x.cfg, x.c, { ...accepted, [s.id]: s.dur + delta }, s.id);
+        if (findings.length) {
+          dropped.push(`${s.id} ${s.dur}f -> ${s.dur + delta}f: ${findings.map((f) => `${f.rule} (${f.message})`).join("; ")}`);
+          delta = 0;
+        }
+      }
+      if (delta !== 0) {
+        accepted[s.id] = s.dur + delta;
+        sugg.push([s.id, s.dur, s.dur + delta, delta > 0 ? `+${delta}` : String(delta), `${fmtTime(s.filmEnd + drift, x.c.fps)} -> ${fmtTime(s.filmEnd + drift + delta, x.c.fps)}`]);
+      }
       drift += delta;
     }
     log(table(sugg, ["scene", "dur", "new dur", "change", "cut moves"]));
     log(`${sugg.length} duration changes would put every following cut on the ${grid.bpm.toFixed(0)} bpm grid (max shift ${maxShift}f); film length changes by ${drift} frames. Apply them in the timeline, then re-render and run beats again.`);
+    if (dropped.length) {
+      log(`${dropped.length} suggestion${dropped.length === 1 ? "" : "s"} dropped, the timeline rules would fail:`);
+      for (const d of dropped) log(`  ${d}`);
+    }
   }
   if (flag(args, "onsets")) {
     log("");
@@ -697,9 +850,12 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
   diff [tagA] [tagB] [--min 0.002]  which check frames changed between two runs, with diff images
   motion --scene a[,b] [--width 320]
                                     frame-to-frame motion curve: when it settles, how long it holds, where it jumps
-  audio [file] [--window 0.25]      rms profile of the film, silence, and every cue of the timeline checked
+  audio [file] [--window 0.25] [--scene id]
+                                    music coverage (bed end, loop seams, loud span for trim), then the rms profile of the film and every cue checked
+                                    --scene id: every cue that starts in or sounds during that scene, in scene-local time
+  sfx [--all] [--json]              every cue file once: length, attack, tail, peak; warns when a "hit" is a riser or a bed is too short
   beats [file] [--tolerance 60] [--suggest]
-                                    onsets in the mix, beat grid from the music, every cut measured; --suggest quantizes scene lengths to the grid
+                                    onsets in the mix, beat grid from the music, every cut measured; --suggest quantizes scene lengths to the grid (timeline rules veto)
 
   render [--scene a,b] [--force] [--crf 18] [--web] [--no-audio] [--out file]
                                     scene segments (cached), parts by concat, music and sfx mixed from the timeline
@@ -724,6 +880,7 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   diff: cmdDiff,
   motion: cmdMotion,
   audio: cmdAudio,
+  sfx: cmdSfx,
   beats: cmdBeats,
   render: cmdRender,
   review: cmdReview,
