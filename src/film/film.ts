@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { renderMedia } from "@remotion/renderer";
 import type { LoadedConfig } from "../config.ts";
 import { compositionFor, type Compiled, type CompiledPart, type CompiledScene, type AudioCue } from "../timeline/schema.ts";
-import { resolve as resolveRef } from "../timeline/resolve.ts";
+import { resolve as resolveRef, resolveUnclamped } from "../timeline/resolve.ts";
+import { cuesInSpan, volumeExprFor, type Span } from "./mix.ts";
 import { getComposition, type Renderer } from "../render/frames.ts";
 import { ensureDir, hashString, run, ffprobeDuration, ms, nextPort } from "../util.ts";
 import { cuePlacement, cueSpan, sourceSeconds } from "../audio/coverage.ts";
@@ -26,12 +27,15 @@ export const renderSegments = async (
   c: Compiled,
   film: string,
   format: string,
-  opts: { only?: string[]; crf?: number; log?: (s: string) => void; concurrency?: number; force?: boolean } = {},
+  opts: { only?: string[]; subset?: string[]; crf?: number; log?: (s: string) => void; concurrency?: number; force?: boolean } = {},
 ): Promise<Map<string, SegmentResult[]>> => {
   const log = opts.log ?? (() => {});
   const crf = opts.crf ?? 18;
   const out = new Map<string, SegmentResult[]>();
   for (const part of c.parts) {
+    // subset: only these scenes exist for this call (a preview); the others are neither rendered nor listed
+    const wantedScenes = opts.subset ? part.scenes.filter((s) => opts.subset!.includes(s.id)) : part.scenes;
+    if (!wantedScenes.length) continue;
     const compId = compositionFor(part, format);
     const composition = await getComposition(serveUrl, compId);
     if (composition.durationInFrames !== part.dur) {
@@ -39,7 +43,7 @@ export const renderSegments = async (
     }
     const dir = ensureDir(join(cfg.cachePath, "segments", `${film}-${format}`, part.id));
     const results: SegmentResult[] = [];
-    for (const s of part.scenes) {
+    for (const s of wantedScenes) {
       const key = segmentKey(bundleHash, compId, s, crf);
       const file = join(dir, `${String(s.indexInPart).padStart(2, "0")}-${s.id}-${key}.mp4`);
       const wanted = !opts.only || opts.only.includes(s.id);
@@ -47,9 +51,7 @@ export const renderSegments = async (
         results.push({ scene: s, file, cached: true, ms: 0 });
         continue;
       }
-      if (!wanted && !existsSync(file)) {
-        // a scene we were told to skip has no cached segment: it must be rendered anyway
-      }
+      // a scene outside --scene with no cached segment is rendered anyway: the film needs every segment
       const t0 = performance.now();
       // video only: an AAC track per segment carries encoder padding, and concat would stretch the film by ~50 ms per scene
       await renderMedia({
@@ -92,12 +94,13 @@ export const renderPartAudio = async (
   c: Compiled,
   film: string,
   format: string,
-  opts: { log?: (s: string) => void; concurrency?: number } = {},
+  opts: { log?: (s: string) => void; concurrency?: number; parts?: string[] } = {},
 ): Promise<Map<string, string>> => {
   const log = opts.log ?? (() => {});
   const out = new Map<string, string>();
   const dir = ensureDir(join(cfg.cachePath, "segments", `${film}-${format}`, "audio"));
   for (const part of c.parts) {
+    if (opts.parts && !opts.parts.includes(part.id)) continue;
     const compId = compositionFor(part, format);
     const file = join(dir, `${part.id}-${hashString(bundleHash + compId)}.m4a`);
     if (!existsSync(file)) {
@@ -110,6 +113,73 @@ export const renderPartAudio = async (
     out.set(part.id, file);
   }
   return out;
+};
+
+/** where concatParts leaves the picture (segments + the parts' own sound, no timeline cues yet) */
+export const picturePath = (cfg: LoadedConfig, film: string, format: string) => join(cfg.cachePath, "film", `${film}-${format}-picture.mp4`);
+
+/**
+ * A preview clip: the segments of a contiguous run of scenes, the parts' own sound
+ * trimmed to those scenes, a part gap inside the run as black. Returns the picture and
+ * the film span it covers, so the mix can place the cues.
+ */
+export const concatScenes = async (
+  cfg: LoadedConfig,
+  c: Compiled,
+  scenes: CompiledScene[],
+  segments: Map<string, SegmentResult[]>,
+  partAudio: Map<string, string>,
+  film: string,
+  format: string,
+  size: { width: number; height: number },
+  opts: { log?: (s: string) => void; name?: string } = {},
+): Promise<{ picture: string; span: Span }> => {
+  const log = opts.log ?? (() => {});
+  const ordered = [...scenes].sort((a, b) => a.index - b.index);
+  if (!ordered.length) throw new Error("preview needs at least one scene");
+  for (let i = 1; i < ordered.length; i++) {
+    if (ordered[i].index !== ordered[i - 1].index + 1) throw new Error(`preview scenes must be contiguous: ${ordered[i - 1].id} (#${ordered[i - 1].index}) is not followed by ${ordered[i].id} (#${ordered[i].index})`);
+  }
+  const dir = ensureDir(join(cfg.cachePath, "film"));
+  const name = opts.name ?? `${film}-${format}-preview-${ordered.map((s) => s.id).join("+")}`;
+  const sec = (f: number) => (f / c.fps).toFixed(3);
+  const list: string[] = [];
+  const inputs: string[] = [];
+  const chains: string[] = [];
+  const cat: string[] = [];
+  let i = 1;
+  for (const [k, s] of ordered.entries()) {
+    const part = c.parts.find((p) => p.id === s.part)!;
+    if (k > 0 && s.indexInPart === 0 && part.gap > 0) {
+      const g = join(dir, `gap-${part.id}-${part.gap}.mp4`);
+      if (!existsSync(g)) await blackSegment(g, size.width, size.height, part.gap / c.fps, c.fps);
+      list.push(g);
+      chains.push(`anullsrc=r=48000:cl=stereo:d=${sec(part.gap)}[g${i}]`);
+      cat.push(`[g${i}]`);
+    }
+    const seg = (segments.get(part.id) ?? []).find((r) => r.scene.id === s.id);
+    if (!seg) throw new Error(`no segment for scene ${s.id}`);
+    list.push(seg.file);
+    const a = partAudio.get(part.id);
+    if (a) {
+      inputs.push("-i", a);
+      chains.push(`[${i}:a]aresample=48000,atrim=${sec(s.start)}:${sec(s.end)},asetpts=N/SR/TB,apad=whole_dur=${sec(s.dur)}[p${i}]`);
+    } else chains.push(`anullsrc=r=48000:cl=stereo:d=${sec(s.dur)}[p${i}]`);
+    cat.push(`[p${i}]`);
+    i++;
+  }
+  const listFile = join(dir, `${name}.txt`);
+  writeFileSync(listFile, list.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n"));
+  const video = join(dir, `${name}-video.mp4`);
+  const t0 = performance.now();
+  await run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-an", video]);
+  const graph = `${chains.join(";")};${cat.join("")}concat=n=${cat.length}:v=0:a=1[a]`;
+  const picture = join(dir, `${name}-picture.mp4`);
+  await run(["ffmpeg", "-y", "-v", "error", "-i", video, ...inputs, "-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", picture]);
+  // the clip starts at the first scene's start (a gap before it belongs to the previous run, not to the clip)
+  const span: Span = { start: ordered[0].filmStart / c.fps, end: ordered[ordered.length - 1].filmEnd / c.fps };
+  log(`preview ${ordered.map((s) => s.id).join("+")}: ${list.length} segment${list.length === 1 ? "" : "s"}, film ${span.start.toFixed(2)}s-${span.end.toFixed(2)}s in ${ms(t0)}`);
+  return { picture, span };
 };
 
 export const concatParts = async (
@@ -161,29 +231,10 @@ export const concatParts = async (
     }
   }
   const graph = `${chains.join(";")};${cat.join("")}concat=n=${cat.length}:v=0:a=1[a]`;
-  const out = join(dir, `${film}-${format}-picture.mp4`);
+  const out = picturePath(cfg, film, format);
   await run(["ffmpeg", "-y", "-v", "error", ...inputs, "-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", out]);
   log(`concat ${list.length} segments + ${partAudio.size} audio track${partAudio.size === 1 ? "" : "s"} in ${ms(t0)}`);
   return out;
-};
-
-const volumeExpr = (cue: AudioCue, c: Compiled, startSec: number): string => {
-  const g0 = cue.gain ?? 1;
-  const ramps = (cue.ramps ?? []).map((r) => ({ at: resolveRef(c, r.at).filmSeconds - startSec, to: r.to, over: r.over ?? 0 })).sort((a, b) => a.at - b.at);
-  let expr = String(g0);
-  let prev = g0;
-  // build from the last ramp inwards so the nesting reads left to right in time
-  const parts: string[] = [];
-  for (const r of ramps) {
-    const from = prev;
-    const seg = r.over > 0 ? `(${from}+(${r.to}-${from})*min(1,max(0,(t-${r.at.toFixed(3)})/${r.over})))` : String(r.to);
-    parts.push(`if(lt(t,${r.at.toFixed(3)}),__PREV__,${seg})`);
-    prev = r.to;
-  }
-  // nest: each later ramp wraps the earlier expression as its "__PREV__"
-  expr = String(g0);
-  for (const p of parts) expr = p.replace("__PREV__", expr);
-  return expr;
 };
 
 export const mixFilm = async (
@@ -192,13 +243,23 @@ export const mixFilm = async (
   picture: string,
   film: string,
   format: string,
-  opts: { out?: string; web?: boolean; log?: (s: string) => void; audioRoot?: string } = {},
+  opts: { out?: string; web?: boolean; log?: (s: string) => void; audioRoot?: string; span?: Span } = {},
 ): Promise<{ master: string; web?: string }> => {
   const log = opts.log ?? (() => {});
   const dir = ensureDir(join(cfg.cachePath, "out"));
   const master = opts.out ?? join(dir, `${film}-${format}.mp4`);
-  const cues = c.timeline.audio ?? [];
-  const total = c.seconds;
+  // the film span the picture covers: the whole film, or a preview clip that starts mid-film
+  const span: Span = opts.span ?? { start: 0, end: c.seconds };
+  const total = span.end - span.start;
+  const atFilmEnd = Math.abs(span.end - c.seconds) < 1e-3;
+  const cueFile = (cue: AudioCue) => (cue.file.startsWith("/") ? cue.file : join(opts.audioRoot ?? cfg.projectDir, cue.file));
+  const fileSeconds: Record<string, number> = {};
+  for (const cue of c.timeline.audio ?? []) {
+    if (!existsSync(cueFile(cue))) throw new Error(`audio cue "${cue.id}": file not found: ${cueFile(cue)}`);
+    if (!cue.loop && !cue.trim) fileSeconds[cue.id] = await ffprobeDuration(cueFile(cue));
+  }
+  const cues = cuesInSpan(c.timeline.audio ?? [], c, span, fileSeconds);
+  if (opts.span) log(`cues sounding in ${span.start.toFixed(2)}s-${span.end.toFixed(2)}s: ${cues.map((q) => q.id).join(", ") || "none"}`);
   if (!cues.length) {
     await run(["ffmpeg", "-y", "-v", "error", "-i", picture, "-c", "copy", master]);
   } else {
@@ -208,10 +269,11 @@ export const mixFilm = async (
     let nextInput = 1;
     const pre: string[] = [];
     for (const [i, cue] of cues.entries()) {
-      const file = cue.file.startsWith("/") ? cue.file : join(opts.audioRoot ?? cfg.projectDir, cue.file);
-      if (!existsSync(file)) throw new Error(`audio cue "${cue.id}": file not found: ${file}`);
-      // a cue may start before the film (e.g. "product - 9s" so the music's build lands on the product half): trim the head instead
-      const { start, headTrim } = cuePlacement(c, cue);
+      const file = cueFile(cue);
+      // a cue may start before the clip (before the film, or before a preview's first scene): trim the head instead
+      const raw = cuePlacement(c, cue).raw - span.start;
+      const start = Math.max(0, raw);
+      const headTrim = raw < 0 ? -raw : 0;
       const idx = i + 1;
       let src = `[${nextInput}:a]`;
       if (cue.loop) {
@@ -244,8 +306,9 @@ export const mixFilm = async (
       if (cue.trim && !cue.loop) f.push(`atrim=${cue.trim[0]}:${cue.trim[1]}`, "asetpts=N/SR/TB");
       if (headTrim > 0) f.push(`atrim=start=${headTrim.toFixed(3)}`, "asetpts=N/SR/TB");
       f.push(`atrim=0:${(total - start).toFixed(3)}`, "asetpts=N/SR/TB");
-      f.push(`volume='${volumeExpr(cue, c, start)}':eval=frame`);
-      if (cue.fadeOut) f.push(`afade=t=out:st=${(total - start - cue.fadeOut).toFixed(3)}:d=${cue.fadeOut}`);
+      f.push(`volume='${volumeExprFor(cue, c, span, start)}':eval=frame`);
+      // the fade-out belongs to the film's end; a preview that stops earlier keeps the bed running
+      if (cue.fadeOut && atFilmEnd) f.push(`afade=t=out:st=${(total - start - cue.fadeOut).toFixed(3)}:d=${cue.fadeOut}`);
       const delay = Math.round(start * 1000);
       if (delay > 0) f.push(`adelay=${delay}|${delay}`);
       chains.push(`${src}${f.join(",")}[a${idx}]`);

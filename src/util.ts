@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, readdirSync, statSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync, statSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 
@@ -33,6 +33,90 @@ export const hashDir = (dir: string, opts: { ignore?: string[] } = {}): string =
   };
   walk(dir);
   return h.digest("hex").slice(0, 12);
+};
+
+/** bytes under a dir, or of a file (0 when it does not exist) */
+export const dirSize = (dir: string): number => {
+  if (!existsSync(dir)) return 0;
+  if (!statSync(dir).isDirectory()) return statSync(dir).size;
+  let n = 0;
+  const walk = (d: string) => {
+    for (const name of readdirSync(d)) {
+      const p = join(d, name);
+      const st = statSync(p);
+      if (st.isDirectory()) walk(p);
+      else n += st.size;
+    }
+  };
+  walk(dir);
+  return n;
+};
+
+/** newest mtime (ms) of any file under `dir`, skipping node_modules and caches; the file that carries it comes along */
+export const newestMtime = (dir: string, ignore: string[] = []): { file: string; mtimeMs: number } | null => {
+  if (!existsSync(dir)) return null;
+  const skip = new Set(["node_modules", ".harness", "out", ".git", ...ignore]);
+  let best: { file: string; mtimeMs: number } | null = null;
+  const walk = (d: string) => {
+    for (const name of readdirSync(d)) {
+      if (skip.has(name)) continue;
+      const p = join(d, name);
+      const st = statSync(p);
+      if (st.isDirectory()) walk(p);
+      else if (!best || st.mtimeMs > best.mtimeMs) best = { file: p, mtimeMs: st.mtimeMs };
+    }
+  };
+  walk(dir);
+  return best;
+};
+
+export const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+
+/* ---------- session lock ---------- */
+
+export type Lock = { pid: number; startedAt: string; cmd: string; session: string | null };
+
+const pidAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/**
+ * Advisory lock for commands that write into the cache. A live lock held by another
+ * process is reported, never enforced: two agents may share a cache on purpose.
+ * The lock is removed when `fn` returns or throws, and on process exit.
+ */
+export const withLock = async <T,>(cacheDir: string, cmd: string, fn: () => Promise<T>, warn: (s: string) => void): Promise<T> => {
+  ensureDir(cacheDir);
+  const file = join(cacheDir, "lock.json");
+  if (existsSync(file)) {
+    try {
+      const other = readJson<Lock>(file);
+      if (other.pid !== process.pid && pidAlive(other.pid)) warn(`warning: another mh is writing this cache: "${other.cmd}" pid ${other.pid}${other.session ? ` session ${other.session}` : ""} since ${other.startedAt}`);
+    } catch {
+      /* unreadable lock: overwrite */
+    }
+  }
+  const lock: Lock = { pid: process.pid, startedAt: new Date().toISOString(), cmd, session: process.env.CLAUDE_SESSION_ID ?? null };
+  writeFileSync(file, JSON.stringify(lock, null, 2));
+  const release = () => {
+    try {
+      if (existsSync(file) && readJson<Lock>(file).pid === process.pid) rmSync(file);
+    } catch {
+      /* already gone */
+    }
+  };
+  process.on("exit", release);
+  try {
+    return await fn();
+  } finally {
+    release();
+    process.off("exit", release);
+  }
 };
 
 export const hashString = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 12);
