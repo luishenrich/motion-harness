@@ -617,8 +617,8 @@ const cmdDiff = async (args: Args) => {
 /** one scene rendered at several concurrencies, full and draft: the numbers to pick the render defaults from on this machine */
 const cmdBench = async (args: Args) => {
   const x = await ctx(args);
-  const ids = list(args, "scene");
-  if (!ids?.length) die("usage: mh bench --scene <id> [--concurrencies 4,6,8,10]");
+  const ids = list(args, "scene") ?? [];
+  if (!ids.length) return die("usage: mh bench --scene <id> [--concurrencies 4,6,8,10]");
   const s = x.c.scenes.find((k) => k.id === ids[0]);
   if (!s) return die(`no scene "${ids[0]}"`);
   const dur = s.dur;
