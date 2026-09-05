@@ -614,6 +614,30 @@ const cmdDiff = async (args: Args) => {
   log(`scenes touched: ${touched.map(([id]) => id).join(", ") || "none"}${untouched.length ? `   unchanged: ${untouched.join(", ")}` : ""}`);
 };
 
+/** one scene rendered at several concurrencies, full and draft: the numbers to pick the render defaults from on this machine */
+const cmdBench = async (args: Args) => {
+  const x = await ctx(args);
+  const ids = list(args, "scene");
+  if (!ids?.length) die("usage: mh bench --scene <id> [--concurrencies 4,6,8,10]");
+  const s = x.c.scenes.find((k) => k.id === ids[0]);
+  if (!s) return die(`no scene "${ids[0]}"`);
+  const dur = s.dur;
+  const concs = (str(args, "concurrencies") ?? "4,6,8,10").split(",").map(Number);
+  const rows: (string | number)[][] = [];
+  await withRenderer(x, async (r, serveUrl, bundleHash) => {
+    for (const q of [FULL, DRAFT]) {
+      for (const conc of concs) {
+        const t0 = performance.now();
+        await renderSegments(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { subset: [s.id], only: [s.id], quality: q, concurrency: conc, force: true });
+        const sec = (performance.now() - t0) / 1000;
+        rows.push([q === FULL ? "full" : "draft", conc, `${sec.toFixed(1)}s`, `${(dur / sec).toFixed(1)} f/s`]);
+        log(`${q === FULL ? "full " : "draft"} concurrency ${conc}: ${sec.toFixed(1)}s for ${dur}f`);
+      }
+    }
+  });
+  log(table(rows, ["quality", "concurrency", "time", "speed"]));
+};
+
 const cmdMotion = async (args: Args) => {
   const x = await ctx(args);
   const scenes = scenesOf(x.c, args);
@@ -1177,6 +1201,7 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
   beats [file] [--tolerance 60] [--suggest]
                                     onsets in the mix, beat grid from the music, every cut measured; --suggest quantizes scene lengths to the grid (timeline rules veto)
 
+  bench --scene id [--concurrencies 4,6,8,10]   one scene at each concurrency, full and draft: pick the defaults from numbers
   render [--scene a,b] [--force] [--draft] [--crf 18] [--web] [--no-audio] [--out file]
                                     scene segments (cached), parts by concat, music and sfx mixed from the timeline
   render --scene a[,b] --preview    only those scenes as a clip, with the cues that sound in them (contiguous scenes)
@@ -1206,6 +1231,7 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   lint: cmdLint,
   diff: cmdDiff,
   motion: cmdMotion,
+  bench: cmdBench,
   audio: cmdAudio,
   sfx: cmdSfx,
   beats: cmdBeats,

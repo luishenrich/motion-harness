@@ -17,10 +17,10 @@ import { cuePlacement, cueSpan, sourceSeconds } from "../audio/coverage.ts";
 
 export type SegmentResult = { scene: CompiledScene; file: string; cached: boolean; ms: number };
 
-export type Quality = { crf: number; scale: number; preset: string };
+export type Quality = { crf: number; scale: number; preset: string; hw?: boolean };
 export const FULL: Quality = { crf: 18, scale: 1, preset: "medium" };
-/** half size, fast encoder, coarse crf: a review render, not a delivery */
-export const DRAFT: Quality = { crf: 28, scale: 0.5, preset: "veryfast" };
+/** half size, the Mac's own encoder (VideoToolbox, frees the cores for Chrome), coarse crf: a review render, not a delivery */
+export const DRAFT: Quality = { crf: 28, scale: 0.5, preset: "veryfast", hw: true };
 export const segmentKey = (sourceHash: string, compositionId: string, s: CompiledScene, q: Quality) =>
   hashString(JSON.stringify([sourceHash, compositionId, s.id, s.start, s.end, s.scene, q]));
 
@@ -68,6 +68,7 @@ export const renderSegments = async (
         crf: q.crf,
         scale: q.scale,
         x264Preset: q.preset as "medium",
+        hardwareAcceleration: q.hw ? "if-possible" : "disable",
         outputLocation: file,
         frameRange: [s.start, s.end - 1],
         inputProps: {},
