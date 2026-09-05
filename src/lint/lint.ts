@@ -3,12 +3,15 @@
  *
  * Static: colors in source files against the token list.
  * Timeline: scene durations, text durations, events inside their scene, overlaps.
- * Rendered (from probe results): colors actually painted, safe zones, expected probes visible.
+ * Rendered (from probe results): colors actually painted, safe zones, expected probes visible,
+ * boxes leaving the frame, text wrapping past its declared lines, probed elements colliding,
+ * demo scenes sharing one stage top, and the same probes visible in every format.
  */
 import { readFileSync } from "node:fs";
 import type { LoadedConfig } from "../config.ts";
 import type { Compiled } from "../timeline/schema.ts";
-import type { ProbeResult } from "../render/frames.ts";
+import { resolve } from "../timeline/resolve.ts";
+import type { ProbeItem, ProbeResult } from "../render/frames.ts";
 
 export type Finding = { level: "error" | "warn"; rule: string; where: string; message: string };
 
@@ -86,12 +89,112 @@ export const lintTimeline = (cfg: LoadedConfig, c: Compiled): Finding[] => {
   return out;
 };
 
-export const lintProbe = (cfg: LoadedConfig, c: Compiled, format: string, frames: { label: string; sceneId: string; probe: ProbeResult }[]): Finding[] => {
+/** what the probe adds on top of the box: ids for the ancestor exclusion, line metrics for the wrap rule */
+export type LayoutItem = ProbeItem & { id?: number; ancestors?: number[]; lineHeight?: string; lines?: number; brs?: number };
+
+export type ProbeFrame = { label: string; sceneId: string; probe: ProbeResult; local?: number; partFrame?: number };
+
+const OVERFLOW_PX = 2;
+const COLLISION_PX = 4;
+const WRAP_PX = 4;
+const SAME_TOP_PX = 3;
+
+const lineHeightOf = (it: LayoutItem): number => {
+  const lh = parseFloat(it.lineHeight ?? "");
+  if (Number.isFinite(lh) && lh > 0) return lh;
+  const fs = parseFloat(it.fontSize ?? "");
+  return Number.isFinite(fs) && fs > 0 ? fs * 1.2 : 0;
+};
+
+const isText = (it: LayoutItem) => it.kind === "text" || (it.kind === "probe" && !!it.text);
+
+export const lintOverflow = (label: string, probe: ProbeResult): Finding[] => {
+  const out: Finding[] = [];
+  const { w: W, h: H } = probe.viewport;
+  for (const it of probe.items as LayoutItem[]) {
+    if (it.opacity <= 0.05 || it.w <= 0 || it.h <= 0) continue;
+    const sides: string[] = [];
+    if (it.x < -OVERFLOW_PX) sides.push(`left by ${-it.x}px`);
+    if (it.y < -OVERFLOW_PX) sides.push(`top by ${-it.y}px`);
+    if (it.x + it.w > W + OVERFLOW_PX) sides.push(`right by ${it.x + it.w - W}px`);
+    if (it.y + it.h > H + OVERFLOW_PX) sides.push(`bottom by ${it.y + it.h - H}px`);
+    if (sides.length) out.push({ level: "error", rule: "overflow", where: `${label} ${it.key}`, message: `leaves the ${W}x${H} frame ${sides.join(", ")} (box ${it.x},${it.y} ${it.w}x${it.h})` });
+  }
+  return out;
+};
+
+export const lintWrap = (label: string, probe: ProbeResult): Finding[] => {
+  const out: Finding[] = [];
+  for (const it of probe.items as LayoutItem[]) {
+    if (!it.visible || !isText(it)) continue;
+    const lh = lineHeightOf(it);
+    if (!lh) continue;
+    const declared = it.lines !== undefined && it.lines > 0;
+    const expected = declared ? it.lines! : (it.brs ?? 0) + 1;
+    const limit = lh * expected + WRAP_PX;
+    if (it.h <= limit) continue;
+    const got = Math.round(it.h / lh);
+    out.push({ level: declared ? "error" : "warn", rule: "wrap", where: `${label} ${it.key}`, message: `wraps to ${got} lines, ${declared ? "declared" : "expected"} ${expected} (ink ${it.h}px, line ${lh}px)` });
+  }
+  return out;
+};
+
+const related = (a: LayoutItem, b: LayoutItem) =>
+  a.id !== undefined && b.id !== undefined && ((a.ancestors ?? []).includes(b.id) || (b.ancestors ?? []).includes(a.id));
+
+export const lintCollision = (label: string, probe: ProbeResult): Finding[] => {
+  const out: Finding[] = [];
+  const items = (probe.items as LayoutItem[]).filter((it) => it.visible && it.w > 0 && it.h > 0 && (it.kind === "probe" || it.kind === "text"));
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      const a = items[i], b = items[j];
+      if (a.kind !== "probe" && b.kind !== "probe") continue;
+      if (related(a, b)) continue;
+      const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      if (ox > COLLISION_PX && oy > COLLISION_PX) out.push({ level: "error", rule: "collision", where: `${label} ${a.key}`, message: `overlaps "${b.key}" by ${ox}x${oy}px` });
+    }
+  }
+  return out;
+};
+
+/** the frame a lint should look at for a scene: the settled one, else (unless strict) the first probed frame of the scene */
+const settledFrame = (c: Compiled, frames: ProbeFrame[], sceneId: string, strict = false): ProbeFrame | undefined => {
+  const s = c.scenes.find((x) => x.id === sceneId);
+  const mine = frames.filter((f) => f.sceneId === sceneId && f.probe && !f.probe.error);
+  if (!mine.length) return undefined;
+  const local = s ? s.settled - s.start : 0;
+  return mine.find((f) => f.local === local) ?? mine.find((f) => f.label === `${sceneId}+${local}`) ?? (strict ? undefined : mine[0]);
+};
+
+export const lintSameTop = (c: Compiled, frames: ProbeFrame[]): Finding[] => {
+  const out: Finding[] = [];
+  const tops: { sceneId: string; label: string; top: number }[] = [];
+  for (const s of c.scenes) {
+    if (s.stage !== "demo") continue;
+    const f = settledFrame(c, frames, s.id);
+    if (!f) continue;
+    const st = f.probe.items.find((i) => i.kind === "probe" && i.key === "stage");
+    if (!st) {
+      out.push({ level: "warn", rule: "same-top", where: `${f.label} stage`, message: `demo scene has no data-probe="stage" element` });
+      continue;
+    }
+    tops.push({ sceneId: s.id, label: f.label, top: st.y });
+  }
+  if (tops.length < 2) return out;
+  const sorted = tops.map((t) => t.top).sort((a, b) => a - b);
+  const median = sorted[Math.floor((sorted.length - 1) / 2)];
+  for (const t of tops) if (Math.abs(t.top - median) > SAME_TOP_PX) out.push({ level: "error", rule: "same-top", where: `${t.label} stage`, message: `stage top ${t.top}px, the other demo scenes sit at ${median}px (tops: ${tops.map((x) => `${x.sceneId}=${x.top}`).join(", ")})` });
+  return out;
+};
+
+export const lintProbe = (cfg: LoadedConfig, c: Compiled, format: string, frames: ProbeFrame[]): Finding[] => {
   const out: Finding[] = [];
   const { colors, alphaOf } = allowedSet(cfg);
   const rules = { ...(c.timeline.rules ?? {}), ...(cfg.rules ?? {}) };
   const safe = rules.safeZone?.[format];
   const seenColor = new Map<string, string>();
+  const wrapped = new Set<string>();
   for (const f of frames) {
     if (!f.probe || f.probe.error) {
       out.push({ level: "warn", rule: "probe-missing", where: f.label, message: f.probe?.error ?? "no probe result" });
@@ -124,6 +227,73 @@ export const lintProbe = (cfg: LoadedConfig, c: Compiled, format: string, frames
         if (!it) out.push({ level: "error", rule: "probe-present", where: `${f.label} ${key}`, message: "expected data-probe element not in the DOM" });
         else if (!it.visible) out.push({ level: "warn", rule: "probe-visible", where: `${f.label} ${key}`, message: `present but not visible (opacity ${it.opacity}, ${it.w}x${it.h} at ${it.x},${it.y})` });
       }
+    }
+    out.push(...lintOverflow(f.label, f.probe), ...lintCollision(f.label, f.probe));
+    // a wrapped line stays wrapped for the whole scene, one finding per scene and element is enough
+    for (const w of lintWrap(f.label, f.probe)) {
+      const k = `${f.sceneId} ${w.where.slice(f.label.length + 1)}`;
+      if (wrapped.has(k)) continue;
+      wrapped.add(k);
+      out.push(w);
+    }
+  }
+  out.push(...lintSameTop(c, frames));
+  return out;
+};
+
+/** a cursor leg as the film config may declare it; only the frame refs are read here */
+export type CursorLeg = { at?: string | number; from?: string | number; to?: string | number };
+
+export type LegFrame = { ref: string; sceneId: string; partFrame: number };
+
+/** the frames a film's cursor legs land on, resolved against the timeline; refs the timeline does not know are skipped */
+export const cursorLegFrames = (c: Compiled, film: unknown): LegFrame[] => {
+  const legs = (film as { cursor?: { legs?: unknown } } | undefined)?.cursor?.legs;
+  if (!Array.isArray(legs)) return [];
+  const out: LegFrame[] = [];
+  for (const leg of legs as CursorLeg[]) {
+    if (!leg || typeof leg !== "object") continue;
+    for (const ref of [leg.at, leg.from, leg.to]) {
+      if (ref === undefined || ref === null) continue;
+      try {
+        const L = resolve(c, ref);
+        if (!out.some((o) => o.sceneId === L.scene.id && o.partFrame === L.partFrame)) out.push({ ref: String(ref), sceneId: L.scene.id, partFrame: L.partFrame });
+      } catch {
+        /* a ref the timeline cannot place is the timeline lint's business */
+      }
+    }
+  }
+  return out;
+};
+
+/** the same probes visible in every format at the settled frame, and a cursor at every leg in every format */
+export const lintFormatParity = (c: Compiled, runs: Record<string, ProbeFrame[]>, legs: LegFrame[] = []): Finding[] => {
+  const out: Finding[] = [];
+  const formats = Object.keys(runs);
+  for (const s of c.scenes) {
+    const seen: Record<string, Set<string>> = {};
+    for (const fmt of formats) {
+      const f = settledFrame(c, runs[fmt], s.id, true);
+      if (f) seen[fmt] = new Set(f.probe.items.filter((i) => i.kind === "probe" && i.visible).map((i) => i.key));
+    }
+    const have = Object.keys(seen);
+    if (have.length < 2) continue;
+    const union = new Set(have.flatMap((fmt) => [...seen[fmt]]));
+    for (const key of union) {
+      const missing = have.filter((fmt) => !seen[fmt].has(key));
+      if (missing.length) out.push({ level: "error", rule: "format-parity", where: `${s.id} ${key}`, message: `visible in ${have.filter((fmt) => seen[fmt].has(key)).join(", ")} but not in ${missing.join(", ")}` });
+    }
+  }
+  for (const leg of legs) {
+    for (const fmt of formats) {
+      const f = runs[fmt].find((x) => x.sceneId === leg.sceneId && x.partFrame === leg.partFrame && x.probe && !x.probe.error);
+      if (!f) {
+        out.push({ level: "warn", rule: "format-parity", where: `${leg.sceneId} cursor@${leg.ref}`, message: `no probe frame at part frame ${leg.partFrame} in ${fmt}` });
+        continue;
+      }
+      const cur = f.probe.items.find((i) => i.kind === "probe" && i.key === "cursor");
+      if (!cur) out.push({ level: "error", rule: "format-parity", where: `${leg.sceneId} cursor@${leg.ref}`, message: `no data-probe="cursor" element in ${fmt} at ${f.label}` });
+      else if (!cur.visible) out.push({ level: "error", rule: "format-parity", where: `${leg.sceneId} cursor@${leg.ref}`, message: `cursor not visible in ${fmt} at ${f.label} (opacity ${cur.opacity}, ${cur.w}x${cur.h} at ${cur.x},${cur.y})` });
     }
   }
   return out;

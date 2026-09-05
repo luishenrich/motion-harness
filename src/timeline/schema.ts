@@ -27,6 +27,8 @@ export type Scene = {
   exit?: string | Transition;
   /** free label for the background, used in sheets and lint (e.g. "dark", "cream") */
   ground?: string;
+  /** free label for the kind of scene; "demo" scenes share the stage top per format (lint `same-top`) */
+  stage?: string;
   /** on-screen copy, used by the text-duration rule */
   text?: string | string[];
   why?: string;
@@ -111,6 +113,7 @@ export type CompiledScene = {
   enter: Transition;
   exit?: Transition;
   ground?: string;
+  stage?: string;
   text?: string[];
   why?: string;
   /** first frame inside the part composition */
@@ -197,6 +200,7 @@ export const compile = (t: Timeline): Compiled => {
         enter,
         exit,
         ground: s.ground,
+        stage: s.stage,
         text: s.text === undefined ? undefined : Array.isArray(s.text) ? s.text : [s.text],
         why: s.why,
         start: at,

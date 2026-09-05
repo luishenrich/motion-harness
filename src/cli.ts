@@ -15,7 +15,7 @@ import { timelineMarkdown, timelineJson } from "./timeline/docs.ts";
 import { bundleProject } from "./render/bundle.ts";
 import { openRenderer, renderFrameSet, getComposition, type ProbeResult, type Renderer } from "./render/frames.ts";
 import { makeSheet, type SheetCell } from "./sheet/sheet.ts";
-import { lintStaticColors, lintTimeline, lintProbe, formatFindings, type Finding } from "./lint/lint.ts";
+import { lintStaticColors, lintTimeline, lintProbe, lintFormatParity, cursorLegFrames, formatFindings, type Finding, type ProbeFrame } from "./lint/lint.ts";
 import { diffSets } from "./diff/diff.ts";
 import { measureScene, sparkline } from "./motion/metrics.ts";
 import { audioProfile, rmsAt, db } from "./audio/probe.ts";
@@ -182,6 +182,10 @@ const cmdFrames = async (args: Args) => {
   const probe = (str(args, "probe") as "probe" | "text" | "all" | undefined) ?? (flag(args, "probe") ? "probe" : false);
   const tag = str(args, "tag", stamp())!;
   const dense = num(args, "dense", 0) || undefined;
+  const extra = (list(args, "at") ?? []).map((ref) => {
+    const L = resolveRef(x.c, ref);
+    return { ref, sceneId: L.scene.id, partFrame: L.partFrame };
+  });
   const t0 = performance.now();
   const manifest = await withRenderer(x, async (r, serveUrl, bundleHash) => {
     const dir = ensureDir(join(runsDir(x), tag));
@@ -191,7 +195,7 @@ const cmdFrames = async (args: Args) => {
       if (!ps.length) continue;
       const compId = compositionFor(part, x.format);
       const jobs = ps.flatMap((s) =>
-        checkFramesFor(s, { dense }).map((cf) => ({
+        [...checkFramesFor(s, { dense }), ...extra.filter((e) => e.sceneId === s.id).map((e) => ({ local: e.partFrame - s.start, partFrame: e.partFrame, filmFrame: s.filmStart + e.partFrame - s.start, kind: "check" as const, label: `at ${e.ref}` }))].map((cf) => ({
           frame: cf.partFrame,
           file: join(dir, part.id, `f${String(cf.partFrame).padStart(5, "0")}.png`),
           scene: s,
@@ -308,26 +312,37 @@ const cmdProbe = async (args: Args) => {
 };
 
 const cmdLint = async (args: Args) => {
-  const x = await ctx(args);
+  // --format all (the default when the film has more than one format) lints every format and compares them
+  const wantAll = str(args, "format") === "all";
+  const x = await ctx(wantAll ? { ...args, format: false } : args);
+  const film = x.cfg.films[x.filmName];
+  const formats = wantAll || (str(args, "format") === undefined && Object.keys(film.formats).length > 1) ? Object.keys(film.formats) : [x.format];
   const findings: Finding[] = [];
   const which = { static: flag(args, "static"), timeline: flag(args, "timeline"), rendered: flag(args, "rendered") };
   const none = !which.static && !which.timeline && !which.rendered;
   if (none || which.timeline) findings.push(...lintTimeline(x.cfg, x.c));
   if (none || which.static) findings.push(...(await lintStaticColors(x.cfg)));
   if (which.rendered) {
-    let m: Manifest | null = null;
-    const tag = str(args, "from") ?? latestTag(x);
-    if (tag) {
-      const cand = loadRun(x, tag);
-      if (cand.probe) m = cand;
+    const legs = cursorLegFrames(x.c, film);
+    const runs: Record<string, ProbeFrame[]> = {};
+    for (const format of formats) {
+      const xf = formats.length > 1 ? await ctx({ ...args, format }) : x;
+      let m: Manifest | null = null;
+      const tag = str(args, "from") ?? latestTag(xf);
+      if (tag) {
+        const cand = loadRun(xf, tag);
+        if (cand.probe) m = cand;
+      }
+      if (!m) {
+        log(`${format}: no probe run found, rendering settled frames with the probe`);
+        await cmdFrames({ ...args, format, probe: "text", quiet: true, tag: `lint-${stamp()}`, ...(legs.length ? { at: legs.map((l) => l.ref).join(",") } : {}) });
+        m = loadRun(xf);
+      }
+      const frames: ProbeFrame[] = m.frames.filter((f) => f.probeFile && f.kind !== "transition").map((f) => ({ label: `${f.scene}+${f.local}`, sceneId: f.scene, local: f.local, partFrame: f.partFrame, probe: readJson<ProbeResult>(f.probeFile!) }));
+      runs[format] = frames;
+      findings.push(...lintProbe(xf.cfg, xf.c, format, frames).map((f) => (formats.length > 1 ? { ...f, where: `${format} ${f.where}` } : f)));
     }
-    if (!m) {
-      log("no probe run found, rendering settled frames with the probe");
-      await cmdFrames({ ...args, probe: "text", quiet: true, tag: `lint-${stamp()}` });
-      m = loadRun(x);
-    }
-    const frames = m.frames.filter((f) => f.probeFile && f.kind !== "transition").map((f) => ({ label: `${f.scene}+${f.local}`, sceneId: f.scene, probe: readJson<ProbeResult>(f.probeFile!) }));
-    findings.push(...lintProbe(x.cfg, x.c, x.format, frames));
+    findings.push(...lintFormatParity(x.c, runs, legs));
   }
   log(formatFindings(findings));
   const errors = findings.filter((f) => f.level === "error").length;
@@ -564,14 +579,15 @@ const help = `mh <command> [--project dir] [--film name] [--format wide]
   doctor                            ffmpeg, config, and composition length vs timeline (catches drift)
   bundle [--force]                  bundle the project through the harness wrapper
 
-  frames [--scene a,b] [--dense N] [--probe text] [--tag t] [--sheet]
-                                    render the check frames of each scene (enter, settled, events, mid, last)
+  frames [--scene a,b] [--dense N] [--probe text] [--tag t] [--sheet] [--at ref,ref]
+                                    render the check frames of each scene (enter, settled, events, mid, last), plus any --at refs
   sheet [--scene a,b] [--from tag] [--all] [--columns 4]
                                     contact sheets with frame numbers, scene addresses and transition marks
   probe <ref> [--mode text|probe|all] [--find text] [--key k] [--json]   --key prints one element's centre (cursor targets)
                                     where is what: element boxes, colors, fonts at a frame, straight from the DOM
-  lint [--static] [--timeline] [--rendered] [--no-fail]
-                                    colors vs tokens (source and painted), text durations, events, safe zone
+  lint [--static] [--timeline] [--rendered] [--format all] [--no-fail]
+                                    colors vs tokens (source and painted), text durations, events, safe zone,
+                                    overflow, wrap, collision, same-top, format-parity (--rendered runs every format by default)
   diff [tagA] [tagB] [--min 0.002]  which check frames changed between two runs, with diff images
   motion --scene a[,b] [--width 320]
                                     frame-to-frame motion curve: when it settles, how long it holds, where it jumps

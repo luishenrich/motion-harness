@@ -9,6 +9,12 @@
  *
  * Modes: "probe" (only [data-probe] elements), "text" (plus every element that
  * carries its own text), "all" (text plus img/svg/button/input).
+ *
+ * Every item carries an `id` and the `ancestors` ids of the other items that
+ * contain it (so a lint can exclude parent/child pairs), its computed
+ * `lineHeight`, the number of direct `<br>` children (`brs`) and the value of
+ * an optional `data-lines` attribute (`lines`), the line count an author
+ * declares for a text element.
  */
 export const PROBE_MARK = "__HARNESS_PROBE__";
 
@@ -34,8 +40,9 @@ const __ownText = (el) => {
 const __measure = (mode, settleMs) => {
   const W = window.innerWidth, H = window.innerHeight;
   const items = [];
+  const els = [];
   const colors = new Map();
-  const seen = new Set();
+  const seen = new Map();
   const __inkRect = (el) => {
     // for text carriers, measure the glyph run instead of the box (a full-width centered line is not full-width ink)
     const own = [...el.childNodes].filter((c) => c.nodeType === 3 && c.textContent.trim());
@@ -48,13 +55,20 @@ const __measure = (mode, settleMs) => {
   };
   const add = (el, key, kind) => {
     if (seen.has(el)) return;
-    seen.add(el);
+    const id = items.length;
+    seen.set(el, id);
+    els.push(el);
     const r = __inkRect(el);
     const cs = getComputedStyle(el);
     const op = __effectiveOpacity(el);
     const visible = op > 0.02 && r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < W && r.top < H;
+    const linesAttr = el.getAttribute("data-lines");
+    const lines = linesAttr !== null && linesAttr !== "" && !isNaN(parseInt(linesAttr, 10)) ? parseInt(linesAttr, 10) : undefined;
+    let brs = 0;
+    for (const c of el.childNodes) if (c.nodeType === 1 && c.tagName === "BR") brs++;
     items.push({
-      key, kind, tag: el.tagName.toLowerCase(),
+      id, ancestors: [], key, kind, tag: el.tagName.toLowerCase(),
+      lineHeight: cs.lineHeight, lines, brs,
       x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height),
       visible, opacity: Math.round(op * 100) / 100,
       color: cs.color, bg: cs.backgroundColor, fontSize: cs.fontSize, fontWeight: cs.fontWeight, fontFamily: cs.fontFamily.split(",")[0].replace(/"/g, ""),
@@ -70,6 +84,13 @@ const __measure = (mode, settleMs) => {
       else if (mode === "all" && /^(img|svg|button|input|video|canvas)$/i.test(el.tagName)) add(el, el.tagName.toLowerCase() + ":" + (el.getAttribute("alt") || el.getAttribute("src") || "").split("/").pop().slice(0, 40), "media");
     });
   }
+  items.forEach((it, i) => {
+    let n = els[i].parentElement;
+    while (n) {
+      if (seen.has(n)) it.ancestors.push(seen.get(n));
+      n = n.parentElement;
+    }
+  });
   document.querySelectorAll("body *").forEach((el) => {
     const r = el.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return;

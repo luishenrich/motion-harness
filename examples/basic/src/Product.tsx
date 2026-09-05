@@ -33,7 +33,7 @@ const Card: React.FC<{ story: boolean }> = ({ story }) => {
     <Ground kind="cream">
       <div data-probe="card" style={{ position: "absolute", left: "50%", top: story ? 520 : 200, width: W, transform: `translateX(-50%) translateY(${(1 - up) * 40}px)`, opacity: up, background: colors.white, borderRadius: 24, boxShadow: "0 16px 48px rgba(0,0,0,0.07)", padding: 40 }}>
         <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: 2, textTransform: "uppercase", color: colors.forest }}>Placement check · 2 of 8</div>
-        <div data-probe="question" style={{ fontSize: 40, fontWeight: 500, marginTop: 16, lineHeight: 1.25 }}>Which structure produces the majority of ATP in a eukaryotic cell?</div>
+        <div data-probe="question" data-lines={2} style={{ fontSize: 40, fontWeight: 500, marginTop: 16, lineHeight: 1.25 }}>Which structure produces the majority of ATP in a eukaryotic cell?</div>
         <div style={{ display: "grid", gridTemplateColumns: story ? "1fr" : "1fr 1fr", gap: 14, marginTop: 28 }}>
           {["Golgi apparatus", "Mitochondrion", "Ribosome", "Lysosome"].map((o, i) => {
             const chosen = i === 1 && f >= click;
