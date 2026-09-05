@@ -131,7 +131,7 @@ export const resolve = (c: Compiled, ref: string | number): Location => {
 /** every frame a QA pass should look at for one scene, with a reason */
 export type CheckFrame = { local: number; partFrame: number; filmFrame: number; kind: "transition" | "settled" | "event" | "mid" | "end" | "check" | "dense"; label: string };
 
-export const checkFramesFor = (scene: CompiledScene, opts: { dense?: number; afterEvent?: number } = {}): CheckFrame[] => {
+export const checkFramesFor = (scene: CompiledScene, opts: { dense?: number; afterEvent?: number; eventWindow?: [number, number, number] | false } = {}): CheckFrame[] => {
   const out: CheckFrame[] = [];
   const push = (local: number, kind: CheckFrame["kind"], label: string) => {
     const l = Math.max(0, Math.min(scene.dur - 1, local));
@@ -153,7 +153,21 @@ export const checkFramesFor = (scene: CompiledScene, opts: { dense?: number; aft
   for (const f of scene.checkFrames) push(f, "check", `check ${f}`);
   push(scene.dur - 1, "end", "last");
   if (opts.dense) for (let f = 0; f < scene.dur; f += opts.dense) push(f, "dense", `every ${opts.dense}`);
+  // a gesture lives in the frames around its event: event-6 .. event+18 at 2 f steps, always, capped to the scene
+  if (opts.eventWindow !== false) {
+    const [before, after, step] = opts.eventWindow ?? EVENT_WINDOW;
+    for (const e of scene.events) {
+      for (let off = -before; off <= after; off += step) {
+        const l = e.local + off;
+        if (l < 0 || l >= scene.dur) continue;
+        push(l, "dense", `${e.name}${off < 0 ? "" : "+"}${off}`);
+      }
+    }
+  }
   return out.sort((a, b) => a.local - b.local);
 };
+
+/** frames before, frames after, step */
+export const EVENT_WINDOW: [number, number, number] = [6, 18, 2];
 
 export { compile };

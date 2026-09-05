@@ -72,6 +72,18 @@ describe("check frames", () => {
     expect(kinds).toContain("end:59");
     expect(new Set(f.map((x) => x.local)).size).toBe(f.length);
   });
+  test("every event carries its window event-6 .. event+18 at 2 f steps, capped to the scene", () => {
+    const f = checkFramesFor(c.scenes[1]); // hit at 20, dur 60
+    const locals = f.map((x) => x.local);
+    for (let l = 14; l <= 38; l += 2) expect(locals).toContain(l);
+    expect(f.find((x) => x.local === 14)?.label).toBe("hit-6");
+    expect(f.find((x) => x.local === 38)?.label).toBe("hit+18");
+    expect(f.find((x) => x.local === 20)?.kind).toBe("event");
+    // an event near the end never produces frames past the scene
+    const late = compile(defineTimeline({ fps: 30, parts: [{ id: "p", composition: "p", scenes: [{ id: "s", dur: 30, events: { late: 26 } }] }] })).scenes[0];
+    expect(Math.max(...checkFramesFor(late).map((x) => x.local))).toBe(29);
+    expect(checkFramesFor(late, { eventWindow: false }).some((x) => x.kind === "dense")).toBe(false);
+  });
 });
 
 describe("docs", () => {

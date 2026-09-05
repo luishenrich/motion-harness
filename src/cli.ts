@@ -6,7 +6,7 @@
  *   mh frames | sheet | probe | lint | diff | motion | audio
  *   mh render | review | feedback
  */
-import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, cpSync, rmSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { loadConfig, pickFilm, pickFormat, type LoadedConfig } from "./config.ts";
 import { compile, compositionFor, fmtTime, type Compiled, type CompiledScene } from "./timeline/schema.ts";
@@ -14,7 +14,10 @@ import { resolve as resolveRef, checkFramesFor, type CheckFrame } from "./timeli
 import { timelineMarkdown, timelineJson } from "./timeline/docs.ts";
 import { bundleProject } from "./render/bundle.ts";
 import { openRenderer, renderFrameSet, getComposition, type ProbeResult, type Renderer } from "./render/frames.ts";
-import { makeSheet, type SheetCell } from "./sheet/sheet.ts";
+import { makeSheet, zoomWindow, type SheetCell } from "./sheet/sheet.ts";
+import { parseFeedback, feedbackReport } from "./review/parse.ts";
+import { hashFrames, queryViews, bestMatches, refineFit, type Fit } from "./locate/locate.ts";
+import sharp from "sharp";
 import { lintStaticColors, lintTimeline, lintProbe, formatFindings, type Finding } from "./lint/lint.ts";
 import { diffSets } from "./diff/diff.ts";
 import { measureScene, sparkline } from "./motion/metrics.ts";
@@ -96,11 +99,16 @@ type Manifest = {
   frames: { file: string; part: string; composition: string; scene: string; local: number; partFrame: number; filmFrame: number; kind: CheckFrame["kind"]; label: string; probeFile?: string; ms: number }[];
 };
 
+const APPROVED = "approved";
+/** timestamped runs, oldest first; "latest" is a pointer file and "approved" a copy, neither is a run in this list */
+const runTags = (x: Ctx) => readdirSync(runsDir(x)).filter((d) => d !== "latest" && d !== APPROVED && existsSync(join(runsDir(x), d, "manifest.json"))).sort();
+const hasRun = (x: Ctx, tag: string) => existsSync(join(runsDir(x), tag, "manifest.json"));
+
 const loadRun = (x: Ctx, tag?: string): Manifest => {
   const t = tag ?? latestTag(x);
   if (!t) die(`no frames run yet for ${x.filmName}-${x.format}, run "mh frames" first`);
   const m = join(runsDir(x), t!, "manifest.json");
-  if (!existsSync(m)) die(`no run "${t}" (have: ${readdirSync(runsDir(x)).filter((d) => d !== "latest").join(", ")})`);
+  if (!existsSync(m)) die(`no run "${t}" (have: ${[...runTags(x), ...(hasRun(x, APPROVED) ? [APPROVED] : [])].join(", ")})`);
   return readJson<Manifest>(m);
 };
 
@@ -179,7 +187,9 @@ const cmdDoctor = async (args: Args) => {
 const cmdFrames = async (args: Args) => {
   const x = await ctx(args);
   const scenes = scenesOf(x.c, args);
-  const probe = (str(args, "probe") as "probe" | "text" | "all" | undefined) ?? (flag(args, "probe") ? "probe" : false);
+  const zoom = str(args, "zoom");
+  // a zoom needs the element boxes, so the probe runs even when nobody asked for it
+  const probe = (str(args, "probe") as "probe" | "text" | "all" | undefined) ?? (flag(args, "probe") || zoom ? "probe" : false);
   const tag = str(args, "tag", stamp())!;
   const dense = num(args, "dense", 0) || undefined;
   const t0 = performance.now();
@@ -241,30 +251,119 @@ const cmdSheet = async (args: Args) => {
   }
   m = loadRun(x, from);
   const scenes = scenesOf(x.c, args);
-  const dir = ensureDir(join(runsDir(x), m.tag, "sheets"));
+  const zoomKey = str(args, "zoom");
+  if (zoomKey && !m.probe) die(`run "${m.tag}" has no probe data, --zoom needs element boxes: mh frames --zoom ${zoomKey}`);
+  const zoom = zoomKey ? { width: Math.min(480, x.size.width), height: Math.min(320, x.size.height) } : undefined;
+  const dir = ensureDir(join(runsDir(x), m.tag, zoomKey ? `sheets-zoom-${zoomKey}` : "sheets"));
   const columns = num(args, "columns", 4);
   const aspect = x.size.width / x.size.height;
   const cellWidth = num(args, "cell", aspect < 1 ? 270 : 480);
   const outFiles: string[] = [];
+  let noBox = 0;
+  const cell = (f: Manifest["frames"][number], sub: string): SheetCell => {
+    const c: SheetCell = { file: f.file, title: `${f.scene}+${f.local}`, sub, kind: f.kind };
+    if (!zoomKey) return c;
+    const p = f.probeFile && existsSync(f.probeFile) ? readJson<ProbeResult>(f.probeFile) : null;
+    const it = p?.items.find((i) => i.key === zoomKey && i.visible);
+    if (it) c.crop = zoomWindow(it, x.size, zoom);
+    else {
+      c.mark = `no box for ${zoomKey}`;
+      noBox++;
+    }
+    return c;
+  };
+  const legend = "orange = inside a transition (never a defect by itself) · blue = named event · gray = settled · light gray = event window";
+  const zoomNote = zoomKey ? ` · zoom ${zoom!.width}x${zoom!.height} at 1:1 on "${zoomKey}"` : "";
   if (flag(args, "all")) {
-    const cells: SheetCell[] = m.frames.filter((f) => scenes.some((s) => s.id === f.scene)).map((f) => ({ file: f.file, title: `${f.scene}+${f.local}`, sub: `film ${fmtTime(f.filmFrame, x.c.fps)} f${f.filmFrame} · ${f.label}`, kind: f.kind }));
+    const cells = m.frames.filter((f) => scenes.some((s) => s.id === f.scene)).map((f) => cell(f, `film ${fmtTime(f.filmFrame, x.c.fps)} f${f.filmFrame} · ${f.label}`));
     const chunks = num(args, "per", 20);
     for (let i = 0; i < cells.length; i += chunks) {
       const out = join(dir, `all-${String(i / chunks + 1).padStart(2, "0")}.png`);
-      await makeSheet(cells.slice(i, i + chunks), out, { columns, cellWidth, aspect, header: `${x.filmName} ${x.format} · frames ${i + 1}-${Math.min(cells.length, i + chunks)} of ${cells.length} · run ${m.tag}`, footer: "orange = inside a transition (never a defect by itself) · blue = named event · gray = settled" });
+      await makeSheet(cells.slice(i, i + chunks), out, { columns, cellWidth, aspect, zoom, header: `${x.filmName} ${x.format} · frames ${i + 1}-${Math.min(cells.length, i + chunks)} of ${cells.length} · run ${m.tag}${zoomNote}`, footer: legend });
       outFiles.push(out);
     }
   } else {
     for (const s of scenes) {
       const fs = m.frames.filter((f) => f.scene === s.id);
       if (!fs.length) continue;
-      const cells: SheetCell[] = fs.map((f) => ({ file: f.file, title: `${f.scene}+${f.local}`, sub: `film ${fmtTime(f.filmFrame, x.c.fps)} f${f.filmFrame} · part f${f.partFrame} · ${f.label}`, kind: f.kind }));
+      const cells = fs.map((f) => cell(f, `film ${fmtTime(f.filmFrame, x.c.fps)} f${f.filmFrame} · part f${f.partFrame} · ${f.label}`));
       const out = join(dir, `${String(s.index).padStart(2, "0")}-${s.id}.png`);
-      await makeSheet(cells, out, { columns, cellWidth, aspect, header: `${x.filmName} ${x.format} · scene ${s.id} (#${s.index}, ${s.part}) · ${s.dur}f = ${(s.dur / x.c.fps).toFixed(2)}s · enter ${s.enter.type}${s.enter.dur ? ` ${s.enter.dur}f` : ""}${s.why ? ` · ${s.why}` : ""}`, footer: `events: ${s.events.map((e) => `${e.name}@${e.local}`).join("  ") || "none"} · orange = in transition · blue = event · gray = settled` });
+      await makeSheet(cells, out, { columns, cellWidth, aspect, zoom, header: `${x.filmName} ${x.format} · scene ${s.id} (#${s.index}, ${s.part}) · ${s.dur}f = ${(s.dur / x.c.fps).toFixed(2)}s · enter ${s.enter.type}${s.enter.dur ? ` ${s.enter.dur}f` : ""}${s.why ? ` · ${s.why}` : ""}${zoomNote}`, footer: `events: ${s.events.map((e) => `${e.name}@${e.local}`).join("  ") || "none"} · ${legend}` });
       outFiles.push(out);
     }
   }
   log(outFiles.join("\n"));
+  if (noBox) log(`${noBox} tile${noBox === 1 ? "" : "s"} without a visible "${zoomKey}" box show the full frame and are marked in the footer`);
+};
+
+const cmdApprove = async (args: Args) => {
+  const x = await ctx(args);
+  const from = str(args, "from") ?? latestTag(x);
+  if (!from) die(`no frames run to approve, run "mh frames" first`);
+  if (from === APPROVED) die(`"${APPROVED}" is the approved copy itself, pass a timestamped run`);
+  const src = loadRun(x, from!);
+  const dst = join(runsDir(x), APPROVED);
+  if (existsSync(dst)) rmSync(dst, { recursive: true, force: true });
+  cpSync(join(runsDir(x), from!), dst, { recursive: true, filter: (p) => !/\/(sheets(-zoom-[^/]+)?|diff-vs-[^/]+)$/.test(p) && !/\/(sheets(-zoom-[^/]+)?|diff-vs-[^/]+)\//.test(p) });
+  const re = (p: string | undefined) => p?.replace(join(runsDir(x), from!), dst);
+  const m: Manifest & { approvedFrom: string; approvedAt: string } = { ...src, tag: APPROVED, approvedFrom: from!, approvedAt: new Date().toISOString(), frames: src.frames.map((f) => ({ ...f, file: re(f.file)!, probeFile: re(f.probeFile) })) };
+  writeJson(join(dst, "manifest.json"), m);
+  log(`approved: ${from} (${m.frames.length} frames) -> ${dst}\nmh diff now compares ${APPROVED} vs latest by default`);
+};
+
+const cmdLocate = async (args: Args) => {
+  const x = await ctx(args);
+  const img = args._[0];
+  if (!img) die("usage: mh locate <image.png> [--from tag] [--n 3]");
+  if (!existsSync(img)) die(`no such image: ${img}`);
+  const m = loadRun(x, str(args, "from"));
+  const t0 = performance.now();
+  const hashes = await hashFrames(m.frames.map((f) => f.file), join(runsDir(x), m.tag, "hashes.json"), (d, t) => {
+    if (d % 20 === 0) log(`  hashing ${d}/${t} frames (cached for this run)`);
+  });
+  const q = await queryViews(resolvePath(img), x.size.width / x.size.height);
+  const n = num(args, "n", 3);
+  const all = bestMatches(m.frames, hashes, q, m.frames.length);
+  if (!all.length) die(`run "${m.tag}" has no frame files on disk`);
+  // the hash narrows the field, the refinement (paste slid over the frame at 16 scales) ranks the candidates
+  const maxCand = num(args, "candidates", 48);
+  const candidates = all.filter((b, i) => i < maxCand || b.distance <= all[0].distance + 2).slice(0, Math.max(maxCand, 12));
+  // a trim strips letterbox bars, but also the dark ground around a headline: try the paste both ways, keep the better fit
+  const queries: (string | Buffer)[] = [resolvePath(img)];
+  if (q.views.some((v) => v.name === "trimmed")) queries.push(await sharp(resolvePath(img)).flatten({ background: "#000" }).trim({ threshold: 24 }).png().toBuffer());
+  const bestOf = async (file: string, fn: (qq: string | Buffer) => Promise<Fit>) => {
+    let best: Fit & { query: string | Buffer } | null = null;
+    for (const qq of queries) {
+      const f = await fn(qq);
+      if (!best || (f.score > best.score && !f.flat) || (best.flat && !f.flat)) best = { ...f, query: qq };
+    }
+    return best!;
+  };
+  const coarse = await Promise.all(candidates.map(async (b) => ({ ...b, fit: await bestOf(b.frame.file, (qq) => refineFit(b.frame.file, qq)) })));
+  const fits = coarse.sort((p, r) => r.fit.score - p.fit.score || p.distance - r.distance);
+  const best = fits.slice(0, n);
+  const top = best[0];
+  const pct = (v: number) => `${(v * 100).toFixed(0)}%`;
+  log(`${img} (${q.width}x${q.height}) vs ${hashes.size} frames of run ${m.tag}, ${candidates.length} candidates refined (${ms(t0)})`);
+  log(table(best.map((b) => [`${b.frame.scene}+${b.frame.local}`, fmtTime(b.frame.filmFrame, x.c.fps), `f${b.frame.filmFrame}`, `${b.frame.part} f${b.frame.partFrame}`, b.frame.label, pct(b.fit.score), `${pct(b.fit.scale)} at ${pct(b.fit.x)},${pct(b.fit.y)}`, b.distance, b.frame.file.replace(x.cfg.cachePath + "/", "")]), ["scene", "film", "frame", "part", "label", "fit", "paste = frame region", "hash", "file"]));
+  const fitVerdict = top.fit.score >= 0.95 ? "same" : top.fit.score >= 0.85 ? "close" : "no match";
+  if (top.fit.flat) {
+    // a flat paste (black, a plain ground) can only be placed by its hash, and that ties with every flat frame
+    const flat = all.filter((b) => b.distance <= all[0].distance + 2 && b.against === "full frame").sort((p, r) => p.frame.filmFrame - r.frame.filmFrame);
+    const first = flat[0]?.frame, last = flat[flat.length - 1]?.frame;
+    log(`flat picture, no detail to fit: ${flat.length} flat frame${flat.length === 1 ? "" : "s"} share its hash${first ? `: ${first.scene}+${first.local} (${fmtTime(first.filmFrame, x.c.fps)}) .. ${last.scene}+${last.local} (${fmtTime(last.filmFrame, x.c.fps)})` : ""}; ask which moment was meant`);
+  } else if (fitVerdict === "no match") log(`nothing in this run fits the image (best fit ${pct(top.fit.score)}, hash distance ${top.distance} of 256). A different scene, format, or a frame between the check frames: try mh frames --dense 2 --scene <id>, then locate --from that tag.`);
+  else {
+    // a hold makes many frames tie: say which span it is instead of pretending three winners
+    // frames of one hold are alike down to the pixel, their fits differ by resampling noise only
+    const ties = fits.filter((b) => b.fit.score >= top.fit.score - 0.04).sort((p, r) => p.frame.filmFrame - r.frame.filmFrame);
+    if (ties.length > 1) {
+      const first = ties[0].frame, last = ties[ties.length - 1].frame;
+      const scenes = [...new Set(ties.map((t) => t.frame.scene))];
+      log(`${fitVerdict}: ${ties.length} frames fit within 4%: ${first.scene}+${first.local} (${fmtTime(first.filmFrame, x.c.fps)}) .. ${last.scene}+${last.local} (${fmtTime(last.filmFrame, x.c.fps)})${scenes.length > 1 ? ` across ${scenes.join(", ")}` : ", one hold"}; the image can be any of them`);
+    } else log(`${fitVerdict}: ${top.frame.scene}+${top.frame.local}`);
+  }
+  if (flag(args, "json")) out(JSON.stringify(best.map((b) => ({ scene: b.frame.scene, local: b.frame.local, filmFrame: b.frame.filmFrame, partFrame: b.frame.partFrame, part: b.frame.part, fit: b.fit, distance: b.distance, view: b.view, against: b.against, file: b.frame.file }))));
 };
 
 const printProbe = (p: ProbeResult, find?: string) => {
@@ -338,10 +437,12 @@ const cmdLint = async (args: Args) => {
 const cmdDiff = async (args: Args) => {
   const x = await ctx(args);
   const [a, b] = args._;
-  const runs = readdirSync(runsDir(x)).filter((d) => d !== "latest").sort();
+  const runs = runTags(x);
   const tagB = b ?? latestTag(x)!;
-  const tagA = a ?? runs.filter((t) => t < tagB).pop();
-  if (!tagA || !tagB) die(`need two runs to compare (have: ${runs.join(", ")})`);
+  // without tags: the approved run against the latest one; before any approval, the previous run
+  const tagA = a ?? (hasRun(x, APPROVED) ? APPROVED : runs.filter((t) => t < tagB).pop());
+  if (!tagA || !tagB) die(`need two runs to compare (have: ${runs.join(", ")}); "mh approve" fixes one side for good`);
+  if (tagA === tagB) die(`both sides are "${tagA}", render a new run first`);
   const A = loadRun(x, tagA), B = loadRun(x, tagB);
   const byFrame = (m: Manifest) => new Map(m.frames.map((f) => [`${f.part}:${f.partFrame}`, f]));
   const fa = byFrame(A), fb = byFrame(B);
@@ -349,11 +450,28 @@ const cmdDiff = async (args: Args) => {
   const outDir = ensureDir(join(runsDir(x), tagB, "diff-vs-" + tagA));
   const res = await diffSets(keys.map((k) => ({ frame: fb.get(k)!.partFrame, a: fa.get(k)!.file, b: fb.get(k)!.file, label: `${fb.get(k)!.scene}+${fb.get(k)!.local}` })), { threshold: num(args, "threshold", 0.08), outDir });
   const min = num(args, "min", 0.002);
-  const changed = res.filter((r) => r.changed >= min);
-  log(`${tagA} -> ${tagB}: ${keys.length} common frames, ${changed.length} changed (>= ${(min * 100).toFixed(1)}% pixels), ${fb.size - keys.length} new in ${tagB}`);
-  log(table(changed.sort((p, q) => q.changed - p.changed).map((r) => [r.label, `f${r.frame}`, `${(r.changed * 100).toFixed(1)}%`, (r.mean * 100).toFixed(2), r.box ? `${r.box.x},${r.box.y} ${r.box.w}x${r.box.h}` : "", r.diffFile?.replace(x.cfg.cachePath + "/", "") ?? ""]), ["frame", "part f", "changed", "mean%", "box", "diff image"]));
-  const touched = new Set(changed.map((r) => r.label.split("+")[0]));
-  log(`scenes touched: ${[...touched].join(", ") || "none"}`);
+  const changed = res.filter((r) => r.changed >= min).sort((p, q) => q.changed - p.changed);
+  const approvedNote = tagA === APPROVED ? ` (approved = ${(A as Manifest & { approvedFrom?: string }).approvedFrom ?? "?"})` : "";
+  log(`${tagA}${approvedNote} -> ${tagB}: ${keys.length} common frames, ${changed.length} changed (>= ${(min * 100).toFixed(1)}% pixels), ${fb.size - keys.length} only in ${tagB}, ${fa.size - keys.length} only in ${tagA}`);
+  // touched scenes first, worst first, so the reviewer opens the right sheet
+  const perScene = new Map<string, { frames: number; max: number; sum: number }>();
+  for (const r of changed) {
+    const id = r.label.split("+")[0];
+    const e = perScene.get(id) ?? { frames: 0, max: 0, sum: 0 };
+    e.frames++;
+    e.max = Math.max(e.max, r.changed);
+    e.sum += r.changed;
+    perScene.set(id, e);
+  }
+  const compared = new Map<string, number>();
+  for (const k of keys) compared.set(fb.get(k)!.scene, (compared.get(fb.get(k)!.scene) ?? 0) + 1);
+  const touched = [...perScene.entries()].sort((p, q) => q[1].max - p[1].max);
+  log("");
+  log(touched.length ? table(touched.map(([id, e]) => [id, `${e.frames}/${compared.get(id) ?? 0}`, `${(e.max * 100).toFixed(1)}%`, `${((e.sum / e.frames) * 100).toFixed(1)}%`]), ["scene touched", "frames changed", "worst frame", "mean of changed"]) : "no scene touched");
+  log("");
+  log(table(changed.map((r) => [r.label, `f${r.frame}`, `${(r.changed * 100).toFixed(1)}%`, (r.mean * 100).toFixed(2), r.box ? `${r.box.x},${r.box.y} ${r.box.w}x${r.box.h}` : "", r.diffFile?.replace(x.cfg.cachePath + "/", "") ?? ""]), ["frame", "part f", "changed", "mean%", "box", "diff image"]));
+  const untouched = x.c.scenes.map((s) => s.id).filter((id) => compared.has(id) && !perScene.has(id));
+  log(`scenes touched: ${touched.map(([id]) => id).join(", ") || "none"}${untouched.length ? `   unchanged: ${untouched.join(", ")}` : ""}`);
 };
 
 const cmdMotion = async (args: Args) => {
@@ -533,6 +651,14 @@ const cmdReview = async (args: Args) => {
 
 const cmdFeedback = async (args: Args) => {
   const x = await ctx(args);
+  const from = str(args, "from");
+  if (from) {
+    // free text from a file or stdin, every timestamp / scene / event / copy fragment turned into an address
+    const text = from === "-" ? await Bun.stdin.text() : existsSync(from) ? readFileSync(from, "utf8") : die(`no such file: ${from}`);
+    const parsed = parseFeedback(x.c, text as string);
+    if (flag(args, "json")) return out(JSON.stringify(parsed.map((p) => ({ text: p.text, hits: p.hits.map((h) => ({ phrase: h.phrase, kind: h.kind, via: h.via, ref: h.ref, scene: h.location.scene.id, local: h.location.local, filmFrame: h.location.filmFrame, filmSeconds: h.location.filmSeconds, until: h.until ? { scene: h.until.scene.id, local: h.until.local, filmFrame: h.until.filmFrame } : undefined })), unresolved: p.unresolved })), null, 2));
+    return log(feedbackReport(x.c, parsed, fmtTime));
+  }
   const ks = loadComments(x.cfg, x.filmName, x.format);
   if (flag(args, "clear")) {
     writeJson(commentsPath(x.cfg, x.filmName, x.format), []);
@@ -564,15 +690,17 @@ const help = `mh <command> [--project dir] [--film name] [--format wide]
   doctor                            ffmpeg, config, and composition length vs timeline (catches drift)
   bundle [--force]                  bundle the project through the harness wrapper
 
-  frames [--scene a,b] [--dense N] [--probe text] [--tag t] [--sheet]
-                                    render the check frames of each scene (enter, settled, events, mid, last)
-  sheet [--scene a,b] [--from tag] [--all] [--columns 4]
-                                    contact sheets with frame numbers, scene addresses and transition marks
+  frames [--scene a,b] [--dense N] [--probe text] [--tag t] [--sheet] [--zoom key]
+                                    render the check frames of each scene (enter, settled, events with their -6..+18 window, mid, last)
+  sheet [--scene a,b] [--from tag] [--all] [--columns 4] [--zoom key]
+                                    contact sheets with frame numbers, scene addresses and transition marks; --zoom crops 480x320 at 1:1 around the probed element
+  approve [--from tag]              copy a run (default latest) to "approved", the fixed side of every later diff
+  locate <image.png> [--from tag]   which frame is this? perceptual hash of a pasted still against a frames run
   probe <ref> [--mode text|probe|all] [--find text] [--key k] [--json]   --key prints one element's centre (cursor targets)
                                     where is what: element boxes, colors, fonts at a frame, straight from the DOM
   lint [--static] [--timeline] [--rendered] [--no-fail]
                                     colors vs tokens (source and painted), text durations, events, safe zone
-  diff [tagA] [tagB] [--min 0.002]  which check frames changed between two runs, with diff images
+  diff [tagA] [tagB] [--min 0.002]  which check frames changed between two runs (default approved vs latest), touched scenes first
   motion --scene a[,b] [--width 320]
                                     frame-to-frame motion curve: when it settles, how long it holds, where it jumps
   audio [file] [--window 0.25]      rms profile of the film, silence, and every cue of the timeline checked
@@ -584,6 +712,7 @@ const help = `mh <command> [--project dir] [--film name] [--format wide]
   review [file] [--port 4848]       the player with the scene bar, comments land as scene+frame
   feedback [--all] [--json] [--clear]
                                     the comments as an agent-readable list, grouped by scene
+  feedback --from <file|->          free text ("bei 1:09", "Sekunde 19-21", "beim Klicken") turned into scene addresses
   init [--force]                    write a harness.config.ts template into the project
 `;
 
@@ -595,6 +724,8 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   bundle: cmdBundle,
   frames: cmdFrames,
   sheet: cmdSheet,
+  approve: cmdApprove,
+  locate: cmdLocate,
   probe: cmdProbe,
   lint: cmdLint,
   diff: cmdDiff,
