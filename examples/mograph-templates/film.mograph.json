@@ -358,7 +358,7 @@
         {
           "id": "note",
           "type": "text",
-          "text": "one scene each, all editable by address",
+          "text": "one scene each, editable by address",
           "role": "body",
           "size": 30,
           "weight": 400,
@@ -391,7 +391,7 @@
       "params": {
         "value": 15,
         "label": "templates in the box",
-        "note": "one scene each, all editable by address",
+        "note": "one scene each, editable by address",
         "ground": "paper",
         "dur": 96
       }
@@ -1104,14 +1104,15 @@
           "id": "mark",
           "type": "text",
           "text": "“",
-          "size": 130,
+          "size": 190,
           "weight": 700,
+          "lineHeight": 0.8,
           "color": "accent",
           "accent": "accent",
           "probe": false,
           "at": {
             "x": 0.5,
-            "y": 0.26
+            "y": 0.27
           },
           "maxWidth": 0.3,
           "in": {
@@ -1122,10 +1123,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 110,
+              "size": 160,
               "at": {
                 "x": 0.5,
-                "y": 0.28
+                "y": 0.29
               }
             }
           }
@@ -1277,7 +1278,7 @@
           "id": "headline",
           "type": "text",
           "text": "Two halves",
-          "size": 64,
+          "size": 72,
           "weight": 700,
           "color": "ink",
           "accent": "accent",
@@ -1308,9 +1309,9 @@
         {
           "id": "body",
           "type": "text",
-          "text": "Text on one side, the picture on the other.",
+          "text": "One idea, one picture.",
           "role": "body",
-          "size": 34,
+          "size": 36,
           "weight": 400,
           "color": "muted",
           "accent": "accent",
@@ -1342,8 +1343,8 @@
           "id": "figure",
           "type": "shape",
           "shape": "ring",
-          "d": 280,
-          "thickness": 20,
+          "d": 340,
+          "thickness": 22,
           "fill": "accent",
           "progress": 1,
           "at": {
@@ -1371,7 +1372,7 @@
       "template": "split",
       "params": {
         "headline": "Two halves",
-        "body": "Text on one side, the picture on the other.",
+        "body": "One idea, one picture.",
         "panel": "ink",
         "ground": "paper",
         "dur": 90
@@ -1539,7 +1540,8 @@
           },
           "formats": {
             "vertical": {
-              "d": 330,
+              "d": 430,
+              "thickness": 16,
               "at": {
                 "x": 0.5,
                 "y": 0.45
@@ -1569,7 +1571,7 @@
           },
           "formats": {
             "vertical": {
-              "size": 165,
+              "size": 215,
               "at": {
                 "x": 0.5,
                 "y": 0.45
