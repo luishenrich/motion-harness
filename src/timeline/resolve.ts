@@ -151,7 +151,12 @@ export const checkFramesFor = (scene: CompiledScene, opts: { dense?: number; aft
   for (const s of scene.states) push(s.local, "event", `state ${s.id}`);
   push(Math.floor(scene.dur / 2), "mid", "mid");
   for (const f of scene.checkFrames) push(f, "check", `check ${f}`);
-  push(scene.dur - 1, "end", "last");
+  // the last frame of a scene with an exit fade is blank by design: the sheet shows the last settled frame and marks the fade
+  const exitDur = scene.exit?.dur ?? 0;
+  if (exitDur > 0) {
+    push(scene.dur - exitDur - 1, "end", "last settled");
+    push(scene.dur - 1, "transition", "exit end");
+  } else push(scene.dur - 1, "end", "last");
   if (opts.dense) for (let f = 0; f < scene.dur; f += opts.dense) push(f, "dense", `every ${opts.dense}`);
   // a gesture lives in the frames around its event: event-6 .. event+18 at 2 f steps, always, capped to the scene
   if (opts.eventWindow !== false) {

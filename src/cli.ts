@@ -37,6 +37,7 @@ import { judgeClip, judgePrompt, DEFAULT_CHECKLIST } from "./judge/judge.ts";
 import { measureReference, compareCurves } from "./motion/metrics.ts";
 import { writeScript, parseScriptMarkdown, scriptMarkdown, scaffoldFiles, writeScaffold } from "./script/script.ts";
 import { ingestFiles, loadAssets, assetsForModel, spokenSpans, type Asset } from "./ingest/ingest.ts";
+import { lookAtFrame } from "./ingest/look.ts";
 import { transcribeFile, saveTranscript, transcriptSrt } from "./transcribe/transcribe.ts";
 import { makeImage, loadImages } from "./image/image.ts";
 import { otioDocument } from "./otio/otio.ts";
@@ -49,7 +50,7 @@ import { analyzeFile, looksLikeHit, hitWarnings, type SfxAnalysis } from "./audi
 import { vetDurations } from "./audio/suggest.ts";
 import { resolveUnclamped, locate } from "./timeline/resolve.ts";
 import { renderSegments, renderPartAudio, concatParts, concatScenes, mixFilm, partDurationCheck, picturePath, FULL, DRAFT } from "./film/film.ts";
-import { cpus } from "node:os";
+import { cpus, tmpdir } from "node:os";
 import { startReviewServer, loadComments, feedbackMarkdown, commentsPath } from "./review/server.ts";
 import { reviewPage } from "./review/export.ts";
 import { ensureDir, readJson, writeJson, stamp, table, ms, run, dirSize, mb, withLock, ffprobeDuration, mediaStats, statsLine } from "./util.ts";
@@ -1602,7 +1603,7 @@ const cmdNew = async (args: Args) => {
   let assets: Asset[] = [];
   if (assetFiles.length) {
     ensureDir(target);
-    assets = await ingestFiles(stub, assetFiles, { copyTo: "public/assets", transcribe: flag(args, "transcribe"), language: str(args, "language"), log });
+    assets = await ingestFiles(stub, assetFiles, { copyTo: "public/assets", transcribe: flag(args, "transcribe"), look: flag(args, "look"), language: str(args, "language"), log });
     log(`${assets.length} asset${assets.length === 1 ? "" : "s"} -> ${join(target, "assets.json")}`);
   } else if (existsSync(join(target, "assets.json"))) assets = loadAssets(stub);
   let script;
@@ -1632,7 +1633,7 @@ const cmdIngest = async (args: Args) => {
   const x = await ctx(args);
   if (!args._.length) {
     const list = loadAssets(x.cfg);
-    if (!list.length) return log("usage: mh ingest <file|dir...> [--copy public/assets] [--transcribe] [--language de] [--license ...]");
+    if (!list.length) return log("usage: mh ingest <file|dir...> [--copy public/assets] [--transcribe] [--look] [--language de] [--license ...]");
     return log(table(list.map((a) => [a.id, a.kind, a.file, a.seconds !== undefined ? `${a.seconds.toFixed(1)}s` : "", a.width ? `${a.width}x${a.height}` : "", a.loudness ? `${a.loudness.lufs} LUFS` : "", a.shots?.length ?? "", a.silences?.length ?? "", a.transcript ? "yes" : "", (a.summary ?? "").slice(0, 60)]), ["asset", "kind", "file", "length", "size", "loudness", "shots", "silences", "transcript", "summary"]));
   }
   const files = args._.flatMap((a) => {
@@ -1640,7 +1641,7 @@ const cmdIngest = async (args: Args) => {
     if (existsSync(p) && statSync(p).isDirectory()) return readdirSync(p).filter((n) => !n.startsWith(".")).map((n) => join(p, n));
     return [p];
   });
-  const res = await ingestFiles(x.cfg, files, { copyTo: str(args, "copy"), transcribe: flag(args, "transcribe"), language: str(args, "language"), license: str(args, "license"), log });
+  const res = await ingestFiles(x.cfg, files, { copyTo: str(args, "copy"), transcribe: flag(args, "transcribe"), look: flag(args, "look"), language: str(args, "language"), license: str(args, "license"), log });
   for (const a of res) if (a.transcript) produced(a.transcript);
   produced(join(x.cfg.projectDir, "assets.json"));
   log(`${res.length} asset${res.length === 1 ? "" : "s"} -> assets.json`);
@@ -1648,6 +1649,28 @@ const cmdIngest = async (args: Args) => {
 };
 
 /** words with times from a recording (Gemini listens, ffmpeg's silences sharpen the edges); an srt or the spoken spans */
+/** one frame, one look: the subject, its kind, its box and any readable text, from the model that sees */
+const cmdLook = async (args: Args) => {
+  const file = args._[0];
+  if (!file) die("usage: mh look <image.png|clip.mp4> [--at 3.5] [--json]");
+  const abs = resolvePath(file);
+  const isImage = /\.(png|jpe?g|webp|gif|avif)$/i.test(abs);
+  const png = isImage ? abs : join(ensureDir(join(tmpdir(), "mh-look")), `${basename(abs)}.png`);
+  if (!isImage) {
+    const dur = parseFloat((await run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", abs])).out.trim()) || 0;
+    const at = Math.max(0, Math.min(num(args, "at", dur / 2), Math.max(0, dur - 0.1)));
+    await run(["ffmpeg", "-y", "-v", "error", "-ss", at.toFixed(3), "-i", abs, "-frames:v", "1", "-vf", "scale=640:-2", png]);
+    if (!existsSync(png)) die(`no frame at ${at.toFixed(2)}s of ${abs}`);
+    log(`frame at ${at.toFixed(2)}s of ${dur.toFixed(1)}s`);
+  }
+  const L = await lookAtFrame(png, { model: str(args, "model") });
+  log(`${L.category}: ${L.label}`);
+  log(`box x ${L.box[0].toFixed(2)} y ${L.box[1].toFixed(2)} w ${L.box[2].toFixed(2)} h ${L.box[3].toFixed(2)}, centre ${(L.box[0] + L.box[2] / 2).toFixed(2)},${(L.box[1] + L.box[3] / 2).toFixed(2)}`);
+  if (L.text) log(`text: ${L.text}`);
+  log(`${L.model}, ${L.ms} ms`);
+  if (flag(args, "json")) out2(JSON.stringify(L));
+};
+
 const cmdTranscribe = async (args: Args) => {
   const x = await ctx(args);
   const file = args._[0];
@@ -1789,12 +1812,14 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
                                     --upload puts every file on S3/R2 (MH_S3_* or CLOUDFLARE_* env) and records the urls
   script --brief "..." [--seconds 30] [--out script.md]
                                     a model writes the script (scenes with headline, body, visual, seconds); Azure, OpenRouter or OpenAI from the environment
-  new <dir> (--brief "..." | --script script.md) [--assets dir|files] [--transcribe] [--formats wide,vertical]
+  new <dir> (--brief "..." | --script script.md) [--assets dir|files] [--transcribe] [--look] [--formats wide,vertical]
                                     a project the harness can check right away: footage ingested and listed for the model, the script (kinds text, clip, image;
                                     a design of palette and fonts), timeline as data, one component per scene kind, Root, config, react installed
-  ingest <file|dir...> [--copy public/assets] [--transcribe] [--language de]
+  ingest <file|dir...> [--copy public/assets] [--transcribe] [--look] [--language de]
+                                    --transcribe: Gemini listens (word times, snapped to ffmpeg silences); --look: Gemini looks at the mid frame (subject, kind, box, on-screen text)
                                     footage in, facts out: streams, length, loudness, shot changes, silences, colour, transcript into assets.json
   transcribe <file> [--srt out.srt] [--spans] [--from --to] [--language de]
+  look <image|clip> [--at 3.5] [--json]   the subject of one frame, its kind, its box and readable text (Gemini)
                                     words with times (Gemini listens, silences sharpen the edges); --spans lists the spoken spans a silence cut would keep
   image "<prompt>" [--width --height] [--provider azure-mai|azure-flux|openai] [--out file]
                                     an image plate from a prompt (config.imageStyle appended, no text asked of the model), fitted to the size, registered in images.json
@@ -1849,6 +1874,7 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   new: cmdNew,
   ingest: cmdIngest,
   transcribe: cmdTranscribe,
+  look: cmdLook,
   image: cmdImage,
   otio: cmdOtio,
 };

@@ -118,19 +118,25 @@ The harness does not know what a "product film" is. A film is a timeline of scen
 is a text card, a clip of footage, a still, or whatever a component renders. From the top:
 
 ```bash
-mh ingest footage/ --transcribe             # every file probed: streams, length, loudness, shot changes, silences, colour,
-                                            # a transcript with word times (Gemini listens, ffmpeg's silences sharpen the edges)
+mh ingest footage/ --transcribe --look      # every file probed: streams, length, loudness, shot changes, silences, colour, its own bars,
+                                            # a transcript with word times (Gemini listens, ffmpeg's silences sharpen the edges),
+                                            # the subject of the mid frame with its box and kind (Gemini looks)
 mh transcribe interview.mp4 --spans         # the spoken spans a silence cut would keep
-mh new my-film --brief "..." --assets footage/ --transcribe
-                                            # the script model sees the footage and its words, writes scenes (text, clip, image),
-                                            # places the voice note and a music bed as cues, picks a palette and Google fonts from the
-                                            # brief; the scaffold writes a project the harness checks on the spot
+mh look clip.mp4 --at 3.5                   # one frame: the subject, its kind (person, interface, scenery...), its box, readable text
+mh new my-film --brief "..." --assets footage/ --transcribe --look
+                                            # the script model sees the footage, its words and its subjects, writes scenes (text, clip,
+                                            # image), places the voice note and a music bed as cues, picks a palette and Google fonts
+                                            # from the brief; the scaffold writes a project the harness checks on the spot
 ```
 
-The scaffold's components are starting points: a text card, a clip with a focus point for the
-vertical crop and a headline over a scrim, a still with a slow zoom. A clip that carries its own
-bars (measured by `mh ingest`, a bar is dark on every sampled frame and narrow) is zoomed past
-them; a wide interface is letterboxed in a vertical frame instead of cropped. `SHOW_VISUAL_NOTES`
+The scaffold's components are starting points: a text card, a clip with a headline over a scrim,
+a still with a slow zoom. Framing follows what ingest measured: the subject's box stays inside
+every crop and caps the zoom and the push-in, so a vertical cut or a near-square clip in 16:9
+never loses the person it is about; a clip that carries its own bars (dark on every sampled frame
+and narrow) is zoomed past them as far as the subject allows; an interface is letterboxed in a
+frame of the other orientation instead of cropped, a photo is cover-cropped; footage sits on the
+ground its own edges blend into (a dark clip on ink, a bright one on paper) and each scene's exit
+fades into that ground, never through the film's ink. `SHOW_VISUAL_NOTES`
 in `Film.tsx` puts each scene's visual note on the frame while blocking. Everything after that is
 the same loop as for any other film: `mh check`, `mh frame`, `mh render`, `mh deliver`.
 

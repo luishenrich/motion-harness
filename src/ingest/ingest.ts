@@ -12,6 +12,7 @@ import type { LoadedConfig } from "../config.ts";
 import { probeClip } from "../clips/clips.ts";
 import { measureLoudness } from "../audio/loudness.ts";
 import { detectShots, detectSilences, extractAudio, transcribeFile, saveTranscript, type Transcript } from "../transcribe/transcribe.ts";
+import { lookAtFrame, type LookCategory } from "./look.ts";
 import { ensureDir, run } from "../util.ts";
 
 export type AssetKind = "video" | "audio" | "image";
@@ -33,6 +34,8 @@ export type Asset = {
   colour?: { first: { luma: number }; mid: { luma: number }; last: { luma: number } };
   /** pixels of near-black at each edge of the mid frame: a clip that carries its own bars */
   darkEdges?: { left: number; right: number; top: number; bottom: number };
+  /** what a model saw in the mid frame: the main subject, its kind, its box (x, y, w, h as fractions), readable text */
+  subject?: { label: string; category: LookCategory; box: [number, number, number, number]; text?: string };
   transcript?: string;
   /** a one-line summary for the script model: first sentence of the transcript, or the shot count */
   summary?: string;
@@ -84,7 +87,21 @@ const streams = async (file: string) => {
   return JSON.parse(p.out) as { streams: { codec_type: string; width?: number; height?: number; r_frame_rate?: string; channels?: number }[]; format: { duration?: string; size?: string } };
 };
 
-export const ingestFile = async (cfg: LoadedConfig, file: string, opts: { id?: string; copyTo?: string; transcribe?: boolean; shots?: boolean; silence?: boolean; license?: string; language?: string; log?: (s: string) => void }): Promise<Asset> => {
+/** a 640 px frame from the middle of a clip, or the image itself at that width: what the model looks at */
+const lookFrame = async (abs: string, kind: AssetKind, seconds: number, out: string) => {
+  if (kind === "image") await sharp(abs).resize({ width: 640, withoutEnlargement: true }).png().toFile(out);
+  else await run(["ffmpeg", "-y", "-v", "error", "-ss", (seconds / 2).toFixed(3), "-i", abs, "-frames:v", "1", "-vf", "scale=640:-2", out]);
+  return out;
+};
+
+const lookAt = async (asset: Asset, abs: string, work: string, log: (s: string) => void) => {
+  const png = await lookFrame(abs, asset.kind, asset.seconds ?? 0, join(work, "look.png"));
+  const L = await lookAtFrame(png);
+  asset.subject = { label: L.label, category: L.category, box: L.box, text: L.text };
+  log(`${asset.id}: ${L.category}, ${L.label}, box ${L.box.map((n) => n.toFixed(2)).join(" ")}${L.text ? `, text "${L.text.slice(0, 60)}"` : ""} (${L.model}, ${L.ms} ms)`);
+};
+
+export const ingestFile = async (cfg: LoadedConfig, file: string, opts: { id?: string; copyTo?: string; transcribe?: boolean; look?: boolean; shots?: boolean; silence?: boolean; license?: string; language?: string; log?: (s: string) => void }): Promise<Asset> => {
   const log = opts.log ?? (() => {});
   let abs = resolve(file);
   if (!existsSync(abs)) throw new Error(`no such file: ${abs}`);
@@ -111,6 +128,7 @@ export const ingestFile = async (cfg: LoadedConfig, file: string, opts: { id?: s
     asset.colour = { first: { luma }, mid: { luma }, last: { luma } };
     asset.summary = `${m.width}x${m.height} image, luma ${luma}`;
     log(`${id}: image ${m.width}x${m.height}`);
+    if (opts.look) await lookAt(asset, abs, work, log);
     return asset;
   }
   const j = await streams(abs);
@@ -136,6 +154,7 @@ export const ingestFile = async (cfg: LoadedConfig, file: string, opts: { id?: s
       return v / full > 0.2 ? 0 : Math.round(v);
     };
     asset.darkEdges = { left: side("left", sx, p.width || 1), right: side("right", sx, p.width || 1), top: side("top", sy, p.height || 1), bottom: side("bottom", sy, p.height || 1) };
+    if (opts.look) await lookAt(asset, abs, work, log);
   }
   if (a) {
     try {
@@ -179,6 +198,7 @@ export const assetsForModel = (assets: Asset[]): string =>
     .map((a) => {
       const t = a.transcript && existsSync(a.transcript) ? (JSON.parse(readFileSync(a.transcript, "utf8")) as Transcript) : null;
       const lines = [`- ${a.id} (${a.kind}${a.seconds ? `, ${a.seconds.toFixed(1)}s` : ""}${a.width ? `, ${a.width}x${a.height}` : ""})${a.shots?.length ? `, shot changes at ${a.shots.slice(0, 12).map((s) => s.toFixed(1)).join(", ")}s` : ""}`];
+      if (a.subject) lines.push(`    shows: ${a.subject.label} (${a.subject.category}), subject centre ${(a.subject.box[0] + a.subject.box[2] / 2).toFixed(2)},${(a.subject.box[1] + a.subject.box[3] / 2).toFixed(2)}${a.subject.text ? `; on-screen text: ${a.subject.text}` : ""}`);
       if (t) lines.push(...t.segments.slice(0, 40).map((s) => `    ${s.start.toFixed(1)}-${s.end.toFixed(1)}s: ${s.text}`));
       return lines.join("\n");
     })

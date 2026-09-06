@@ -5,8 +5,8 @@ import { otioDocument } from "../otio/otio.ts";
 import { contrastRatio, lintContrast } from "../lint/lint.ts";
 
 const assets = [
-  { id: "interview", file: "public/assets/interview.mp4", kind: "video" as const, seconds: 40, width: 1920, height: 1080, bytes: 1, addedAt: "" },
-  { id: "desk", file: "public/assets/desk.jpg", kind: "image" as const, width: 1200, height: 800, bytes: 1, addedAt: "" },
+  { id: "interview", file: "public/assets/interview.mp4", kind: "video" as const, seconds: 40, width: 1920, height: 1080, bytes: 1, addedAt: "", colour: { first: { luma: 40 }, mid: { luma: 48 }, last: { luma: 50 } }, subject: { label: "a founder at a desk", category: "person" as const, box: [0.3, 0.1, 0.4, 0.8] as [number, number, number, number] } },
+  { id: "desk", file: "public/assets/desk.jpg", kind: "image" as const, width: 1200, height: 800, bytes: 1, addedAt: "", colour: { first: { luma: 170 }, mid: { luma: 170 }, last: { luma: 170 } } },
 ];
 const script = normalizeScript(
   {
@@ -17,7 +17,7 @@ const script = normalizeScript(
       { id: "problem", seconds: 40, kind: "text", ground: "cream" as never, headline: "Introducing", body: "A course, not a chat.", visual: "the wordmark on cream", why: "the brand arrives" },
       { id: "2nd", seconds: 0.5, kind: "text", ground: "purple" as never, headline: "Try it" },
       { id: "talk", seconds: 8, kind: "clip", ground: "dark", headline: "", asset: "interview.mp4", in: 36, focus: [0.4, 0.3] },
-      { id: "still", seconds: 4, kind: "clip", ground: "light", headline: "The desk", asset: "desk" },
+      { id: "still", seconds: 4, kind: "clip", ground: "dark", headline: "The desk", asset: "desk", focus: [0.5, 0.5] },
     ],
   },
   assets,
@@ -31,7 +31,10 @@ describe("script", () => {
     expect(script.scenes[2].ground).toBe("dark");
     // a clip past the asset's end is shortened; an asset named by file resolves to its id; an image asset makes an image scene
     expect(script.scenes[3]).toMatchObject({ kind: "clip", asset: "interview", in: 36, seconds: 4, focus: [0.4, 0.3] });
-    expect(script.scenes[4]).toMatchObject({ kind: "image", asset: "desk" });
+    // footage takes the ground its own brightness blends into, whatever the model said; a centre focus is no opinion
+    expect(script.scenes[4]).toMatchObject({ kind: "image", asset: "desk", ground: "light" });
+    expect(script.scenes[4].focus).toBeUndefined();
+    expect(script.scenes[3].ground).toBe("dark");
     expect(script.design).toMatchObject({ ink: "#101820", paper: "#FDFBF7", accent: "#FF6B35", muted: "#6B6B6B", fontDisplay: "Space Grotesk", fontBody: "" });
   });
   test("markdown round trip", () => {
@@ -50,6 +53,8 @@ describe("script", () => {
     expect(Object.keys(files)).toEqual(["src/timeline.ts", "src/Film.tsx", "src/Root.tsx", "harness.config.ts", "tsconfig.json", "package.json", ".gitignore", "script.md", "public/.gitkeep"]);
     expect(files["src/timeline.ts"]).toContain('"problem": { dur: 90, kind: "text"');
     expect(files["src/timeline.ts"]).toContain('"interview": { file: "assets/interview.mp4", kind: "video", seconds: 40');
+    expect(files["src/timeline.ts"]).toContain('subject: { label: "a founder at a desk", category: "person", box: [0.3, 0.1, 0.4, 0.8] }');
+    expect(files["src/timeline.ts"]).toContain('"still": { dur: 120, kind: "image", ground: "light", headline: "The desk", body: "", asset: "desk", inAt: 0, focus: null');
     expect(files["src/timeline.ts"]).toContain('DESIGN = { ink: "#101820"');
     expect(files["src/Film.tsx"]).toContain("fonts.googleapis.com/css2?family=Space+Grotesk");
     expect(files["src/Root.tsx"]).toContain('id="placement-check-launch-vertical"');

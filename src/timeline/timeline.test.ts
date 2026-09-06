@@ -73,7 +73,9 @@ describe("check frames", () => {
     expect(kinds).toContain("settled:10");
     expect(kinds).toContain("event:20");
     expect(kinds).toContain("event:26");
-    expect(kinds).toContain("end:59");
+    // the scene fades out over its last 6 frames: the last settled frame is shown, the fade's end is marked as one
+    expect(kinds).toContain("end:53");
+    expect(kinds).toContain("transition:59");
     expect(new Set(f.map((x) => x.local)).size).toBe(f.length);
   });
   test("every event carries its window event-6 .. event+18 at 2 f steps, capped to the scene", () => {

@@ -78,8 +78,9 @@ Never guess where something is in time and never guess what a frame looks like. 
 | is that 150 ms key heard under the bed | `mh audio`: per sfx cue the >2 kHz peak delta in dB, AUDIBLE / FAINT / MASKED |
 | where does the music become audible (cold start trim) | `mh audio`: "audible from X s" and the 0-3 s head profile per music file |
 | hand everything over | `mh deliver --out dir --stills all --platforms youtube,tiktok --captions [--upload prefix]` |
-| a new film from a brief | `mh new <dir> --brief "..." [--assets footage/ --transcribe]` (footage probed and transcribed, script by a model with scene kinds text, clip, image and sound cues, palette and fonts from the brief, project scaffolded, `mh check` runs on it) |
-| what is in this footage | `mh ingest <files> --transcribe` (assets.json: streams, loudness, shot changes, silences, transcript), `mh transcribe <file> --spans` |
+| a new film from a brief | `mh new <dir> --brief "..." [--assets footage/ --transcribe --look]` (footage probed, transcribed and looked at, script by a model with scene kinds text, clip, image and sound cues, palette and fonts from the brief, project scaffolded, `mh check` runs on it) |
+| what is in this footage | `mh ingest <files> --transcribe --look` (assets.json: streams, loudness, shot changes, silences, bars, transcript, the subject with its box and kind), `mh transcribe <file> --spans`, `mh look <file> --at 3.5` |
+| a subject cropped out, a zoom too far | the scaffold frames from the asset's `subject.box` (ingest --look): it caps zoom and push-in and centres the box in the visible span; a scene's `focus` overrides the point, `fit` and `zoom` override the rest; the sheet's last frame of a scene is its last settled frame, the fade after it is tagged as a transition |
 | thumbnails to A/B test | `mh still <id> --variants --jpg --width 1280` (variants declared in `films.<film>.stills`, one file per variant) |
 | a background plate, a start frame | `mh image "<prompt>" --width --height` (no text from the model; typography stays in the still) |
 | the editor wants the cut | `mh otio --out film.otio` (Resolve, Premiere, Final Cut) |
