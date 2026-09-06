@@ -249,6 +249,14 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
   .strip .ph::before{content:"";position:absolute;left:-4px;top:0;border:4px solid transparent;border-top-color:var(--err)}
   :focus-visible{outline:2px solid #1f6feb;outline-offset:1px}
   .strip .kf:focus-visible{outline-offset:2px}
+  .ctl{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  .ctl input[type=text],.ctl input[type=number]{flex:1;min-width:78px;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+  .ctl button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px}
+  .sw{width:20px;height:20px;border:1px solid rgba(0,0,0,.25);border-radius:5px;padding:0;cursor:pointer}
+  .sw.on{outline:2px solid var(--ink);outline-offset:1px}
+  .grad{grid-column:1/-1;display:grid;grid-template-columns:auto 1fr;gap:4px 8px;align-items:center;padding:4px 0 6px;border-bottom:1px dashed var(--line)}
+  .gradPrev{grid-column:1/-1;height:14px;border-radius:4px;border:1px solid var(--line)}
+  .sub{grid-column:1/-1;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-top:6px}
 </style></head><body>
 <header><h1 id="title">${esc(o.title)}</h1><span class="meta" id="path"></span><span class="save" id="save" aria-live="polite">loaded</span></header>
 <main>
@@ -270,7 +278,7 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
   </section>
   <aside aria-label="Layers and inspector">
     <section><h2>Layers</h2><ul class="layers" id="layers" role="listbox" aria-label="Layers of the current scene"></ul>
-      <div class="row"><button type="button" id="addText">+ text</button><button type="button" id="addShape">+ shape</button><button type="button" id="addCounter">+ counter</button><button type="button" id="addList">+ list</button><button type="button" id="layout">layout</button></div></section>
+      <div class="row"><button type="button" id="addText">+ text</button><button type="button" id="addShape">+ shape</button><button type="button" id="addCounter">+ counter</button><button type="button" id="addList">+ list</button><button type="button" id="addGroup">+ group</button><button type="button" id="layout">layout</button></div></section>
     <section><h2>Scene</h2><div class="grid" id="sceneForm"></div></section>
     <section><h2 id="selTitle">Layer</h2><div class="grid" id="quick"></div>
       <label class="sr" for="json">Layer as JSON</label><textarea id="json" spellcheck="false" placeholder="select a layer"></textarea>
@@ -279,10 +287,11 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
     <section><h2>State (also window.mhEdit.state())</h2><pre id="mh-state" aria-live="polite"></pre></section>
   </aside>
 </main>
+<datalist id="mh-tokens"></datalist>
 <script>
 const $=id=>document.getElementById(id);
 const TRACKS=["opacity","x","y","scale","rotate","blur","progress","wipe","w","h"];
-let F=null,T=null,findings=[],format=null,sceneId=null,frame=0,sel=[],playing=null,comps=[],undo=[],busy=Promise.resolve(),lastFocus=null,kfSel=null;
+let F=null,T=null,findings=[],format=null,sceneId=null,frame=0,sel=[],playing=null,comps=[],undo=[],busy=Promise.resolve(),lastFocus=null,kfSel=null,formatOnly=false;
 const stages=[];
 const fmt=s=>{const m=Math.floor(s/60),r=s-m*60;return (m?m+":":"")+r.toFixed(2)+"s"};
 const scene=()=>F.scenes.find(s=>s.id===sceneId)||F.scenes[0];
@@ -295,6 +304,11 @@ function layerAt(path){if(!path)return null;const p=path.split(".");let list=sce
 function parentOf(path){const p=path.split(".");return p.length>1?layerAt(p.slice(0,-1).join(".")):null}
 const layer=()=>sel.length?layerAt(sel[0]):null;
 const addrOf=(path,prop)=>scene().id+"."+path+(prop?"."+prop:"");
+const baseFormat=()=>Object.keys(F.formats)[0];
+/** the layer as the active format shows it: its per format overrides merged over it, one level deep like layerFor */
+function viewLayer(path){const l=layerAt(path);if(!l)return null;const o=l.formats&&l.formats[format];if(!o)return l;const out=Object.assign({},l);Object.keys(o).forEach(k=>{const cur=out[k],v=o[k];out[k]=cur&&typeof cur==="object"&&!Array.isArray(cur)&&v&&typeof v==="object"&&!Array.isArray(v)?Object.assign({},cur,v):v});return out}
+/** where a value is written: the layer itself, or this format's override when "edit this format only" is on */
+function writeAddr(path,prop){return formatOnly&&format!==baseFormat()?addrOf(path,"formats."+format+(prop?"."+prop:"")):addrOf(path,prop)}
 
 /* ---------- timing, the same rules layerTiming applies ---------- */
 function localFrame(at,dur,fb){const v=at===undefined||at===null?fb:at;return v<0?Math.max(0,dur+v):Math.min(dur-1,v)}
@@ -404,28 +418,97 @@ async function post(opOrFn,name){busy=busy.then(async()=>{const op=typeof opOrFn
   await remount();paint();await show()});return busy}
 function shiftIn(d,paths){const ps=paths||sel;if(!ps.length)return;post(()=>{const ops=[];ps.forEach(p=>{const l=layerAt(p);if(!l)return;const cur=(l.in&&l.in.at)||0;const to=Math.max(0,cur+d);ops.push({op:"set",addr:addrOf(p,"in.at"),value:to});if(l.out&&l.out.at!==undefined)ops.push({op:"set",addr:addrOf(p,"out.at"),value:l.out.at+(to-cur)})});return ops.length===1?ops[0]:{op:"batch",ops:ops,name:"in.at"}},"in.at "+(d>0?"+":"")+d)}
 function setOutAt(path,at){const l=layerAt(path);const ops=[{op:"set",addr:addrOf(path,"out.at"),value:Math.round(at)}];if(!l.out)ops.push({op:"set",addr:addrOf(path,"out.dur"),value:8});post(ops.length===1?ops[0]:{op:"batch",ops:ops,name:"out.at"},"out.at "+Math.round(at))}
-function nudge(dx,dy){if(!sel.length)return;post(()=>{const ops=sel.map(p=>{const l=layerAt(p);if(!l)return null;const at=l.at||{x:0.5,y:0.5};return {op:"set",addr:addrOf(p,"at"),value:{x:Math.round((at.x+dx)*1000)/1000,y:Math.round((at.y+dy)*1000)/1000}}}).filter(Boolean);return ops.length===1?ops[0]:{op:"batch",ops:ops,name:"at"}},"nudge")}
+function nudge(dx,dy){if(!sel.length)return;post(()=>{const ops=sel.map(p=>{const l=viewLayer(p);if(!l)return null;const at=l.at||{x:0.5,y:0.5};return {op:"set",addr:writeAddr(p,"at"),value:{x:Math.round((at.x+dx)*1000)/1000,y:Math.round((at.y+dy)*1000)/1000}}}).filter(Boolean);return ops.length===1?ops[0]:{op:"batch",ops:ops,name:"at"}},"nudge")}
 function resize(d){if(!sel.length)return;post(()=>{const ops=sel.map(p=>{const l=layerAt(p);if(!l)return null;const cur=l.size||(l.type==="counter"?160:l.type==="list"?48:72);return {op:"set",addr:addrOf(p,"size"),value:Math.max(8,cur+d)}}).filter(Boolean);return ops.length===1?ops[0]:{op:"batch",ops:ops,name:"size"}},"size "+(d>0?"+":"")+d)}
 function pick(path,add){if(add){const i=sel.indexOf(path);if(i>=0)sel.splice(i,1);else sel.push(path)}else sel=[path];kfSel=null;paint();render()}
 function seek(d){frame=clampF(frame+d);show()}
 function togglePlay(){if(playing){clearInterval(playing);playing=null;$("play").setAttribute("aria-pressed","false");$("play").textContent="play";return}$("play").setAttribute("aria-pressed","true");$("play").textContent="pause";playing=setInterval(()=>{frame=(frame+1)%scene().dur;show()},1000/F.fps)}
 
-/* ---------- forms ---------- */
-function field(id,label,value,type,opts){const l=document.createElement("label");l.htmlFor=id;l.textContent=label;let i;if(opts){i=document.createElement("select");opts.forEach(o=>{const op=document.createElement("option");op.value=o;op.textContent=o===""?"(none)":o;if(o===value)op.selected=true;i.appendChild(op)})}else{i=document.createElement("input");i.type=type||"text";if(type==="number")i.step="any";i.value=value===undefined||value===null?"":value}i.id=id;i.setAttribute("aria-label",label);return [l,i]}
-function sceneForm(){const s=scene();const g=$("sceneForm");g.innerHTML="";const add=(id,label,val,type,opts,path)=>{const [l,i]=field(id,label,val,type,opts);i.onchange=()=>post({op:"set",addr:s.id+"."+(path||id.slice(2)),value:type==="number"?parseFloat(i.value):i.value},"scene."+(path||id.slice(2)));g.append(l,i)};
-  add("s-dur","dur (frames)",s.dur,"number");add("s-ground","ground",s.ground||"ink","text");add("s-exit","exit fade (frames)",s.exit&&s.exit.dur!==undefined?s.exit.dur:(s.exit==="fade"?8:0),"number",null,"exit.dur");
-  add("s-why","why",s.why||"","text")}
-function inspector(){const l=layer();const q=$("quick");q.innerHTML="";$("selTitle").textContent=l?"Layer "+scene().id+"."+sel[0]+" ("+l.type+")":"Layer (none selected)";$("json").value=l?JSON.stringify(l,null,2):"";if(!l)return;
-  const path=sel[0];const at=l.at||{x:0.5,y:0.5};const put=(id,label,val,type,opts,prop,parse)=>{const [a,i]=field(id,label,val,type,opts);i.onchange=()=>post({op:"set",addr:addrOf(path,prop),value:parse?parse(i.value):i.value},prop);q.append(a,i)};
-  const num=v=>parseFloat(v);
-  put("q-x","x",at.x,"number",null,"at.x",num);put("q-y","y",at.y,"number",null,"at.y",num);
-  if("size" in l||l.type==="text"||l.type==="counter"||l.type==="list")put("q-size","size (u)",l.size||"","number",null,"size",num);
-  if(l.type==="text")put("q-text","text",l.text,"text",null,"text");
-  put("q-inp","in preset",(l.in&&l.in.preset)||"rise","text",["cut","fade","rise","drop","pop","slide","wipe","grow","blur","typewriter","mask"],"in.preset");
-  put("q-inat","in at",(l.in&&l.in.at)||0,"number",null,"in.at",num);put("q-indur","in dur",(l.in&&l.in.dur)||14,"number",null,"in.dur",num);put("q-inease","in ease",(l.in&&l.in.ease)||"out","text",null,"in.ease");
-  put("q-outp","out preset",(l.out&&l.out.preset)||"","text",["","fade","sink","lift","shrink","slide","wipe","blur","cut"],"out.preset");put("q-outat","out at (neg = from end)",l.out&&l.out.at!==undefined?l.out.at:"","number",null,"out.at",num);
-  if(l.type==="text"||l.type==="counter"||l.type==="list")put("q-color","color",l.color||"","text",null,"color");
-  if(l.type==="shape")put("q-fill","fill",l.fill||"","text",null,"fill")}
+/* ---------- controls: one labelled widget per kind of value ---------- */
+const IN_PRESETS=["cut","fade","rise","drop","pop","slide","wipe","grow","blur","typewriter","mask"];
+const OUT_PRESETS=["","cut","fade","sink","lift","shrink","slide","wipe","blur"];
+const EASES=["","linear","in","out","inOut","expo","quart","back","anticipate","smooth","spring","soft","bouncy","snappy"];
+const CAMERA_PRESETS=["","none","push","pull","pan","tilt","drift","orbit"];
+const TRANSITIONS=["","cut","dissolve","dip","push-left","push-right","push-up","push-down","wipe-left","wipe-right","wipe-up","wipe-down","zoom","blur"];
+const COLOR_KEY=/^(color|fill|stroke|accent|ground|markerColor|labelColor|background)$/i;
+const NUM_KEY=["size","w","h","d","thickness","radius","gap","opacity","scale","rotate","letterSpacing","lineHeight","maxWidth","from","to","dur","labelSize","progress","weight","lines","count"];
+function hexOf(ref){const d=F.design;if(ref===undefined||ref===null||ref==="")return d.ink;if(ref==="ink")return d.ink;if(ref==="paper")return d.paper;if(ref==="accent")return d.accent;if(ref==="muted")return d.muted||"#6B6B6B";if(ref==="white")return "#FFFFFF";if(ref==="black")return "#000000";if(ref==="transparent")return "transparent";if(d.colors&&Object.prototype.hasOwnProperty.call(d.colors,ref))return d.colors[ref];return typeof ref==="string"?ref:d.ink}
+function tokens(){const d=F.design;return ["ink","paper","accent"].concat(d.muted?["muted"]:[]).concat(Object.keys(d.colors||{}))}
+function gradCss(v){const stops=(v.gradient||[]).map(s=>hexOf(s)).join(", ");return v.radial?"radial-gradient(circle at "+((v.at&&v.at.x!==undefined?v.at.x:0.5)*100)+"% "+((v.at&&v.at.y!==undefined?v.at.y:0.5)*100)+"%, "+stops+")":"linear-gradient("+(v.angle===undefined?180:v.angle)+"deg, "+stops+")"}
+function ctl(kind,value,label,onSet,choices){let i;
+  if(kind==="select"){i=document.createElement("select");(choices||[]).forEach(o=>{const op=document.createElement("option");op.value=o;op.textContent=o===""?"(none)":o;if(o===value||(value===undefined&&o===""))op.selected=true;i.appendChild(op)});i.onchange=()=>onSet(i.value===""?undefined:i.value)}
+  else if(kind==="bool"){i=document.createElement("input");i.type="checkbox";i.checked=!!value;i.onchange=()=>onSet(i.checked)}
+  else if(kind==="num"){i=document.createElement("input");i.type="number";i.step="any";i.value=value===undefined||value===null?"":value;i.onchange=()=>onSet(i.value===""?undefined:parseFloat(i.value))}
+  else if(kind==="json"){const long=JSON.stringify(value||null).length>70;i=document.createElement(long?"textarea":"input");if(!long)i.type="text";if(long)i.style.minHeight="70px";i.value=value===undefined?"":JSON.stringify(value);i.spellcheck=false;
+    i.onchange=()=>{if(i.value.trim()===""){onSet(undefined);return}try{onSet(JSON.parse(i.value))}catch(e){$("save").textContent=label+": "+e.message;$("save").className="save err"}}}
+  else{i=document.createElement("input");i.type="text";i.value=value===undefined||value===null?"":value;i.onchange=()=>onSet(i.value===""?undefined:i.value)}
+  i.setAttribute("aria-label",label);return i}
+/** a colour: the design's colours as swatches, a hex or token input, and a gradient of two stops with an angle */
+function ctlColor(value,label,onSet){const box=document.createElement("div");box.className="ctl";
+  const isGrad=value&&typeof value==="object"&&Array.isArray(value.gradient);
+  tokens().forEach(t=>{const b=document.createElement("button");b.type="button";b.className="sw"+(value===t?" on":"");b.style.background=hexOf(t);b.title=t;b.setAttribute("aria-label",label+": "+t);b.onclick=()=>onSet(t);box.appendChild(b)});
+  const hex=ctl("text",isGrad?"":value,label+" as a colour name or hex",v=>onSet(v));hex.setAttribute("list","mh-tokens");hex.placeholder="token or #hex";box.appendChild(hex);
+  const g=document.createElement("button");g.type="button";g.textContent=isGrad?"plain":"gradient";g.setAttribute("aria-label",isGrad?label+": back to one colour":label+": make it a gradient");
+  g.onclick=()=>onSet(isGrad?value.gradient[0]:{gradient:[typeof value==="string"&&value?value:"accent","ink"],angle:160});box.appendChild(g);
+  if(isGrad){const gr=document.createElement("div");gr.className="grad";
+    const put=(t,node)=>{const l=document.createElement("label");l.textContent=t;gr.append(l,node)};
+    put("stop 1",ctl("text",value.gradient[0],label+" gradient stop 1",v=>onSet(Object.assign({},value,{gradient:[v||"accent",value.gradient[1]]}))));
+    put("stop 2",ctl("text",value.gradient[1],label+" gradient stop 2",v=>onSet(Object.assign({},value,{gradient:[value.gradient[0],v||"ink"]}))));
+    put("angle",ctl("num",value.angle===undefined?180:value.angle,label+" gradient angle",v=>onSet(Object.assign({},value,{angle:v===undefined?0:v}))));
+    const p=document.createElement("div");p.className="gradPrev";p.style.background=gradCss(value);gr.appendChild(p);
+    box.appendChild(gr)}
+  return box}
+/** one labelled row in a grid; fk restores the focus after the page redraws */
+function row(g,label,node,fk){const l=document.createElement("label");l.textContent=label;if(node.tagName==="INPUT"||node.tagName==="SELECT"||node.tagName==="TEXTAREA"){const id="f-"+label.replace(/[^a-z0-9]+/gi,"-");node.id=id;l.htmlFor=id}if(fk)node.dataset.fk=fk;g.append(l,node)}
+function sub(g,text){const d=document.createElement("div");d.className="sub";d.textContent=text;g.appendChild(d)}
+
+/* ---------- the scene: its own fields, the camera and the transition ---------- */
+function sceneForm(){const s=scene();const g=$("sceneForm");g.innerHTML="";
+  const set=(prop,value)=>post(value===undefined?{op:"unset",addr:s.id+"."+prop}:{op:"set",addr:s.id+"."+prop,value:value},"scene."+prop);
+  row(g,"dur (frames)",ctl("num",s.dur,"Scene duration in frames",v=>set("dur",v)),"sc:dur");
+  row(g,"ground",ctlColor(s.ground===undefined?"ink":s.ground,"Ground",v=>set("ground",v)),"sc:ground");
+  row(g,"exit fade (frames)",ctl("num",s.exit&&s.exit.dur!==undefined?s.exit.dur:(s.exit==="fade"?8:0),"Exit fade in frames",v=>set("exit.dur",v===undefined?0:v)),"sc:exit");
+  row(g,"why",ctl("text",s.why,"Why this scene is here",v=>set("why",v)),"sc:why");
+  sub(g,"camera");
+  const cam=s.camera||{};
+  const setCam=(k,v)=>{const next=Object.assign({},cam);if(v===undefined)delete next[k];else next[k]=v;if(!Object.keys(next).length)return set("camera",undefined);post({op:"set",addr:s.id+".camera",value:next},"scene.camera")};
+  row(g,"preset",ctl("select",cam.preset,"Camera preset",v=>setCam("preset",v),CAMERA_PRESETS),"sc:cam.preset");
+  row(g,"from",ctl("num",cam.from,"Camera from",v=>setCam("from",v)),"sc:cam.from");
+  row(g,"to",ctl("num",cam.to,"Camera to",v=>setCam("to",v)),"sc:cam.to");
+  row(g,"focus x",ctl("num",cam.focus&&cam.focus.x,"Camera focus x",v=>setCam("focus",{x:v===undefined?0.5:v,y:(cam.focus&&cam.focus.y)===undefined?0.5:cam.focus.y})),"sc:cam.fx");
+  row(g,"focus y",ctl("num",cam.focus&&cam.focus.y,"Camera focus y",v=>setCam("focus",{x:(cam.focus&&cam.focus.x)===undefined?0.5:cam.focus.x,y:v===undefined?0.5:v})),"sc:cam.fy");
+  row(g,"ease",ctl("select",cam.ease,"Camera easing",v=>setCam("ease",v),EASES),"sc:cam.ease");
+  sub(g,"transition in");
+  const tr=typeof s.transition==="string"?{type:s.transition}:(s.transition||{});
+  row(g,"type",ctl("select",tr.type,"Transition into this scene",v=>{if(v===undefined)return set("transition",undefined);post({op:"set",addr:s.id+".transition",value:{type:v,dur:tr.dur===undefined?12:tr.dur}},"scene.transition")},TRANSITIONS),"sc:tr.type");
+  row(g,"dur (frames)",ctl("num",tr.dur,"Transition duration in frames",v=>{if(!tr.type)return;post({op:"set",addr:s.id+".transition",value:{type:tr.type,dur:v===undefined?12:v}},"scene.transition")}),"sc:tr.dur")}
+
+/* ---------- the layer: what it is, then every other field it carries ---------- */
+const SKIP=["id","type","at","in","out","layers"];
+function inspector(){const l=layer();const q=$("quick");q.innerHTML="";$("selTitle").textContent=l?"Layer "+scene().id+"."+sel[0]+" ("+l.type+")"+(sel.length>1?" +"+(sel.length-1)+" more":""):"Layer (none selected)";$("json").value=l?JSON.stringify(l,null,2):"";if(!l)return;
+  const path=sel[0];const v=viewLayer(path);const at=v.at||{x:0.5,y:0.5};
+  const set=(prop,value)=>post(value===undefined?{op:"unset",addr:writeAddr(path,prop)}:{op:"set",addr:writeAddr(path,prop),value:value},prop);
+  row(q,"x",ctl("num",at.x,"Position x, a fraction of the frame",x=>set("at",{x:x===undefined?0.5:x,y:at.y})),"in:at.x");
+  row(q,"y",ctl("num",at.y,"Position y, a fraction of the frame",y=>set("at",{x:at.x,y:y===undefined?0.5:y})),"in:at.y");
+  row(q,"anchor",ctl("select",v.anchor,"Anchor",x=>set("anchor",x),["","center","left","right","top","bottom","top-left","top-right","bottom-left","bottom-right"]),"in:anchor");
+  if(l.type==="text")row(q,"text",ctl("text",v.text,"Text",x=>set("text",x===undefined?"":x)),"in:text");
+  sub(q,"in");
+  row(q,"preset",ctl("select",(v.in&&v.in.preset)||"rise","In preset",x=>set("in.preset",x),IN_PRESETS),"in:in.preset");
+  row(q,"at",ctl("num",(v.in&&v.in.at)===undefined?0:v.in.at,"In at, a local frame",x=>set("in.at",x===undefined?0:x)),"in:in.at");
+  row(q,"dur",ctl("num",(v.in&&v.in.dur)===undefined?14:v.in.dur,"In duration in frames",x=>set("in.dur",x===undefined?14:x)),"in:in.dur");
+  row(q,"ease",ctl("select",(v.in&&v.in.ease)||"","In easing",x=>set("in.ease",x),EASES),"in:in.ease");
+  row(q,"stagger",ctl("json",v.in&&v.in.stagger,"In stagger as JSON",x=>set("in.stagger",x)),"in:in.stagger");
+  sub(q,"out");
+  row(q,"preset",ctl("select",(v.out&&v.out.preset)||"","Out preset",x=>set("out.preset",x),OUT_PRESETS),"in:out.preset");
+  row(q,"at",ctl("num",v.out&&v.out.at,"Out at, negative counts from the end",x=>set("out.at",x)),"in:out.at");
+  row(q,"dur",ctl("num",v.out&&v.out.dur,"Out duration in frames",x=>set("out.dur",x)),"in:out.dur");
+  const skip=SKIP.concat(l.type==="text"?["text"]:[]);
+  const rest=Object.keys(v).filter(k=>skip.indexOf(k)<0);
+  if(rest.length)sub(q,l.type);
+  rest.forEach(k=>{const val=v[k];
+    const kind=COLOR_KEY.test(k)||(val&&typeof val==="object"&&Array.isArray(val.gradient))?"color":typeof val==="boolean"?"bool":typeof val==="number"||NUM_KEY.indexOf(k)>=0?"num":typeof val==="string"?"text":"json";
+    const node=kind==="color"?ctlColor(val,k,x=>set(k,x)):ctl(kind,val,k+" of this layer"+(kind==="json"?" as JSON":""),x=>set(k,x));
+    row(q,k,node,"in:"+k)})}
 function drawFindings(){const ul=$("findings");ul.innerHTML="";if(!findings.length){ul.innerHTML="<li>clean</li>";return}findings.forEach(f=>{const li=document.createElement("li");li.className=f.level;li.textContent=f.level+" "+f.rule+" at "+f.where+": "+f.message;ul.appendChild(li)})}
 function state(){const l=layer();return {film:F.title,path:$("path").textContent,format:format,scene:scene().id,frame:frame,address:scene().id+"+"+frame,locate:locate(),selection:sel.map(p=>scene().id+"."+p),selected:sel.length?scene().id+"."+sel[0]:null,layer:l||null,timing:sel.length?timingOf(sel[0]):null,ops:undo.length,errors:findings.filter(f=>f.level==="error").length,findings:findings}}
 
@@ -443,6 +526,7 @@ $("addText").onclick=()=>addLayerOp({id:newId("text"),type:"text",text:"New line
 $("addShape").onclick=()=>addLayerOp({id:newId("shape"),type:"shape",shape:"line",w:220,thickness:6,fill:"accent",at:{x:0.5,y:0.6},in:{preset:"grow",at:0,dur:14}});
 $("addCounter").onclick=()=>addLayerOp({id:newId("counter"),type:"counter",from:0,to:100,size:200,color:scene().ground==="paper"?"ink":"paper",at:{x:0.5,y:0.45},in:{preset:"pop",at:0,dur:14}});
 $("addList").onclick=()=>addLayerOp({id:newId("list"),type:"list",items:["one","two","three"],marker:"dot",size:52,color:scene().ground==="paper"?"ink":"paper",at:{x:0.5,y:0.5},in:{preset:"rise",at:0,dur:14,stagger:{by:"item",each:6}}});
+$("addGroup").onclick=()=>addLayerOp({id:newId("group"),type:"group",w:900,h:520,at:{x:0.5,y:0.5},in:{preset:"pop",at:0,dur:14,stagger:{by:"item",each:4}},layers:[{id:"title",type:"text",text:"In a group",size:64,color:scene().ground==="paper"?"ink":"paper",at:{x:0.5,y:0.4},in:{preset:"rise",at:0,dur:12}}]});
 function onKey(e){const tag=e.target&&e.target.tagName;if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT"){if(e.key==="Escape")e.target.blur();return}
   if(e.target&&e.target.dataset&&e.target.dataset.fk&&/^(bar|edge|kf):/.test(e.target.dataset.fk)&&/^Arrow(Left|Right)$/.test(e.key))return;
   const k=e.key,c=e.shiftKey?0.02:0.005;
@@ -467,6 +551,7 @@ window.mhEdit={state:state,
   reload:async()=>{await load();await mount()},
   selection:()=>sel.map(p=>scene().id+"."+p)};
 (async()=>{await load();const fs=$("format");Object.keys(F.formats).forEach(f=>{const o=document.createElement("option");o.value=f;o.textContent=f;fs.appendChild(o)});fs.value=format;
+  const dl=$("mh-tokens");tokens().concat(["white","black","transparent"]).forEach(t=>{const o=document.createElement("option");o.value=t;dl.appendChild(o)});
   buildStages();
   await Promise.all(stages.map(st=>new Promise(r=>{if(st.iframe.contentWindow&&st.iframe.contentWindow.__mh)r();else st.iframe.addEventListener("load",r,{once:true})})));
   for(const st of stages)await stageReady(st);
