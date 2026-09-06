@@ -221,7 +221,7 @@ const title: MgTemplate = {
     const size = N(p, "size");
     return sceneOf("title", p, "the opening claim", keep(
       S(p, "kicker") && {
-        id: "kicker", type: "text", text: S(p, "kicker"), role: "body", size: 30, weight: 600, uppercase: true, letterSpacing: 0.14, color: c.dim,
+        id: "kicker", type: "text", text: S(p, "kicker"), role: "body", size: 30, weight: 600, uppercase: true, letterSpacing: 0.14, color: c.dim, accent: c.accentText,
         at: at(0.5, 0.35), maxWidth: 0.7, in: { preset: "rise", at: 0, dur: 12, ease: "out" },
         ...V({ size: 26, at: at(0.5, 0.36) }),
       },
@@ -261,7 +261,7 @@ const statement: MgTemplate = {
         ...V({ size: Math.round(size * 0.8), maxWidth: 0.86, at: at(0.5, 0.42) }),
       },
       S(p, "support") && {
-        id: "support", type: "text", text: S(p, "support"), role: "body", size: 40, weight: 400, color: c.dim,
+        id: "support", type: "text", text: S(p, "support"), role: "body", size: 40, weight: 400, color: c.dim, accent: c.accentText,
         at: at(0.5, 0.6), maxWidth: 0.6, in: { preset: "fade", at: 26, dur: 14, ease: "out" },
         ...V({ size: 34, maxWidth: 0.82, at: at(0.5, 0.57) }),
       },
@@ -296,12 +296,12 @@ const stat: MgTemplate = {
         ...V({ size: Math.round(size * 0.8), at: at(0.5, 0.42) }),
       },
       S(p, "label") && {
-        id: "label", type: "text", text: S(p, "label"), size: 44, weight: 600, color: c.fg,
+        id: "label", type: "text", text: S(p, "label"), size: 44, weight: 600, color: c.fg, accent: c.accentText,
         at: at(0.5, 0.6), maxWidth: 0.66, in: { preset: "rise", at: 18, dur: 14, ease: "out" },
         ...V({ size: 38, maxWidth: 0.84, at: at(0.5, 0.56) }),
       },
       S(p, "note") && {
-        id: "note", type: "text", text: S(p, "note"), role: "body", size: 30, weight: 400, color: c.dim,
+        id: "note", type: "text", text: S(p, "note"), role: "body", size: 30, weight: 400, color: c.dim, accent: c.accentText,
         at: at(0.5, 0.71), maxWidth: 0.6, in: { preset: "fade", at: 32, dur: 12, ease: "out" },
         ...V({ size: 27, maxWidth: 0.82, at: at(0.5, 0.65) }),
       },
@@ -328,15 +328,15 @@ const list: MgTemplate = {
     const size = N(p, "size");
     return sceneOf("list", p, "the steps, one after another", keep(
       S(p, "kicker") && {
-        id: "kicker", type: "text", text: S(p, "kicker"), role: "body", size: 32, weight: 600, uppercase: true, letterSpacing: 0.12, color: c.dim,
+        id: "kicker", type: "text", text: S(p, "kicker"), role: "body", size: 32, weight: 600, uppercase: true, letterSpacing: 0.12, color: c.dim, accent: c.accentText,
         at: at(0.12, 0.3), anchor: "left", maxWidth: 0.6, in: { preset: "rise", at: 0, dur: 12, ease: "out" },
-        ...V({ size: 28, at: at(0.09, 0.28), maxWidth: 0.84 }),
+        ...V({ size: 28, at: at(0.09, 0.44), maxWidth: 0.84 }),
       },
       {
         id: "items", type: "list", items: items.length ? items : ["one", "two", "three"], marker: (S(p, "marker") || "check") as "dot" | "number" | "check" | "dash" | "none",
         size, weight: 500, color: c.fg, markerColor: c.accentText, gap: 22, maxWidth: 0.62, align: "left",
         at: at(0.12, 0.56), anchor: "left", in: { preset: "rise", at: 14, dur: 14, ease: "out", stagger: { by: "item", each: 8 } },
-        ...V({ size: Math.round(size * 0.86), maxWidth: 0.84, at: at(0.09, 0.5), gap: 20 }),
+        ...V({ size: Math.round(size * 0.9), maxWidth: 0.84, at: at(0.09, 0.56), gap: 20 }),
       },
     ));
   },
@@ -363,24 +363,24 @@ const compare: MgTemplate = {
     const marker = (S(p, "marker") || "dash") as "dot" | "number" | "check" | "dash" | "none";
     const col = (side: "left" | "right", head: string, items: string[], x: number, delay: number, vy: [number, number]): Layer[] => [
       {
-        id: `${side}-head`, type: "text", text: head, size: 46, weight: 700, color: side === "right" ? c.accentText : c.fg, uppercase: true, letterSpacing: 0.08, align: "center",
+        id: `${side}-head`, type: "text", text: head, size: 46, weight: 700, color: side === "right" ? c.accentText : c.fg, accent: c.accentText, uppercase: true, letterSpacing: 0.08, align: "center",
         at: at(x, 0.3), maxWidth: 0.34, in: { preset: "rise", at: delay, dur: 12, ease: "out" },
-        ...V({ size: 38, maxWidth: 0.8, at: at(0.5, vy[0]) }),
+        ...V({ size: 50, maxWidth: 0.8, at: at(0.5, vy[0]) }),
       },
       {
         id: `${side}-items`, type: "list", items: items.length ? items : ["one", "two"], marker, size, weight: 500, color: side === "right" ? c.fg : c.dim, markerColor: side === "right" ? c.accentText : c.dim,
         gap: 18, maxWidth: 0.34, align: "center", at: at(x, 0.52), in: { preset: "rise", at: delay + 8, dur: 14, ease: "out", stagger: { by: "item", each: 7 } },
-        ...V({ size: Math.round(size * 0.92), maxWidth: 0.8, at: at(0.5, vy[1]) }),
+        ...V({ size: Math.round(size * 1.25), maxWidth: 0.8, at: at(0.5, vy[1]) }),
       },
     ];
     return sceneOf("compare", p, "the two sides next to each other", [
-      ...col("left", S(p, "left"), L(p, "leftItems"), 0.27, 2, [0.24, 0.36]),
+      ...col("left", S(p, "left"), L(p, "leftItems"), 0.27, 2, [0.26, 0.375]),
       {
         id: "divider", type: "shape", shape: "rect", w: 3, h: 420, fill: c.dim, probe: false,
         at: at(0.5, 0.5), in: { preset: "fade", at: 10, dur: 12, ease: "out" },
-        ...V({ w: 420, h: 3, at: at(0.5, 0.51) }),
+        ...V({ w: 560, h: 3, at: at(0.5, 0.51) }),
       },
-      ...col("right", S(p, "right"), L(p, "rightItems"), 0.73, 14, [0.63, 0.75]),
+      ...col("right", S(p, "right"), L(p, "rightItems"), 0.73, 14, [0.6, 0.715]),
     ]);
   },
 };
@@ -402,7 +402,7 @@ const quote: MgTemplate = {
     const size = N(p, "size");
     return sceneOf("quote", p, "someone else says it", keep(
       {
-        id: "mark", type: "text", text: "“", size: 130, weight: 700, color: c.accentText, probe: false,
+        id: "mark", type: "text", text: "“", size: 130, weight: 700, color: c.accentText, accent: c.accentText, probe: false,
         at: at(0.5, 0.26), maxWidth: 0.3, in: { preset: "pop", at: 0, dur: 12, ease: "back" },
         ...V({ size: 110, at: at(0.5, 0.28) }),
       },
@@ -417,7 +417,7 @@ const quote: MgTemplate = {
         ...V({ at: at(0.5, 0.6) }),
       },
       S(p, "attribution") && {
-        id: "who", type: "text", text: S(p, "attribution"), role: "body", size: 32, weight: 500, uppercase: true, letterSpacing: 0.1, color: c.dim,
+        id: "who", type: "text", text: S(p, "attribution"), role: "body", size: 32, weight: 500, uppercase: true, letterSpacing: 0.1, color: c.dim, accent: c.accentText,
         at: at(0.5, 0.71), maxWidth: 0.6, in: { preset: "fade", at: 36, dur: 12, ease: "out" },
         ...V({ size: 28, at: at(0.5, 0.66), maxWidth: 0.8 }),
       },
@@ -431,7 +431,7 @@ const lowerThird: MgTemplate = {
   params: {
     name: { type: "string", default: "Motion harness", help: "the name" },
     role: { type: "string", default: "eyes and hands for agents", help: "the role under it, empty for none" },
-    size: { type: "number", default: 58, help: "the name's size in u pixels" },
+    size: { type: "number", default: 64, help: "the name's size in u pixels" },
     groups: pGroups,
     ground: pGround("ink"),
     accent: pAccent,
@@ -444,13 +444,13 @@ const lowerThird: MgTemplate = {
     const role = S(p, "role");
     const bar: Layer = { id: "bar", type: "shape", shape: "rect", w: 8, h: 150, radius: 4, fill: c.accent, at: at(0.07, 0.78), anchor: "left", in: { preset: "grow", at: 4, dur: 10, ease: "out" }, ...V({ h: 140, at: at(0.1, 0.74) }) };
     const name: Layer = {
-      id: "name", type: "text", text: S(p, "name"), size, weight: 700, color: c.fg, align: "left",
+      id: "name", type: "text", text: S(p, "name"), size, weight: 700, color: c.fg, accent: c.accentText, align: "left",
       at: at(0.095, 0.745), anchor: "left", maxWidth: 0.42, in: { preset: "slide", from: "left", at: 8, dur: 14, ease: "out", distance: 60 },
       ...V({ size: Math.round(size * 0.85), at: at(0.13, 0.715), maxWidth: 0.74 }),
     };
     const roleLayer: Layer | null = role
       ? {
-          id: "role", type: "text", text: role, role: "body", size: 30, weight: 400, color: c.dim, align: "left",
+          id: "role", type: "text", text: role, role: "body", size: 32, weight: 400, color: c.dim, accent: c.accentText, align: "left",
           at: at(0.095, 0.815), anchor: "left", maxWidth: 0.42, in: { preset: "slide", from: "left", at: 14, dur: 14, ease: "out", distance: 60 },
           ...V({ size: 27, at: at(0.13, 0.765), maxWidth: 0.74 }),
         }
@@ -489,23 +489,26 @@ const chart: MgTemplate = {
     const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const values = PR(p, "values");
     const horizontal = S(p, "direction") !== "vertical";
+    const rows = Math.max(1, values.length || 2);
     return sceneOf("chart", p, "the numbers side by side", keep(
       {
-        id: "headline", type: "text", text: S(p, "headline"), size: 56, weight: 700, color: c.fg,
+        id: "headline", type: "text", text: S(p, "headline"), size: 56, weight: 700, color: c.fg, accent: c.accentText,
         at: at(0.5, 0.22), maxWidth: 0.7, in: { preset: "rise", at: 0, dur: 12, ease: "out" },
-        ...V({ size: 46, maxWidth: 0.86, at: at(0.5, 0.26) }),
+        ...V({ size: 46, maxWidth: 0.86, at: at(0.5, 0.35) }),
       },
       {
+        // a horizontal chart is as tall as its rows: without a height the bars sit in a thin strip
         id: "bars", type: "bars", values: values.length ? values : [{ label: "one", value: 1 }, { label: "two", value: 2 }],
-        direction: horizontal ? "horizontal" : "vertical", w: horizontal ? 1000 : 700, thickness: horizontal ? 40 : 90, gap: 26,
-        color: c.accent, labelColor: c.fg, labelSize: 30, format: S(p, "format") || "0.0",
+        direction: horizontal ? "horizontal" : "vertical", w: horizontal ? 1080 : 720, h: horizontal ? Math.max(200, rows * 120) : 420,
+        thickness: horizontal ? 52 : 96, gap: 30,
+        color: c.accent, labelColor: c.fg, labelSize: 34, format: S(p, "format") || "0.0",
         at: at(0.5, 0.55), in: { preset: "grow", at: 16, dur: 20, ease: "out", stagger: { by: "item", each: 6 } },
-        ...V({ w: horizontal ? 860 : 620, thickness: horizontal ? 36 : 80, labelSize: 28, at: at(0.5, 0.5) }),
+        ...V({ w: horizontal ? 900 : 640, h: horizontal ? Math.max(200, rows * 130) : 460, thickness: horizontal ? 56 : 88, labelSize: 32, at: at(0.5, 0.55) }),
       },
       S(p, "note") && {
-        id: "note", type: "text", text: S(p, "note"), role: "body", size: 28, weight: 400, color: c.dim,
+        id: "note", type: "text", text: S(p, "note"), role: "body", size: 28, weight: 400, color: c.dim, accent: c.accentText,
         at: at(0.5, 0.82), maxWidth: 0.66, in: { preset: "fade", at: 44, dur: 12, ease: "out" },
-        ...V({ size: 26, maxWidth: 0.84, at: at(0.5, 0.72) }),
+        ...V({ size: 26, maxWidth: 0.84, at: at(0.5, 0.75) }),
       },
     ));
   },
@@ -534,12 +537,12 @@ const logo: MgTemplate = {
     return sceneOf("logo", p, "the mark and the name", keep(
       mark,
       {
-        id: "wordmark", type: "text", text: S(p, "wordmark"), size, weight: 700, letterSpacing: 0.01, color: c.fg,
+        id: "wordmark", type: "text", text: S(p, "wordmark"), size, weight: 700, letterSpacing: 0.01, color: c.fg, accent: c.accentText,
         at: at(0.5, 0.58), maxWidth: 0.7, in: { preset: "mask", at: 12, dur: 16, ease: "out", stagger: { by: "word", each: 3 } },
         ...V({ size: Math.round(size * 0.82), maxWidth: 0.86, at: at(0.5, 0.54) }),
       },
       S(p, "tagline") && {
-        id: "tagline", type: "text", text: S(p, "tagline"), role: "body", size: 32, weight: 400, color: c.dim,
+        id: "tagline", type: "text", text: S(p, "tagline"), role: "body", size: 32, weight: 400, color: c.dim, accent: c.accentText,
         at: at(0.5, 0.68), maxWidth: 0.6, in: { preset: "fade", at: 28, dur: 12, ease: "out" },
         ...V({ size: 28, maxWidth: 0.82, at: at(0.5, 0.62) }),
       },
@@ -571,10 +574,10 @@ const cta: MgTemplate = {
     };
     // the plate is an outline, not a fill: the contrast lint reads a label against the ground it
     // sits on, never against a sibling behind it, so a filled plate would make every label a finding
-    const plate: Layer = { id: "plate", type: "shape", shape: "rect", w, h: 108, radius: 54, fill: "transparent", stroke: c.accent, thickness: 3, probe: false, at: at(0.5, 0.6), in: { preset: "pop", at: 18, dur: 14, ease: "back" }, ...V({ w: Math.round(w * 0.92), at: at(0.5, 0.55) }) };
-    const label: Layer = { id: "label", type: "text", text: S(p, "label"), size: 40, weight: 600, color: c.accentText, align: "center", at: at(0.5, 0.6), maxWidth: 0.4, in: { preset: "pop", at: 20, dur: 12, ease: "back" }, ...V({ size: 36, maxWidth: 0.7, at: at(0.5, 0.55) }) };
+    const plate: Layer = { id: "plate", type: "shape", shape: "rect", w, h: 108, radius: 54, fill: "transparent", stroke: c.accent, thickness: 4, probe: false, at: at(0.5, 0.6), in: { preset: "pop", at: 18, dur: 14, ease: "back" }, ...V({ w: Math.round(w * 0.92), at: at(0.5, 0.55) }) };
+    const label: Layer = { id: "label", type: "text", text: S(p, "label"), size: 40, weight: 600, color: c.accentText, accent: c.accentText, align: "center", at: at(0.5, 0.6), maxWidth: 0.4, in: { preset: "pop", at: 20, dur: 12, ease: "back" }, ...V({ size: 36, maxWidth: 0.7, at: at(0.5, 0.55) }) };
     const url: Layer | null = S(p, "url")
-      ? { id: "url", type: "text", text: S(p, "url"), role: "mono", size: 30, weight: 400, color: c.dim, at: at(0.5, 0.76), maxWidth: 0.6, in: { preset: "fade", at: 34, dur: 12, ease: "out" }, ...V({ size: 27, maxWidth: 0.86, at: at(0.5, 0.65) }) }
+      ? { id: "url", type: "text", text: S(p, "url"), role: "mono", size: 30, weight: 400, color: c.dim, accent: c.accentText, at: at(0.5, 0.76), maxWidth: 0.6, in: { preset: "fade", at: 34, dur: 12, ease: "out" }, ...V({ size: 27, maxWidth: 0.86, at: at(0.5, 0.65) }) }
       : null;
     if (!B(p, "groups")) return sceneOf("cta", p, "what to do next", keep(head, plate, label, url));
     const button = group({
@@ -596,7 +599,7 @@ const steps: MgTemplate = {
   params: {
     headline: { type: "string", default: "One round", help: "the headline over the steps, empty for none" },
     steps: { type: "list", default: "resolve | frame | edit", help: "the steps, separated by |" },
-    size: { type: "number", default: 38, help: "step label size in u pixels" },
+    size: { type: "number", default: 46, help: "step label size in u pixels" },
     connector: { type: "boolean", default: true, help: "the line the numbers sit on" },
     ground: pGround("ink"),
     accent: pAccent,
@@ -609,33 +612,36 @@ const steps: MgTemplate = {
     const list3 = items.length ? items : ["one", "two", "three"];
     const size = N(p, "size");
     const xs = list3.length === 2 ? [0.32, 0.68] : list3.length === 4 ? [0.16, 0.39, 0.61, 0.84] : [0.22, 0.5, 0.78];
-    const span = 0.52 / Math.max(1, list3.length);
+    // the widest a step label may be before it runs into the step next to it
+    const span = list3.length === 2 ? 0.3 : list3.length === 4 ? 0.19 : 0.24;
     const layers: Layer[] = [];
     if (S(p, "headline")) {
       layers.push({
-        id: "headline", type: "text", text: S(p, "headline"), size: 50, weight: 700, color: c.fg,
+        id: "headline", type: "text", text: S(p, "headline"), size: 56, weight: 700, color: c.fg, accent: c.accentText,
         at: at(0.5, 0.22), maxWidth: 0.7, in: { preset: "rise", at: 0, dur: 12, ease: "out" },
-        ...V({ size: 44, maxWidth: 0.86, at: at(0.5, 0.18) }),
+        ...V({ size: 48, maxWidth: 0.86, at: at(0.5, 0.2) }),
       });
     }
     if (B(p, "connector")) {
       layers.push({
-        id: "track", type: "shape", shape: "line", w: 1120, thickness: 3, fill: c.dim, probe: false,
-        at: at(0.5, 0.45), in: { preset: "grow", at: 8, dur: 20, ease: "out" },
-        ...V({ w: 3, h: 3, at: at(0.5, 0.45) }),
+        // wide: a rail under the numbers; vertical: the same rail standing between the numbers and their labels
+        id: "track", type: "shape", shape: "line", w: 1160, thickness: 3, fill: c.dim, probe: false,
+        at: at(0.5, 0.505), in: { preset: "grow", at: 8, dur: 20, ease: "out" },
+        ...V({ shape: "rect", w: 3, h: 640, at: at(0.34, 0.5), in: { preset: "fade", at: 8, dur: 12, ease: "out" } }),
       });
     }
     list3.forEach((item, i) => {
-      const vy = 0.3 + i * 0.16;
+      // vertical: one row per step, the number left of its label, the rows centred in the frame
+      const vy = Math.round((0.5 + (i - (list3.length - 1) / 2) * 0.15) * 1000) / 1000;
       layers.push({
-        id: `n${i + 1}`, type: "text", text: `0${i + 1}`, role: "mono", size: 42, weight: 700, color: c.accentText, align: "center",
-        at: at(xs[i] ?? 0.5, 0.45), maxWidth: 0.16, in: { preset: "pop", at: 12 + i * 6, dur: 12, ease: "back" },
-        ...V({ size: 36, maxWidth: 0.3, at: at(0.5, vy) }),
+        id: `n${i + 1}`, type: "text", text: `0${i + 1}`, role: "mono", size: 60, weight: 700, color: c.accentText, accent: c.accentText, align: "center",
+        at: at(xs[i] ?? 0.5, 0.43), maxWidth: 0.16, in: { preset: "pop", at: 12 + i * 6, dur: 12, ease: "back" },
+        ...V({ size: 52, maxWidth: 0.16, at: at(0.26, vy) }),
       });
       layers.push({
-        id: `s${i + 1}`, type: "text", text: item, size, weight: 500, color: c.fg, align: "center",
-        at: at(xs[i] ?? 0.5, 0.58), maxWidth: Math.max(0.18, span), in: { preset: "rise", at: 18 + i * 6, dur: 12, ease: "out" },
-        ...V({ size: Math.round(size * 0.95), maxWidth: 0.7, at: at(0.5, vy + 0.055) }),
+        id: `s${i + 1}`, type: "text", text: item, size, weight: 500, color: c.fg, accent: c.accentText, align: "center",
+        at: at(xs[i] ?? 0.5, 0.6), maxWidth: Math.max(0.18, span), in: { preset: "rise", at: 18 + i * 6, dur: 12, ease: "out" },
+        ...V({ size, maxWidth: 0.5, align: "left", anchor: "left", at: at(0.4, vy) }),
       });
     });
     return sceneOf("steps", p, "the round, step by step", layers);
@@ -659,8 +665,8 @@ const split: MgTemplate = {
     const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const src = S(p, "src");
     const figure: Layer = src
-      ? { id: "figure", type: "image", src, w: 420, radius: 16, at: at(0.75, 0.5), in: { preset: "pop", at: 14, dur: 16, ease: "back" }, ...V({ w: 380, at: at(0.5, 0.74) }) }
-      : { id: "figure", type: "shape", shape: "ring", d: 280, thickness: 20, fill: c.accent, progress: 1, at: at(0.75, 0.5), in: { preset: "pop", at: 14, dur: 16, ease: "back" }, ...V({ d: 240, at: at(0.5, 0.74) }) };
+      ? { id: "figure", type: "image", src, w: 420, radius: 16, at: at(0.75, 0.5), in: { preset: "pop", at: 14, dur: 16, ease: "back" }, ...V({ w: 520, at: at(0.5, 0.74) }) }
+      : { id: "figure", type: "shape", shape: "ring", d: 280, thickness: 20, fill: c.accent, progress: 1, at: at(0.75, 0.5), in: { preset: "pop", at: 14, dur: 16, ease: "back" }, ...V({ d: 340, thickness: 24, at: at(0.5, 0.74) }) };
     return sceneOf("split", p, "text on one side, the picture on the other", keep(
       {
         id: "panel", type: "shape", shape: "rect", w: 960, h: 1080, fill: S(p, "panel") || "ink", probe: false,
@@ -668,14 +674,14 @@ const split: MgTemplate = {
         ...V({ w: 1080, h: 960, at: at(0.5, 0.75) }),
       },
       {
-        id: "headline", type: "text", text: S(p, "headline"), size: 64, weight: 700, color: c.fg, align: "left",
+        id: "headline", type: "text", text: S(p, "headline"), size: 64, weight: 700, color: c.fg, accent: c.accentText, align: "left",
         at: at(0.08, 0.42), anchor: "left", maxWidth: 0.34, in: { preset: "rise", at: 4, dur: 14, ease: "out" },
-        ...V({ size: 54, at: at(0.09, 0.2), maxWidth: 0.82 }),
+        ...V({ size: 62, at: at(0.09, 0.24), maxWidth: 0.82 }),
       },
       S(p, "body") && {
-        id: "body", type: "text", text: S(p, "body"), role: "body", size: 34, weight: 400, color: c.dim, align: "left",
+        id: "body", type: "text", text: S(p, "body"), role: "body", size: 34, weight: 400, color: c.dim, accent: c.accentText, align: "left",
         at: at(0.08, 0.56), anchor: "left", maxWidth: 0.32, in: { preset: "fade", at: 20, dur: 14, ease: "out" },
-        ...V({ size: 30, at: at(0.09, 0.32), maxWidth: 0.8 }),
+        ...V({ size: 34, at: at(0.09, 0.35), maxWidth: 0.8 }),
       },
       figure,
     ));
@@ -741,7 +747,7 @@ const countdown: MgTemplate = {
         ...V({ size: 165, at: at(0.5, 0.45) }),
       },
       S(p, "label") && {
-        id: "label", type: "text", text: S(p, "label"), role: "body", size: 36, weight: 500, uppercase: true, letterSpacing: 0.14, color: c.dim,
+        id: "label", type: "text", text: S(p, "label"), role: "body", size: 36, weight: 500, uppercase: true, letterSpacing: 0.14, color: c.dim, accent: c.accentText,
         at: at(0.5, 0.68), maxWidth: 0.6, in: { preset: "fade", at: 16, dur: 12, ease: "out" },
         ...V({ size: 32, at: at(0.5, 0.62), maxWidth: 0.84 }),
       },
@@ -776,7 +782,7 @@ const endCard: MgTemplate = {
         ...V({ w: 160, at: at(0.5, 0.55) }),
       },
       S(p, "url") && {
-        id: "url", type: "text", text: S(p, "url"), role: "mono", size: 32, weight: 400, color: c.dim,
+        id: "url", type: "text", text: S(p, "url"), role: "mono", size: 32, weight: 400, color: c.dim, accent: c.accentText,
         at: at(0.5, 0.66), maxWidth: 0.7, in: { preset: "fade", at: 32, dur: 12, ease: "out" },
         ...V({ size: 28, at: at(0.5, 0.63), maxWidth: 0.86 }),
       },
