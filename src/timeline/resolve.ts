@@ -23,7 +23,7 @@ export type Location = {
   filmSeconds: number;
   /** nearest named event at or before this frame, if any */
   event?: { name: string; local: number; distance: number };
-  /** true when the frame is still inside the enter transition */
+  /** true inside the enter transition or the exit transition: a blank or half-faded frame there is the fade, not missing content */
   inTransition: boolean;
   label: string;
 };
@@ -41,7 +41,7 @@ export const locate = (c: Compiled, filmFrame: number): Location => {
   const partFrame = frame - part.filmStart;
   const local = frame - scene.filmStart;
   const before = scene.events.filter((e) => e.local <= local).sort((a, b) => b.local - a.local)[0];
-  const inTransition = local < (scene.enter.dur ?? 0);
+  const inTransition = local < (scene.enter.dur ?? 0) || (!!scene.exit?.dur && local >= scene.dur - scene.exit.dur);
   return {
     part: part.id,
     scene,

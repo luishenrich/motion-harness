@@ -6,7 +6,7 @@ import { timelineMarkdown } from "./docs.ts";
 const tl = defineTimeline({
   fps: 30,
   parts: [
-    { id: "a", composition: "a", enterFrames: 10, scenes: [{ id: "one", dur: 30, enter: "cut" }, { id: "two", dur: 60, enter: "fade", events: { hit: 20 } }] },
+    { id: "a", composition: "a", enterFrames: 10, scenes: [{ id: "one", dur: 30, enter: "cut" }, { id: "two", dur: 60, enter: "fade", exit: { type: "fade", dur: 6 }, events: { hit: 20 } }] },
     { id: "b", composition: { wide: "b-wide" }, gap: 15, overlap: 8, scenes: [{ id: "three", dur: 45, enter: "wipe", text: "Six words that need some time" }] },
   ],
   audio: [{ id: "bed", kind: "music", file: "x.mp3", at: "b - 1s" }],
@@ -50,6 +50,10 @@ describe("resolve", () => {
     expect(L.event).toEqual({ name: "hit", local: 20, distance: 2 });
     expect(resolve(c, "three+3").inTransition).toBe(true);
     expect(resolve(c, "three+12").inTransition).toBe(false);
+    // the exit fade counts too: a blank last frame is the fade, not missing content
+    expect(resolve(c, "two+53").inTransition).toBe(false);
+    expect(resolve(c, "two+54").inTransition).toBe(true);
+    expect(resolve(c, "two+59").inTransition).toBe(true);
   });
   test("seconds arithmetic, also before the film starts", () => {
     expect(resolve(c, "three - 1s").filmFrame).toBe(75);

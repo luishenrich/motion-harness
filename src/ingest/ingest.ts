@@ -126,11 +126,16 @@ export const ingestFile = async (cfg: LoadedConfig, file: string, opts: { id?: s
     asset.fps = p.fps;
     asset.colour = { first: { luma: p.colour.first.luma }, mid: { luma: p.colour.mid.luma }, last: { luma: p.colour.last.luma } };
     if (opts.shots !== false) asset.shots = await detectShots(abs);
-    // measured on the 160 px probe frame, scaled to the clip's own pixels
-    const e = await darkEdges(join(work, `${basename(abs)}-mid.png`));
-    const meta = await sharp(join(work, `${basename(abs)}-mid.png`)).metadata().catch(() => ({ width: 160, height: 90 }));
+    // a bar is dark on every sampled frame and narrow; a dark ground with centred content is neither
+    const frames = ["first", "mid", "last"].map((n) => join(work, `${basename(abs)}-${n}.png`));
+    const es = await Promise.all(frames.map((f) => darkEdges(f)));
+    const meta = await sharp(frames[1]).metadata().catch(() => ({ width: 160, height: 90 }));
     const sx = (p.width || 1) / (meta.width || 160), sy = (p.height || 1) / (meta.height || 90);
-    asset.darkEdges = { left: Math.round(e.left * sx), right: Math.round(e.right * sx), top: Math.round(e.top * sy), bottom: Math.round(e.bottom * sy) };
+    const side = (k: "left" | "right" | "top" | "bottom", scale: number, full: number) => {
+      const v = Math.min(...es.map((e) => e[k])) * scale;
+      return v / full > 0.2 ? 0 : Math.round(v);
+    };
+    asset.darkEdges = { left: side("left", sx, p.width || 1), right: side("right", sx, p.width || 1), top: side("top", sy, p.height || 1), bottom: side("bottom", sy, p.height || 1) };
   }
   if (a) {
     try {

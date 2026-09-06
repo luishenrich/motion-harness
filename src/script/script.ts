@@ -287,8 +287,8 @@ import { timeline, SCENES, ASSETS, DESIGN, FADE, FPS, type SceneId, type SceneSp
 
 const c = compile(timeline);
 
-/** the dashed boxes that describe a text scene's missing visual: set false once every scene has its real picture */
-export const SHOW_VISUAL_NOTES = true;
+/** set true while blocking: every text scene then shows its visual note in a dashed box, so a missing picture is visible on the sheet; false renders the film as delivered */
+export const SHOW_VISUAL_NOTES = false;
 
 const DISPLAY = DESIGN.fontDisplay ? \`'\${DESIGN.fontDisplay}', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif\` : "-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif";
 const BODY = DESIGN.fontBody ? \`'\${DESIGN.fontBody}', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif\` : DISPLAY;
