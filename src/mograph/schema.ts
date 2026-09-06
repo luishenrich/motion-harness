@@ -180,6 +180,8 @@ export type MgScene = {
   why?: string;
   /** subtitle line when no text layer speaks for the scene */
   caption?: string;
+  /** the parameters the template was given (mh template add|apply); the layers stay the truth */
+  params?: Record<string, unknown>;
 };
 
 export type Design = {

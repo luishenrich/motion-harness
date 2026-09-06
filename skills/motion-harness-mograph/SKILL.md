@@ -33,6 +33,7 @@ mh render --format all
 | the palette, the fonts | `mh set design.accent "#FF6B35"`, `mh set design.fontDisplay "Sora"` |
 | add, remove, order | `mh add layer hook '{"id":"rule","type":"shape","shape":"line","w":220,"fill":"accent","at":{"x":0.5,"y":0.6},"in":{"preset":"grow","at":30}}'`, `mh remove hook.rule`, `mh move stat --after hook`, `mh dup hook --as hook-b`, `mh rename hook opening` |
 | a whole scene | `mh add scene '{"id":"stat","dur":90,"ground":"paper","exit":{"type":"fade","dur":8},"layers":[...]}' --after hook` |
+| a whole scene from a template | `mh template add stat --param value=40 --param label="ms a frame" --after hook` (`mh template list` names all fifteen: title, statement, stat, list, compare, quote, lower-third, chart, logo, cta, steps, split, kinetic, countdown, end-card; the layers are editable by address after that, `mh template apply` builds one again from its params) |
 | stacked blocks touch | `mh layout stat` (pushes them apart per format, keeps them in the safe band) |
 | a value | `mh get hook.line` |
 | by hand, in a browser | `mh edit` (click a layer, arrows nudge, [ ] in, - = size, z undo; the file changes at once) |

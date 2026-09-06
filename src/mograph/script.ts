@@ -8,6 +8,7 @@ import { chatJson } from "../ai/azure.ts";
 import type { Design, Layer, MgFilm, MgScene } from "./schema.ts";
 import { designColors } from "./schema.ts";
 import { lintFilm, type MgFinding } from "./edit.ts";
+import { expandTemplates, templatePromptBlock } from "./templates.ts";
 
 export const MG_SYSTEM = `You write motion graphics films as data for a renderer. Pure motion graphics: typography, shapes, counters, lists, bar charts, rings, a logo image at most. No footage, no stock, no faces. Answer with one JSON object and nothing else.
 
@@ -18,6 +19,9 @@ defaults: { "enterFrames": 0, "layerIn": { "preset": "rise", "dur": 14, "ease": 
 
 Scene: { "id": kebab-case, "dur": frames (45 to 180; the film adds up to the target length), "ground": "ink" | "paper" | "accent" | a colors name, "exit": { "type": "fade", "dur": 8 } on every scene but the last, "why": one sentence, "layers": [...] }.
 Alternate grounds so the film breathes; two or three layers per scene, four at most; one idea per scene.
+
+Templates: a scene may be written as { "id": kebab-case, "template": one of the names below, "params": { ... } } with no layers, and the harness expands it into the layers. Prefer a template whenever one fits the beat; write raw layers only when none does. Every template also takes "ground" and "dur"; leave a param out to take its default. A list param is one string with " | " between the items, a pairs param is "label=number | label=number". A template scene obeys the timing rules like any other: give "dur" roughly 40 frames plus 8 per word of its copy. A template picks its colours from the ground, so name the ground and leave the colours alone.
+${templatePromptBlock()}
 
 Layer (every kind): { "id": kebab-case unique in the scene, "type", "at": { "x": 0..1, "y": 0..1 } (fractions of the frame; y 0.45 is the eye line), "anchor"?: "center" (default) | "left" | "right" | "top" | "bottom", "in": { "preset", "at": local frame, "dur": frames, "ease"?, "stagger"?: { "by": "word" | "char" | "line" | "item", "each": frames } }, "out"?: { "preset", "at": negative frames from the scene end, "dur" }, "formats"?: { "vertical": { any fields that must differ in 9:16, usually "size", "at", "maxWidth", "w" } }, "why"?: one sentence }.
 Kinds:
@@ -38,7 +42,9 @@ const kebab = (v: unknown, fallback: string) => (String(v ?? "").toLowerCase().r
 const clamp = (v: unknown, lo: number, hi: number, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
 
 /** ids kebab and unique, numbers clamped, design filled, formats present, unknown layers dropped */
-export const normalizeFilm = (raw: Partial<MgFilm>, opts: { fps?: number; formats?: string[] } = {}): MgFilm => {
+export const normalizeFilm = (input: Partial<MgFilm>, opts: { fps?: number; formats?: string[] } = {}): MgFilm => {
+  // scenes written as { id, template, params } become layers before anything else reads them
+  const raw = expandTemplates(input);
   const fps = opts.fps ?? (typeof raw.fps === "number" ? raw.fps : 30);
   const d = (raw.design ?? {}) as Partial<Design>;
   const design: Design = {
@@ -61,7 +67,7 @@ export const normalizeFilm = (raw: Partial<MgFilm>, opts: { fps?: number; format
     seenScene.add(id);
     const seen = new Set<string>();
     const layers: Layer[] = (Array.isArray(s.layers) ? s.layers : [])
-      .filter((l) => l && typeof l === "object" && ["text", "shape", "image", "counter", "bars", "list"].includes((l as Layer).type))
+      .filter((l) => l && typeof l === "object" && ["text", "shape", "image", "counter", "bars", "list", "group"].includes((l as Layer).type))
       .map((l, j) => {
         const L = { ...(l as Layer) } as Layer & Record<string, unknown>;
         let lid = kebab(L.id, `${L.type}-${j + 1}`);
@@ -93,7 +99,7 @@ export const normalizeFilm = (raw: Partial<MgFilm>, opts: { fps?: number; format
         return L as Layer;
       });
     const dur = clamp(s.dur, 20, 900, 90);
-    return { id, dur: Math.round(dur), ground: typeof s.ground === "string" ? s.ground : i % 2 ? "paper" : "ink", enter: s.enter, exit: s.exit, layers, events: s.events, why: typeof s.why === "string" ? s.why : undefined, caption: s.caption };
+    return { id, dur: Math.round(dur), ground: typeof s.ground === "string" ? s.ground : i % 2 ? "paper" : "ink", enter: s.enter, exit: s.exit, layers, events: s.events, why: typeof s.why === "string" ? s.why : undefined, caption: s.caption, template: typeof s.template === "string" ? s.template : undefined, params: s.params };
   });
   return {
     title: String(raw.title ?? "Untitled").trim() || "Untitled",
