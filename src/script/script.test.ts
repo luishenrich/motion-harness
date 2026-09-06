@@ -6,7 +6,7 @@ import { contrastRatio, lintContrast } from "../lint/lint.ts";
 
 const assets = [
   { id: "interview", file: "public/assets/interview.mp4", kind: "video" as const, seconds: 40, width: 1920, height: 1080, bytes: 1, addedAt: "", colour: { first: { luma: 40 }, mid: { luma: 48 }, last: { luma: 50 } }, subject: { label: "a founder at a desk", category: "person" as const, box: [0.3, 0.1, 0.4, 0.8] as [number, number, number, number] } },
-  { id: "desk", file: "public/assets/desk.jpg", kind: "image" as const, width: 1200, height: 800, bytes: 1, addedAt: "", colour: { first: { luma: 170 }, mid: { luma: 170 }, last: { luma: 170 } } },
+  { id: "desk", file: "public/assets/desk.jpg", kind: "image" as const, width: 1200, height: 800, bytes: 1, addedAt: "", colour: { first: { luma: 170 }, mid: { luma: 170, edge: "#F0EEE6" }, last: { luma: 170 } } },
 ];
 const script = normalizeScript(
   {
@@ -54,7 +54,7 @@ describe("script", () => {
     expect(files["src/timeline.ts"]).toContain('"problem": { dur: 90, kind: "text"');
     expect(files["src/timeline.ts"]).toContain('"interview": { file: "assets/interview.mp4", kind: "video", seconds: 40');
     expect(files["src/timeline.ts"]).toContain('subject: { label: "a founder at a desk", category: "person", box: [0.3, 0.1, 0.4, 0.8] }');
-    expect(files["src/timeline.ts"]).toContain('"still": { dur: 120, kind: "image", ground: "light", headline: "The desk", body: "", asset: "desk", inAt: 0, focus: null');
+    expect(files["src/timeline.ts"]).toContain('"still": { dur: 120, kind: "image", ground: "light", fill: "#F0EEE6", headline: "The desk", body: "", asset: "desk", inAt: 0, focus: null');
     expect(files["src/timeline.ts"]).toContain('DESIGN = { ink: "#101820"');
     expect(files["src/Film.tsx"]).toContain("fonts.googleapis.com/css2?family=Space+Grotesk");
     expect(files["src/Root.tsx"]).toContain('id="placement-check-launch-vertical"');

@@ -5,7 +5,7 @@
  * mean colour, an optional transcript. The script model reads this list to
  * place footage into scenes; the scaffold reads it to build them.
  */
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import sharp from "sharp";
 import type { LoadedConfig } from "../config.ts";
@@ -29,11 +29,11 @@ export type Asset = {
   loudness?: { lufs: number; truePeak: number };
   /** seconds where the picture cuts (shot changes) */
   shots?: number[];
-  /** one entry per shot: where it starts and how bright it is, so a scene that starts mid-clip knows the ground it blends into */
-  segments?: { start: number; luma: number }[];
+  /** one entry per shot: where it starts, how bright it is and the colour of its outer edge, so a scene that starts mid-clip sits on the ground it blends into */
+  segments?: { start: number; luma: number; edge: string }[];
   /** spans without speech or sound */
   silences?: { start: number; end: number }[];
-  colour?: { first: { luma: number }; mid: { luma: number }; last: { luma: number } };
+  colour?: { first: { luma: number }; mid: { luma: number; edge?: string }; last: { luma: number } };
   /** pixels of near-black at each edge of the mid frame: a clip that carries its own bars */
   darkEdges?: { left: number; right: number; top: number; bottom: number };
   /** what a model saw in the mid frame: the main subject, its kind, its box (x, y, w, h as fractions), readable text */
@@ -84,28 +84,62 @@ export const darkEdges = async (png: string): Promise<{ left: number; right: num
   return { left, right, top, bottom };
 };
 
-/** mean luma of a frame at `t` seconds, from a 32x18 downscale */
-const lumaAt = async (file: string, t: number, png: string): Promise<number | null> => {
-  await run(["ffmpeg", "-y", "-v", "error", "-ss", t.toFixed(3), "-i", file, "-frames:v", "1", "-vf", "scale=32:18", png]).catch(() => null);
+/** mean luma of a frame at `t` seconds and the colour of its outer ring, from a 160 px downscale */
+const lumaAt = async (file: string, t: number, png: string): Promise<{ luma: number; edge: string } | null> => {
+  await run(["ffmpeg", "-y", "-v", "error", "-ss", t.toFixed(3), "-i", file, "-frames:v", "1", "-vf", "scale=160:-2", png]).catch(() => null);
   if (!existsSync(png)) return null;
-  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  let l = 0;
-  for (let i = 0; i < info.width * info.height; i++) l += 0.2126 * data[i * 3] + 0.7152 * data[i * 3 + 1] + 0.0722 * data[i * 3 + 2];
-  return Math.round(l / (info.width * info.height));
+  return frameStats(png);
 };
 
-/** the luma of the shot that contains `t`; the mid frame when the clip has no per-shot readings */
-export const lumaAtTime = (a: Asset, t: number): number | null => {
+/** luma over the whole frame; the edge colour is the per-channel median of the outer two pixel rows and columns, so a title bar or a border does not tint it */
+const frameStats = async (png: string): Promise<{ luma: number; edge: string }> => {
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const W = info.width, H = info.height;
+  let l = 0;
+  const ring: [number[], number[], number[]] = [[], [], []];
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 3;
+      l += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+      if (x < 2 || y < 2 || x >= W - 2 || y >= H - 2) {
+        ring[0].push(data[i]);
+        ring[1].push(data[i + 1]);
+        ring[2].push(data[i + 2]);
+      }
+    }
+  const median = (v: number[]) => v.sort((a, b) => a - b)[Math.floor(v.length / 2)] ?? 0;
+  const hex = (v: number[]) => median(v).toString(16).padStart(2, "0");
+  return { luma: Math.round(l / (W * H)), edge: `#${hex(ring[0])}${hex(ring[1])}${hex(ring[2])}`.toUpperCase() };
+};
+
+/** the shot that contains `t`: its luma and edge colour; the mid frame's luma when the clip has no per-shot readings */
+export const shotAtTime = (a: Asset, t: number): { luma: number; edge?: string } | null => {
   if (a.segments?.length) {
     const seg = [...a.segments].reverse().find((x) => x.start <= t) ?? a.segments[0];
-    return seg.luma;
+    return { luma: seg.luma, edge: seg.edge };
   }
-  return a.colour?.mid.luma ?? null;
+  return a.colour ? { luma: a.colour.mid.luma, edge: a.colour.mid.edge } : null;
 };
 
 const streams = async (file: string) => {
-  const p = await run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height,r_frame_rate,channels:format=duration,size", "-of", "json", file]);
-  return JSON.parse(p.out) as { streams: { codec_type: string; width?: number; height?: number; r_frame_rate?: string; channels?: number }[]; format: { duration?: string; size?: string } };
+  const p = await run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height,r_frame_rate,channels,pix_fmt,color_range,color_space:format=duration,size", "-of", "json", file]);
+  return JSON.parse(p.out) as { streams: { codec_type: string; width?: number; height?: number; r_frame_rate?: string; channels?: number; pix_fmt?: string; color_range?: string; color_space?: string }[]; format: { duration?: string; size?: string } };
+};
+
+/**
+ * A full-range clip (yuvj420p, color_range pc: screen recordings and phone exports often are) decodes differently
+ * in a browser and in ffmpeg: the browser stretches it and a cream ground turns white while the ground the
+ * scaffold measured stays cream. The harness's copy is re-encoded to limited range, bt709 tagged, so every
+ * decoder agrees. Only the copy changes, never the original.
+ */
+const normaliseRange = async (src: string, dst: string, v: { pix_fmt?: string; color_range?: string; color_space?: string }, log: (s: string) => void) => {
+  const matrix = v.color_space && v.color_space !== "unknown" ? v.color_space : "";
+  const vf = `scale=in_range=pc:out_range=tv${matrix ? `:in_color_matrix=${matrix}:out_color_matrix=bt709` : ""}`;
+  const tmp = dst + ".tv.mp4";
+  await run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vf", vf, "-pix_fmt", "yuv420p", "-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-c:v", "libx264", "-preset", "medium", "-crf", "14", "-c:a", "copy", "-movflags", "+faststart", tmp]);
+  copyFileSync(tmp, dst);
+  rmSync(tmp);
+  log(`${basename(dst)}: full-range ${v.pix_fmt ?? ""}${matrix ? ` ${matrix}` : ""} re-encoded to limited range bt709, so the browser and ffmpeg show the same colours`);
 };
 
 /** a 640 px frame from the middle of a clip, or the image itself at that width: what the model looks at */
@@ -126,10 +160,15 @@ export const ingestFile = async (cfg: LoadedConfig, file: string, opts: { id?: s
   const log = opts.log ?? (() => {});
   let abs = resolve(file);
   if (!existsSync(abs)) throw new Error(`no such file: ${abs}`);
+  const fullRange = (v?: { pix_fmt?: string; color_range?: string }) => !!v && (v.color_range === "pc" || (v.pix_fmt ?? "").startsWith("yuvj"));
   if (opts.copyTo) {
     const dst = join(resolve(cfg.projectDir, opts.copyTo), basename(abs));
     mkdirSync(join(dst, ".."), { recursive: true });
-    if (resolve(dst) !== abs) copyFileSync(abs, dst);
+    const src = kindOf(abs) === "video" ? (await streams(abs)).streams.find((x) => x.codec_type === "video") : undefined;
+    if (resolve(dst) !== abs) {
+      if (fullRange(src)) await normaliseRange(abs, dst, src!, opts.log ?? (() => {}));
+      else copyFileSync(abs, dst);
+    }
     abs = dst;
   }
   const id = opts.id ?? basename(abs).replace(/\.[a-z0-9]+$/i, "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -142,11 +181,9 @@ export const ingestFile = async (cfg: LoadedConfig, file: string, opts: { id?: s
     asset.width = m.width;
     asset.height = m.height;
     asset.bytes = m.size ?? 0;
-    const { data, info } = await sharp(abs).resize(32, 18, { fit: "fill" }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-    let l = 0;
-    for (let i = 0; i < info.width * info.height; i++) l += 0.2126 * data[i * 3] + 0.7152 * data[i * 3 + 1] + 0.0722 * data[i * 3 + 2];
-    const luma = Math.round(l / (info.width * info.height));
-    asset.colour = { first: { luma }, mid: { luma }, last: { luma } };
+    await sharp(abs).resize({ width: 160 }).png().toFile(join(work, "stats.png"));
+    const { luma, edge } = await frameStats(join(work, "stats.png"));
+    asset.colour = { first: { luma }, mid: { luma, edge }, last: { luma } };
     asset.summary = `${m.width}x${m.height} image, luma ${luma}`;
     log(`${id}: image ${m.width}x${m.height}`);
     if (opts.look) await lookAt(asset, abs, work, log);
@@ -159,6 +196,7 @@ export const ingestFile = async (cfg: LoadedConfig, file: string, opts: { id?: s
   asset.bytes = parseInt(j.format.size ?? "0", 10);
   asset.hasAudio = !!a;
   if (v && kind === "video") {
+    if (fullRange(v)) log(`${id}: full-range colour (${v.pix_fmt}); a browser stretches it and ffmpeg does not, ingest with --copy to get a limited-range copy`);
     const p = await probeClip(abs, work);
     asset.width = p.width;
     asset.height = p.height;
@@ -167,11 +205,11 @@ export const ingestFile = async (cfg: LoadedConfig, file: string, opts: { id?: s
     if (opts.shots !== false) {
       asset.shots = await detectShots(abs);
       const starts = [0, ...asset.shots].slice(0, 24);
-      const segs: { start: number; luma: number }[] = [];
+      const segs: { start: number; luma: number; edge: string }[] = [];
       for (let i = 0; i < starts.length; i++) {
         const end = starts[i + 1] ?? asset.seconds ?? starts[i] + 1;
-        const luma = await lumaAt(abs, Math.min(starts[i] + 0.15, (starts[i] + end) / 2), join(work, `seg-${i}.png`));
-        if (luma !== null) segs.push({ start: Math.round(starts[i] * 100) / 100, luma });
+        const st = await lumaAt(abs, Math.min(starts[i] + 0.15, (starts[i] + end) / 2), join(work, `seg-${i}.png`));
+        if (st) segs.push({ start: Math.round(starts[i] * 100) / 100, luma: st.luma, edge: st.edge });
       }
       asset.segments = segs;
     }
