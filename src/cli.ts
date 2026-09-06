@@ -826,6 +826,18 @@ const lintRun = async (x: Ctx, args: Args): Promise<Finding[]> => {
   if (none || which.timeline) findings.push(...lintTimeline(x.cfg, x.c));
   if (none || which.timeline || flag(args, "clips")) findings.push(...lintClips(x.cfg, x.c));
   if (none || which.static) findings.push(...(await lintStaticColors(x.cfg)));
+  // a motion graphics film: its own data lint (colours, easings, presets, timing, reading time) is part of the static step
+  if (none || which.static) {
+    const mg = (film as { mograph?: string }).mograph ?? "film.mograph.json";
+    const mgPath = join(x.cfg.projectDir, mg);
+    if (existsSync(mgPath)) {
+      try {
+        findings.push(...lintFilm(loadFilm(mgPath), x.cfg.projectDir).map((f) => ({ level: f.level, rule: `film-${f.rule}`, where: f.where, message: f.message })));
+      } catch (e) {
+        findings.push({ level: "error", rule: "film-json", where: mg, message: String((e as Error).message ?? e) });
+      }
+    }
+  }
   if (which.rendered) {
     const legs = cursorLegFrames(x.c, film);
     const runs: Record<string, ProbeFrame[]> = {};

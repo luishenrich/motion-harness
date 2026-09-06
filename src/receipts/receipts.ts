@@ -30,7 +30,8 @@ let current: Receipt | null = null;
 let dir: string | null = null;
 
 export const startReceipt = (command: string, positional: string[], args: Record<string, unknown>): Receipt => {
-  current = { id: `${stamp()}-${command}`, command, args, positional, startedAt: new Date().toISOString(), status: "running", outputs: [], notes: [] };
+  // milliseconds and the pid keep a fast edit loop (hundreds of mh set per minute) from overwriting its own receipts
+  current = { id: `${stamp()}-${String(Date.now() % 1000).padStart(3, "0")}-${process.pid % 10000}-${command}`, command, args, positional, startedAt: new Date().toISOString(), status: "running", outputs: [], notes: [] };
   return current;
 };
 
