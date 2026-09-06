@@ -1735,12 +1735,28 @@ const mgCtx = async (args: Args) => {
   return { x, path, rel, film: loadFilm(path) };
 };
 
-const mgReport = (findings: ReturnType<typeof lintFilm>, path: string, hint?: string) => {
-  produced(path);
+/** lint the edited film, save it when clean (or --force), report; a lint that throws or errors leaves the file as it was */
+const mgSave = (args: Args, film: Parameters<typeof lintFilm>[0], path: string, projectDir: string, hint?: string): boolean => {
+  let findings: ReturnType<typeof lintFilm>;
+  try {
+    findings = lintFilm(film, projectDir);
+  } catch (e) {
+    log(`not saved: the film would not lint (${String((e as Error).message ?? e)})`);
+    process.exitCode = 2;
+    return false;
+  }
   if (findings.length) log(formatFindings(findings));
   const errors = findings.filter((f) => f.level === "error").length;
-  log(`${errors ? `${errors} error${errors === 1 ? "" : "s"} in ` : "saved "}${path}${hint ? `   verify: ${hint}` : ""}`);
+  if (errors && !flag(args, "force")) {
+    log(`${errors} error${errors === 1 ? "" : "s"}: nothing saved to ${path} (pass --force to save anyway)`);
+    process.exitCode = 2;
+    return false;
+  }
+  saveFilm(path, film);
+  produced(path);
+  log(`${errors ? `saved with ${errors} error${errors === 1 ? "" : "s"}: ` : "saved "}${path}${hint ? `   verify: ${hint}` : ""}`);
   if (errors) process.exitCode = 2;
+  return true;
 };
 
 const cmdLayers = async (args: Args) => {
@@ -1759,12 +1775,15 @@ const cmdSet = async (args: Args) => {
   const { film, path, x } = await mgCtx(args);
   const [addr, ...rest] = args._;
   if (!addr || !rest.length) die('usage: mh set <address> <value>   e.g. mh set hook.line.size 110 | mh set hook.line.at \'{"x":0.5,"y":0.42}\' | mh set hook.dur 96 | mh set design.accent "#FF6B35"');
-  const value = parseValue(rest.join(" "));
+  const raw = rest.join(" ");
+  let value = parseValue(raw);
+  // a string field keeps a string: the copy "true" or "42" is copy, not a boolean or a number
+  const cur = getValue(film, addr);
+  if (typeof cur === "string" && typeof value !== "string") value = raw;
   const { before } = setValue(film, addr, value);
-  saveFilm(path, film);
   log(`${addr}: ${JSON.stringify(before)} -> ${JSON.stringify(value)}`);
   const t = addr.split(".");
-  mgReport(lintFilm(film, x.cfg.projectDir), path, t.length >= 2 && film.scenes.some((s) => s.id === t[0]) ? `mh frame ${t[0]}.${t[1]}Settled --format all` : undefined);
+  mgSave(args, film, path, x.cfg.projectDir, t.length >= 2 && film.scenes.some((s) => s.id === t[0]) ? `mh frame ${t[0]}.${t[1]}Settled --format all` : undefined);
 };
 
 const cmdUnset = async (args: Args) => {
@@ -1772,9 +1791,8 @@ const cmdUnset = async (args: Args) => {
   const addr = args._[0];
   if (!addr) die("usage: mh unset <address>   removes a property (mh remove takes whole scenes and layers)");
   const before = unsetValue(film, addr);
-  saveFilm(path, film);
   log(`${addr}: ${JSON.stringify(before)} -> (default)`);
-  mgReport(lintFilm(film, x.cfg.projectDir), path);
+  mgSave(args, film, path, x.cfg.projectDir);
 };
 
 const cmdGet = async (args: Args) => {
@@ -1789,10 +1807,9 @@ const cmdKey = async (args: Args) => {
   const [addr, at, v] = args._;
   if (!addr || at === undefined || v === undefined) die("usage: mh key <scene.layer.prop> <frame> <value> [--ease out]   tracks: opacity x y scale rotate blur progress wipe w h");
   const keys = setKey(film, addr, parseFloat(at), parseFloat(v), str(args, "ease"));
-  saveFilm(path, film);
   log(`${addr}: ${keys.map((k) => `@${k.at} ${k.v}${k.ease ? ` ${typeof k.ease === "string" ? k.ease : "spring"}` : ""}`).join("  ")}`);
   const t = addr.split(".");
-  mgReport(lintFilm(film, x.cfg.projectDir), path, `mh frame ${t[0]}+${at} --format all`);
+  mgSave(args, film, path, x.cfg.projectDir, `mh frame ${t[0]}+${at} --format all`);
 };
 
 const cmdUnkey = async (args: Args) => {
@@ -1800,9 +1817,8 @@ const cmdUnkey = async (args: Args) => {
   const [addr, at] = args._;
   if (!addr || at === undefined) die("usage: mh unkey <scene.layer.prop> <frame>");
   const keys = unsetKey(film, addr, parseFloat(at));
-  saveFilm(path, film);
   log(`${addr}: ${keys.length ? keys.map((k) => `@${k.at} ${k.v}`).join("  ") : "(no track, the preset applies)"}`);
-  mgReport(lintFilm(film, x.cfg.projectDir), path);
+  mgSave(args, film, path, x.cfg.projectDir);
 };
 
 const cmdAdd = async (args: Args) => {
@@ -1813,16 +1829,14 @@ const cmdAdd = async (args: Args) => {
     const scene = parseValue(a) as MgScene;
     if (typeof scene !== "object") die("usage: mh add scene '{\"id\":\"x\",\"dur\":90,\"ground\":\"ink\",\"layers\":[]}' [--after id]");
     addScene(film, scene, pos);
-    saveFilm(path, film);
     log(`scene ${scene.id} added (${scene.dur}f, ${scene.layers?.length ?? 0} layers)`);
-    mgReport(lintFilm(film, x.cfg.projectDir), path, `mh check --scene ${scene.id} --format all`);
+    mgSave(args, film, path, x.cfg.projectDir, `mh check --scene ${scene.id} --format all`);
   } else if (what === "layer" && a && b) {
     const layer = parseValue(b) as MgLayer;
     if (typeof layer !== "object") die("usage: mh add layer <scene> '{\"id\":\"x\",\"type\":\"text\",\"text\":\"...\"}' [--after id|--before id]");
     addLayer(film, a, layer, pos);
-    saveFilm(path, film);
     log(`layer ${a}.${layer.id} added (${layer.type})`);
-    mgReport(lintFilm(film, x.cfg.projectDir), path, `mh frame ${a}.${layer.id}Settled --format all`);
+    mgSave(args, film, path, x.cfg.projectDir, `mh frame ${a}.${layer.id}Settled --format all`);
   } else die("usage: mh add scene <json> [--after id] | mh add layer <scene> <json> [--after id|--before id]");
 };
 
@@ -1831,9 +1845,8 @@ const cmdRemove = async (args: Args) => {
   const addr = args._[0];
   if (!addr) die("usage: mh remove <scene>|<scene.layer>");
   const kind = mgRemove(film, addr);
-  saveFilm(path, film);
   log(`${kind} ${addr} removed`);
-  mgReport(lintFilm(film, x.cfg.projectDir), path);
+  mgSave(args, film, path, x.cfg.projectDir);
 };
 
 const cmdMove = async (args: Args) => {
@@ -1841,9 +1854,8 @@ const cmdMove = async (args: Args) => {
   const addr = args._[0];
   if (!addr || (!str(args, "after") && !str(args, "before"))) die("usage: mh move <scene>|<scene.layer> --after <id>|--before <id>");
   mgMove(film, addr, { after: str(args, "after"), before: str(args, "before") });
-  saveFilm(path, film);
   log(`${addr} moved ${str(args, "after") ? `after ${str(args, "after")}` : `before ${str(args, "before")}`}`);
-  mgReport(lintFilm(film, x.cfg.projectDir), path);
+  mgSave(args, film, path, x.cfg.projectDir);
 };
 
 const cmdDup = async (args: Args) => {
@@ -1851,9 +1863,8 @@ const cmdDup = async (args: Args) => {
   const addr = args._[0];
   if (!addr) die("usage: mh dup <scene>|<scene.layer> [--as id]");
   const id = mgDuplicate(film, addr, str(args, "as"));
-  saveFilm(path, film);
   log(`${addr} duplicated as ${id}`);
-  mgReport(lintFilm(film, x.cfg.projectDir), path);
+  mgSave(args, film, path, x.cfg.projectDir);
 };
 
 const cmdRename = async (args: Args) => {
@@ -1861,9 +1872,8 @@ const cmdRename = async (args: Args) => {
   const [addr, id] = args._;
   if (!addr || !id) die("usage: mh rename <scene>|<scene.layer> <new-id>");
   mgRename(film, addr, id);
-  saveFilm(path, film);
   log(`${addr} is now ${id}`);
-  mgReport(lintFilm(film, x.cfg.projectDir), path);
+  mgSave(args, film, path, x.cfg.projectDir);
 };
 
 /** stacked blocks pushed apart and kept in the safe band, per format; the film is saved */
@@ -1871,9 +1881,8 @@ const cmdLayout = async (args: Args) => {
   const { film, path, x } = await mgCtx(args);
   const moved = autoLayout(film, args._[0]);
   if (!moved.length) return log("nothing overlaps; nothing moved");
-  saveFilm(path, film);
   log(table(moved.map((m) => [m.scene, m.layer, m.format, m.from.toFixed(3), m.to.toFixed(3)]), ["scene", "layer", "format", "y before", "y after"]));
-  mgReport(lintFilm(film, x.cfg.projectDir), path, `mh check --scene ${[...new Set(moved.map((m) => m.scene))].join(",")} --format all`);
+  mgSave(args, film, path, x.cfg.projectDir, `mh check --scene ${[...new Set(moved.map((m) => m.scene))].join(",")} --format all`);
 };
 
 /** the editor: the native engine's host page on a stage, a scrubber, layers, an inspector; every change lands in film.mograph.json */

@@ -44,6 +44,7 @@ const clamp255 = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
 /** any hex the schema allows, plus rgb()/rgba(); unknown text falls back to black */
 export const toRgb = (css: string): Rgb => {
   const s = (css ?? "").trim();
+  if (s === "transparent" || s === "none") return { r: 0, g: 0, b: 0, a: 0 };
   const m = s.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.]+))?\s*\)$/i);
   if (m) return { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] };
   const h = s.replace("#", "");

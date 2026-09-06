@@ -110,7 +110,8 @@ export const highlightAt = (film: MgFilm, scene: MgScene, layer: Layer, frame: n
   if (!hl) return null;
   const t = layerTiming(film, scene, layer);
   const dur = Math.max(1, hl.in?.dur ?? 12);
-  const at = hl.in?.at !== undefined ? t.from + localFrame(hl.in.at, t.to - t.from, 0) : Math.min(t.to - dur, t.inAt + t.inDur + 4);
+  const settled = t.inAt + t.inDur;
+  const at = hl.in?.at !== undefined ? t.from + localFrame(hl.in.at, t.to - t.from, 0) : Math.max(settled, Math.min(t.to - dur, settled + 4));
   const r = resolveEase(hl.in?.ease ?? "out", film.easings ?? {});
   const progress = Math.max(0, Math.min(1, progressOf(r, frame - at, dur, film.fps)));
   const paint = paintOf(film.design, hl.color ?? "accent", film.design.accent);
