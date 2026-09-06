@@ -112,6 +112,28 @@ mh deliver --out docs/.../deliverables --stills all
                                             # films, stills, srt, manifest (sizes, sha1, chapters), .gitignore for the mp4
 ```
 
+## Motion graphics as data
+
+Pure motion graphics (typography, shapes, counters, lists, bars, rings, a logo) need no React at
+all: the film is one JSON file, scenes of layers with a place, a look, a way in, a way out and,
+when the presets are not enough, keyframe tracks. The harness draws it under either engine,
+compiles it into the timeline it checks, and every value has an address.
+
+```bash
+mh new spot --mograph --brief "20 seconds: ..."   # a model writes film.mograph.json, the scaffold draws it, mh check runs
+mh layers                                         # every scene and layer with its address, timing and content
+mh set hook.line.size 110                         # change a value; the film is linted, the frame to look at is named
+mh key hook.line.y 0 40 --ease out                # a keyframe on a track; explicit tracks win over presets
+mh add layer stat '{"id":"tag","type":"text","text":"native engine","at":{"x":0.5,"y":0.8}}'
+mh layout stat                                    # stacked blocks pushed apart, per format
+mh edit                                           # the editor: click a layer, nudge with the keys, every change lands in the file
+```
+
+Easing is data too (`out`, `back`, `snappy`, `cubic-bezier(...)`, `{ "spring": {...} }`),
+staggers by word, character, line or item, per format overrides for vertical, and the layers'
+ins and outs become events (`hook.lineSettled`) so `mh frame` and `mh resolve` address them.
+Reference: [docs/mograph.md](docs/mograph.md); example: [examples/mograph](examples/mograph).
+
 ## Any film, not one kind of film
 
 The harness does not know what a "product film" is. A film is a timeline of scenes; a scene

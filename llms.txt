@@ -9,11 +9,13 @@
 - [Feedback skill](skills/motion-harness-feedback/SKILL.md): a human's comment to a verified edit
 - [Sound skill](skills/motion-harness-sound/SKILL.md): music, sfx, voice, loudness
 - [Deliver skill](skills/motion-harness-deliver/SKILL.md): the handover
+- [Motion graphics skill](skills/motion-harness-mograph/SKILL.md): a film as data, edited by address, drawn by the harness
 - [AGENTS.md](AGENTS.md): working in this repository
 
 ## Reference
 
 - `mh help`: every command with its flags
+- Motion graphics as data: `mh new --mograph`, `mh layers`, `mh set <scene>.<layer>.<prop> <value>`, `mh key`, `mh add`, `mh layout`, `mh edit` ([docs/mograph.md](docs/mograph.md))
 - Any film: `mh ingest --transcribe --look` probes footage (streams, silences, bars, words, the subject's box), `mh new --assets` scripts and scaffolds from it (text, clip, image scenes; voice and music cues; the subject stays in every crop)
 - [Config template](templates/harness.config.ts): what a project declares
 - [Timeline schema](src/timeline/schema.ts): parts, scenes, events, audio cues, rules, i18n

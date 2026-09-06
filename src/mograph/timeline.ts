@@ -65,7 +65,8 @@ export const mographTimeline = (film: MgFilm, opts: { film?: string; formats?: s
   return {
     fps: film.fps,
     rules: { minSceneDur: 20, maxEnterFrames: 30, holdFrames: [10, 240], ...(film.rules ?? {}) },
-    parts: [{ id: "film", composition: Object.fromEntries(formats.map((f) => [f, `${name}-${f}`])), enterFrames: film.defaults?.enterFrames ?? 10, scenes: film.scenes.map((s) => toScene(film, s)) }],
+    // the compositions carry no sound of their own: every cue is mixed by the harness from the timeline
+    parts: [{ id: "film", composition: Object.fromEntries(formats.map((f) => [f, `${name}-${f}`])), enterFrames: film.defaults?.enterFrames ?? 10, audio: false, scenes: film.scenes.map((s) => toScene(film, s)) }],
     audio: (film.audio ?? []).map((a) => ({ id: a.id, kind: a.kind, file: a.file.startsWith("public/") ? a.file : `public/${a.file}`, at: a.at, gain: a.gain, fadeOut: a.fadeOut, loop: a.loop, trim: a.trim, text: a.text, license: a.license, ramps: a.ramps })),
   };
 };

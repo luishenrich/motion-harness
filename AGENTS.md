@@ -19,3 +19,7 @@ Every command leaves a receipt in `<cache>/receipts/`. `mh help` is the referenc
 Working in this repo: `bun test` (unit tests, including the shim's parity with Remotion),
 `bunx tsc --noEmit`, and `bun run src/cli.ts doctor --project examples/basic` against the
 example project. Do not add a second copy of timing numbers anywhere; the timeline is the truth.
+
+## Motion graphics
+
+A film with a `film.mograph.json` is data: edit it with `mh set`, `mh key`, `mh add`, `mh layout` (never the generated `src/`), look at the frame the edit names, run `mh check --format all`. The layer types, presets and easings live in `src/mograph/`; add a layer type there when a look needs code. Skill: `skills/motion-harness-mograph/SKILL.md`, reference: `docs/mograph.md`.
