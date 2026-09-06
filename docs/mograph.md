@@ -120,10 +120,44 @@ the other properties still follow the preset. `mh key hook.line.y 0 40 --ease ou
 - `mh motion --scene hook`: when the scene settles and how long it holds, as numbers.
 - `mh review`: the player; comments come back as `scene+frame`.
 
-## Editing by hand
+## Editor
 
-`mh edit` serves the film with an editor: the stage renders any frame, a layer list with the
-addresses, an inspector for the selected layer. Click a layer on the stage or in the list, nudge it
-with the arrow keys (shift for coarse), `[` `]` shift its in, `-` `=` its size, type any value in
-the inspector; every change is written to `film.mograph.json` at once and the stage reloads.
-Everything has a keyboard path and a label, so a computer-use agent operates it too.
+`mh edit` serves the film at `/__mh/edit`: the stage draws any frame, and every gesture is an op
+posted to `/__mh/film`, written into `film.mograph.json` at once, linted, and drawn again without a
+reload.
+
+- Stage. Over 1300 px wide the pane shows two formats side by side, both at the same frame and with
+  the same selection; narrower, one stage and a format toggle. Click a layer on a stage to select
+  it, shift-click to add to the selection. The tag on a pane says which format the inspector edits.
+  With "edit this format only" on, writes go to `formats.<format>` instead of the layer.
+- Timeline strip. One row per layer of the scene, group children indented, the width of the scene.
+  The bar runs from the layer's in to its out (or the scene's end); the lighter parts are the in and
+  the out durations; the diamonds are the keyframes of every track; the red line is the playhead.
+  Drag a bar to move `in.at` (an `out.at` moves with it), drag its right edge to set `out.at`, drag
+  a diamond to move a keyframe. Click a track to seek. Tab to a bar, an edge or a diamond and the
+  arrow keys move it, shift for five frames.
+- Layers and inspector. The list shows `scene.layer` and, nested under a group, `scene.group.child`.
+  The inspector shows the layer's position, its in and its out, then every other field it carries:
+  colours as swatches of the design's colours with a hex or token input and a two stop gradient with
+  an angle, numbers as number fields, and anything it does not know as a labelled JSON input, so
+  nothing in the file is out of reach. The scene section carries `dur`, `ground`, the exit fade,
+  `why`, the camera (preset, from, to, focus, ease) and the transition into the scene (type, dur).
+- Selection. Align left, centre, right, top, middle or bottom, and distribute across or down, write
+  each selected layer's `at` in one batch. The arrow keys, `[` `]`, `{` `}` and `-` `=` act on the
+  whole selection.
+- Undo and redo with `z` and `shift+z` or the buttons; the history list names the ops of the session.
+  The lint runs after every change and lists what it found.
+- For an agent: `#mh-state` is the whole state as text (format, scene, frame, selection, the selected
+  layer, the address a nudge would write to, the op count, the findings), and `window.mhEdit` has
+  `state()`, `select(addr)`, `set(addr, value)`, `op(op)`, `frame(n)`, `play()`, `reload()`,
+  `selection()`, `undo()` and `redo()`. Every control has an aria-label, the focus is visible, and
+  every gesture has a keyboard path.
+
+Keys: arrows nudge (shift coarse), `[` `]` in earlier or later, `{` `}` out earlier or later,
+`-` `=` smaller or larger, `,` `.` one frame, `j` `l` one second, `space` play, `d` duplicate,
+`Backspace` remove, `z` undo, `shift+z` redo, `Esc` deselect.
+
+Beyond the ops of `mh set`, `mh key` and friends, the editor posts two of its own: `batch` (many ops
+as one save and one undo step, what align and a multi-selection nudge send) and `move-key` (a
+keyframe moved to another frame, value and easing kept). An address into a group child
+(`scene.group.child.prop`) is resolved to the index path underneath.
