@@ -195,8 +195,8 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
   header h1{font-size:15px;margin:0}header .meta{color:#666}header .save{color:#2c7a3f}header .save.err{color:var(--err)}
   main{display:grid;grid-template-columns:minmax(0,1fr) 400px;flex:1;min-height:0}
   .stage{display:flex;flex-direction:column;min-width:0;padding:12px 16px;gap:10px;overflow:hidden}
-  .view{flex:1;min-height:200px;display:flex;gap:10px}
-  .pane{position:relative;flex:1;min-width:0;background:#111;border-radius:8px;overflow:hidden}
+  .view{flex:1;min-height:200px;display:flex;gap:10px;align-items:center;justify-content:space-evenly}
+  .pane{position:relative;flex:0 0 auto;background:#111;border-radius:8px;overflow:hidden}
   .pane[hidden]{display:none}
   .pane.act{outline:2px solid var(--acc)}
   .pane .tag{position:absolute;left:6px;top:6px;z-index:2;background:rgba(0,0,0,.55);color:#fff;font-size:11px;padding:1px 6px;border-radius:4px}
@@ -240,8 +240,8 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
   .strip .row2.sel .lbar{background:var(--acc)}
   .strip .seg{position:absolute;top:0;bottom:0;background:rgba(255,255,255,.6);pointer-events:none}
   .strip .seg.o{border-radius:0 4px 4px 0}.strip .seg.i{border-radius:4px 0 0 4px}
-  .strip .edge{position:absolute;top:1px;height:20px;width:10px;margin-left:-5px;background:transparent;border:0;padding:0;cursor:ew-resize}
-  .strip .edge::after{content:"";position:absolute;left:4px;top:3px;width:2px;height:16px;background:#6f6a5c;border-radius:1px}
+  .strip .edge{position:absolute;top:1px;height:20px;width:11px;margin-left:-11px;background:transparent;border:0;padding:0;cursor:ew-resize}
+  .strip .edge::after{content:"";position:absolute;right:2px;top:3px;width:2px;height:16px;background:#6f6a5c;border-radius:1px}
   .strip .kf{position:absolute;top:6px;width:9px;height:9px;margin-left:-5px;background:#fff;border:1.5px solid var(--ink);transform:rotate(45deg);padding:0;cursor:ew-resize;border-radius:1px}
   .strip .kf.sel{background:var(--acc)}
   .strip .phWrap{position:absolute;left:132px;right:0;top:0;bottom:0;pointer-events:none;z-index:2}
@@ -263,6 +263,7 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
   <section class="stage" aria-label="Stage">
     <div class="bar">
       <label>Format <select id="format" aria-label="Format"></select></label>
+      <label><input type="checkbox" id="fmtOnly" aria-label="Edit this format only: writes go to formats.&lt;format&gt; instead of the layer"> edit this format only</label>
       <div class="scenes" id="scenes" role="group" aria-label="Scenes"></div>
     </div>
     <div class="view" id="view"></div>
@@ -286,6 +287,8 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
     <section><h2 id="selTitle">Layer</h2><div class="grid" id="quick"></div>
       <label class="sr" for="json">Layer as JSON</label><textarea id="json" spellcheck="false" placeholder="select a layer"></textarea>
       <div class="row"><button type="button" class="primary" id="apply">Apply JSON</button><button type="button" id="dup">duplicate</button><button type="button" id="remove">remove</button></div></section>
+    <section><h2>History</h2><div class="row"><button type="button" id="undoBtn" aria-label="Undo the last change">undo</button><button type="button" id="redoBtn" aria-label="Redo the change that was undone">redo</button><span class="keys" id="histCount"></span></div>
+      <ul class="findings" id="history" aria-label="The changes made in this session, newest first"></ul></section>
     <section><h2>Lint</h2><ul class="findings" id="findings" aria-live="polite"></ul></section>
     <section><h2>State (also window.mhEdit.state())</h2><pre id="mh-state" aria-live="polite"></pre></section>
   </aside>
@@ -294,7 +297,7 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
 <script>
 const $=id=>document.getElementById(id);
 const TRACKS=["opacity","x","y","scale","rotate","blur","progress","wipe","w","h"];
-let F=null,T=null,findings=[],format=null,sceneId=null,frame=0,sel=[],playing=null,comps=[],undo=[],busy=Promise.resolve(),lastFocus=null,kfSel=null,formatOnly=false;
+let F=null,T=null,findings=[],format=null,sceneId=null,frame=0,sel=[],playing=null,comps=[],undo=[],redo=[],hist=[],busy=Promise.resolve(),lastFocus=null,kfSel=null,formatOnly=false;
 const stages=[];
 const fmt=s=>{const m=Math.floor(s/60),r=s-m*60;return (m?m+":":"")+r.toFixed(2)+"s"};
 const scene=()=>F.scenes.find(s=>s.id===sceneId)||F.scenes[0];
@@ -329,19 +332,39 @@ function timingOf(path){const l=layerAt(path);const s=scene();if(!l)return {inAt
 
 /* ---------- load, stages ---------- */
 async function load(){const r=await fetch("/__mh/film");const j=await r.json();F=j.film;T=j.timeline;findings=j.findings;$("path").textContent=j.path;if(!format)format=Object.keys(F.formats)[0];if(!sceneId||!F.scenes.some(s=>s.id===sceneId))sceneId=F.scenes[0].id}
-function buildStages(){const view=$("view");view.innerHTML="";stages.length=0;
-  const pane=document.createElement("div");pane.className="pane act";pane.id="pane-0";
-  const tag=document.createElement("span");tag.className="tag";tag.id="tag-0";tag.textContent=format;
-  const f=document.createElement("iframe");f.id="stage-0";f.title="The film at the current frame";f.src="/__mh/";
-  pane.append(tag,f);view.appendChild(pane);stages.push({pane:pane,tag:tag,iframe:f,win:null,compId:null,format:format})}
+/** one stage per format the pane can show: two side by side when there is room, one otherwise */
+function buildStages(){const view=$("view");view.innerHTML="";stages.length=0;const fs=Object.keys(F.formats);
+  const n=Math.min(2,fs.length);
+  for(let i=0;i<n;i++){const pane=document.createElement("div");pane.className="pane";pane.id="pane-"+i;
+    const tag=document.createElement("button");tag.type="button";tag.className="tag";tag.id="tag-"+i;tag.textContent=fs[i];
+    const f=document.createElement("iframe");f.id="stage-"+i;f.title="The film at the current frame";f.src="/__mh/";
+    pane.append(tag,f);view.appendChild(pane);const st={pane:pane,tag:tag,iframe:f,win:null,compId:null,format:fs[i],style:null};
+    tag.onclick=()=>{if(st.format&&st.format!==format){format=st.format;layoutPanes();mount()}};
+    stages.push(st)}
+  layoutPanes()}
+const wantSplit=()=>window.innerWidth>1300&&Object.keys(F.formats).length>1;
+/** which pane shows which format, and which one the inspector speaks for */
+function layoutPanes(){const fs=Object.keys(F.formats);const split=wantSplit();
+  stages[0].format=split?fs[0]:format;
+  if(stages[1]){stages[1].pane.hidden=!split;stages[1].format=split?(format!==fs[0]?format:fs[1]):null}
+  stages.forEach(st=>{st.pane.classList.toggle("act",!st.pane.hidden&&st.format===format);st.tag.textContent=st.format||"";st.tag.setAttribute("aria-label","Make "+(st.format||"")+" the format the inspector edits")});
+  $("format").value=format}
 async function stageReady(st){st.win=st.iframe.contentWindow;await st.win.__mh.ready;if(!comps.length)comps=st.win.__mh.compositions()}
 function compFor(fmtName){const s=F.formats[fmtName];return (comps.find(c=>c.width===s.width&&c.height===s.height)||comps[0]).id}
-async function mount(){for(const st of stages){if(st.pane.hidden)continue;st.compId=compFor(st.format);st.tag.textContent=st.format;await st.win.__mh.select(st.compId,{film:F,format:st.format});wireStage(st)}fitStages();await show()}
-async function remount(){for(const st of stages){if(st.pane.hidden||!st.win)continue;await st.win.__mh.select(st.compId,{film:F,format:st.format});wireStage(st)}}
-function fitStages(){for(const st of stages){if(st.pane.hidden)continue;const s=F.formats[st.format];const box=st.pane.getBoundingClientRect();const k=Math.min(box.width/s.width,box.height/s.height);const f=st.iframe;f.style.width=s.width+"px";f.style.height=s.height+"px";f.style.transform="scale("+k+")";f.style.left=((box.width-s.width*k)/2)+"px";f.style.top=((box.height-s.height*k)/2)+"px"}}
+async function mount(){for(const st of stages){if(st.pane.hidden||!st.format)continue;st.compId=compFor(st.format);await st.win.__mh.select(st.compId,{film:F,format:st.format});wireStage(st)}fitStages();await show()}
+async function remount(){for(const st of stages){if(st.pane.hidden||!st.win||!st.format)continue;await st.win.__mh.select(st.compId,{film:F,format:st.format});wireStage(st)}}
+/** each pane is exactly the film's shape at the largest scale that fits the view */
+function fitStages(){const box=$("view").getBoundingClientRect();const vis=stages.filter(st=>!st.pane.hidden&&st.format);if(!vis.length)return;
+  const avail=(box.width-10*(vis.length-1))/vis.length;
+  vis.forEach(st=>{const s=F.formats[st.format];const k=Math.min(avail/s.width,box.height/s.height);
+    st.pane.style.width=Math.round(s.width*k)+"px";st.pane.style.height=Math.round(s.height*k)+"px";
+    const f=st.iframe;f.style.width=s.width+"px";f.style.height=s.height+"px";f.style.transform="scale("+k+")";f.style.left="0px";f.style.top="0px"})}
 function wireStage(st){const d=st.iframe.contentDocument;let style=d.getElementById("mh-edit-style");
   if(!style){style=d.createElement("style");style.id="mh-edit-style";d.head.appendChild(style);
-    d.addEventListener("click",e=>{const el=e.target.closest&&e.target.closest("[data-mg]");if(!el){if(!e.shiftKey){sel=[];paint();render()}return}const parts=el.dataset.mg.split(".");if(parts[0]!==sceneId&&F.scenes.some(s=>s.id===parts[0])){sceneId=parts[0];frame=0}const path=pathFromMg(el.dataset.mg);pick(path,e.shiftKey)});
+    d.addEventListener("click",e=>{if(st.format&&st.format!==format){format=st.format;layoutPanes()}
+      const el=e.target.closest&&e.target.closest("[data-mg]");if(!el){if(!e.shiftKey){sel=[];paint();render()}return}
+      const parts=el.dataset.mg.split(".");if(parts[0]!==sceneId&&F.scenes.some(s=>s.id===parts[0])){sceneId=parts[0];frame=0}
+      const path=pathFromMg(el.dataset.mg);pick(path,e.shiftKey)});
     d.addEventListener("keydown",onKey)}
   st.style=style;paintStage(st)}
 function pathFromMg(mg){const parts=mg.split(".");const direct=parts.slice(1).join(".");if(layerAt(direct))return direct;const last=parts[parts.length-1];const hit=rows().find(r=>r.l.id===last);return hit?hit.path:direct}
@@ -355,8 +378,10 @@ function locate(){const ts=tScene();const local=frame;const ev=ts.events.filter(
 function render(){const L=locate();const s=scene();$("scrub").max=s.dur-1;$("scrub").value=frame;$("loc").textContent=s.id+"+"+frame+"  film f"+L.filmFrame+" "+fmt(L.seconds)+(L.event?"  after "+L.event:"");
   const sc=$("scenes");sc.innerHTML="";F.scenes.forEach(x=>{const b=document.createElement("button");b.type="button";b.textContent=x.id+" "+x.dur+"f";b.className=x.id===s.id?"cur":"";b.setAttribute("aria-label","Scene "+x.id+", "+x.dur+" frames");b.setAttribute("aria-current",x.id===s.id?"true":"false");b.onclick=()=>{sceneId=x.id;frame=0;sel=[];paint();show()};sc.appendChild(b)});
   $("selHead").textContent="Selection"+(sel.length?" ("+sel.length+")":"");
+  ["left","centre","right","top","middle","bottom","dist-h","dist-v"].forEach(m=>{$("al-"+m).disabled=sel.length<2});
   $("selList").textContent=sel.length?sel.map(p=>s.id+"."+p).join("  "):"none";
-  drawLayers();drawStrip();sceneForm();inspector();drawFindings();$("mh-state").textContent=JSON.stringify(state(),null,1);
+  drawLayers();drawStrip();sceneForm();inspector();drawFindings();drawHistory();$("mh-state").textContent=JSON.stringify(state(),null,1);
+  if(stages.length)fitStages();
   if(lastFocus&&(document.activeElement===document.body||document.activeElement===null)){const el=document.querySelector('[data-fk="'+lastFocus+'"]');if(el)el.focus()}}
 function drawLayers(){const ul=$("layers");ul.innerHTML="";rows().forEach(r=>{const li=document.createElement("li");li.setAttribute("role","option");li.setAttribute("aria-selected",sel.indexOf(r.path)>=0?"true":"false");li.tabIndex=0;li.dataset.fk="li:"+r.path;li.style.paddingLeft=(6+r.depth*14)+"px";
   const t=timingOf(r.path);
@@ -411,16 +436,26 @@ function barKeys(e,path,which){const d=e.key==="ArrowLeft"?-1:e.key==="ArrowRigh
   if(which==="in")shiftIn(n,[path]);else{const t=timingOf(path);setOutAt(path,(t.outAt===null?Math.max(t.inAt+t.inDur,scene().dur-8):t.outAt)+n)}}
 function kfKeys(e,path,prop,at){const d=e.key==="ArrowLeft"?-1:e.key==="ArrowRight"?1:0;if(!d)return;e.preventDefault();e.stopPropagation();const to=Math.max(0,at+d*(e.shiftKey?5:1));lastFocus="kf:"+path+":"+prop+":"+to;post({op:"move-key",addr:addrOf(path,prop),from:at,to:to},"move-key "+prop).then(()=>{kfSel={path:path,prop:prop,at:to};render()})}
 
-/* ---------- ops ---------- */
-async function post(opOrFn,name){busy=busy.then(async()=>{const op=typeof opOrFn==="function"?opOrFn():opOrFn;if(!op)return;const prev=JSON.stringify(F);$("save").textContent="saving";
+/* ---------- ops, undo and redo ---------- */
+function flash(msg,err){$("save").textContent=msg;$("save").className="save"+(err?" err":"")}
+async function post(opOrFn,name,mode){busy=busy.then(async()=>{const op=typeof opOrFn==="function"?opOrFn():opOrFn;if(!op)return;const prev=JSON.stringify(F);$("save").textContent="saving";
   const r=await fetch("/__mh/film",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(op)});const j=await r.json();
   if(!j.ok){$("save").textContent=j.error;$("save").className="save err";return}
-  undo.push({film:prev,name:name||op.op});F=j.film;T=j.timeline;findings=j.findings;
+  const label=name||op.op;
+  if(mode==="undo"){redo.push({film:prev,name:label});hist.unshift("undo "+label)}
+  else if(mode==="redo"){undo.push({film:prev,name:label});hist.unshift("redo "+label)}
+  else{undo.push({film:prev,name:label});redo.length=0;hist.unshift(label)}
+  if(hist.length>60)hist.pop();
+  F=j.film;T=j.timeline;findings=j.findings;
   const errs=findings.filter(f=>f.level==="error").length;
   $("save").textContent="saved "+new Date().toLocaleTimeString()+(errs?" with errors":"");$("save").className="save"+(errs?" err":"");
   if(!F.scenes.some(s=>s.id===sceneId))sceneId=F.scenes[0].id;
   sel=sel.filter(p=>layerAt(p));
   await remount();paint();await show()});return busy}
+function undoOnce(){const e=undo.pop();if(!e){flash("nothing to undo",true);return busy}return post({op:"replace",film:JSON.parse(e.film)},e.name,"undo")}
+function redoOnce(){const e=redo.pop();if(!e){flash("nothing to redo",true);return busy}return post({op:"replace",film:JSON.parse(e.film)},e.name,"redo")}
+function drawHistory(){const ul=$("history");ul.innerHTML="";hist.slice(0,12).forEach(h=>{const li=document.createElement("li");li.textContent=h;ul.appendChild(li)});if(!hist.length)ul.innerHTML="<li>nothing changed yet</li>";
+  $("histCount").textContent=undo.length+" to undo, "+redo.length+" to redo"}
 function shiftIn(d,paths){const ps=paths||sel;if(!ps.length)return;post(()=>{const ops=[];ps.forEach(p=>{const l=layerAt(p);if(!l)return;const cur=(l.in&&l.in.at)||0;const to=Math.max(0,cur+d);ops.push({op:"set",addr:addrOf(p,"in.at"),value:to});if(l.out&&l.out.at!==undefined)ops.push({op:"set",addr:addrOf(p,"out.at"),value:l.out.at+(to-cur)})});return ops.length===1?ops[0]:{op:"batch",ops:ops,name:"in.at"}},"in.at "+(d>0?"+":"")+d)}
 function setOutAt(path,at){const l=layerAt(path);const ops=[{op:"set",addr:addrOf(path,"out.at"),value:Math.round(at)}];if(!l.out)ops.push({op:"set",addr:addrOf(path,"out.dur"),value:8});post(ops.length===1?ops[0]:{op:"batch",ops:ops,name:"out.at"},"out.at "+Math.round(at))}
 function nudge(dx,dy){if(!sel.length)return;post(()=>{const ops=sel.map(p=>{const l=viewLayer(p);if(!l)return null;const at=l.at||{x:0.5,y:0.5};return {op:"set",addr:writeAddr(p,"at"),value:{x:Math.round((at.x+dx)*1000)/1000,y:Math.round((at.y+dy)*1000)/1000}}}).filter(Boolean);return ops.length===1?ops[0]:{op:"batch",ops:ops,name:"at"}},"nudge")}
@@ -526,11 +561,12 @@ function inspector(){const l=layer();const q=$("quick");q.innerHTML="";$("selTit
     const node=kind==="color"?ctlColor(val,k,x=>set(k,x)):ctl(kind,val,k+" of this layer"+(kind==="json"?" as JSON":""),x=>set(k,x));
     row(q,k,node,"in:"+k)})}
 function drawFindings(){const ul=$("findings");ul.innerHTML="";if(!findings.length){ul.innerHTML="<li>clean</li>";return}findings.forEach(f=>{const li=document.createElement("li");li.className=f.level;li.textContent=f.level+" "+f.rule+" at "+f.where+": "+f.message;ul.appendChild(li)})}
-function state(){const l=layer();return {film:F.title,path:$("path").textContent,format:format,scene:scene().id,frame:frame,address:scene().id+"+"+frame,locate:locate(),selection:sel.map(p=>scene().id+"."+p),selected:sel.length?scene().id+"."+sel[0]:null,layer:l||null,timing:sel.length?timingOf(sel[0]):null,ops:undo.length,errors:findings.filter(f=>f.level==="error").length,findings:findings}}
+function state(){const l=layer();return {film:F.title,path:$("path").textContent,format:format,formats:stages.filter(st=>!st.pane.hidden&&st.format).map(st=>st.format),formatOnly:formatOnly,writesTo:sel.length?writeAddr(sel[0],"at"):null,scene:scene().id,frame:frame,address:scene().id+"+"+frame,locate:locate(),selection:sel.map(p=>scene().id+"."+p),selected:sel.length?scene().id+"."+sel[0]:null,layer:l||null,timing:sel.length?timingOf(sel[0]):null,ops:undo.length,errors:findings.filter(f=>f.level==="error").length,findings:findings}}
 
 /* ---------- wiring ---------- */
 $("scrub").oninput=()=>{frame=parseInt($("scrub").value,10);show()};$("prev").onclick=()=>seek(-1);$("next").onclick=()=>seek(1);$("play").onclick=togglePlay;
-$("format").onchange=()=>{format=$("format").value;stages[0].format=format;mount()};
+$("format").onchange=()=>{format=$("format").value;layoutPanes();mount()};
+$("fmtOnly").onchange=()=>{formatOnly=$("fmtOnly").checked;render()};
 $("apply").onclick=()=>{const l=layer();if(!l)return;let v;try{v=JSON.parse($("json").value)}catch(e){$("save").textContent="json: "+e.message;$("save").className="save err";return}
   const path=sel[0];post({op:"batch",ops:[{op:"remove",addr:addrOf(path)},{op:"add-layer",scene:scene().id,layer:v}],name:"json"},"apply json").then(()=>{sel=[v.id];paint();render()})};
 $("dup").onclick=()=>{if(sel.length)post({op:"dup",addr:addrOf(sel[0])},"duplicate")};
@@ -556,11 +592,13 @@ function onKey(e){const tag=e.target&&e.target.tagName;if(tag==="INPUT"||tag==="
   else if(k===",")seek(-1);else if(k===".")seek(1);else if(k==="j")seek(-F.fps);else if(k==="l")seek(F.fps);else if(k===" "){e.preventDefault();togglePlay()}
   else if(k==="d"){if(sel.length)post({op:"dup",addr:addrOf(sel[0])},"duplicate")}
   else if(k==="Backspace"||k==="Delete"){if(!sel.length)return;const ops=sel.map(p=>({op:"remove",addr:addrOf(p)}));post(ops.length===1?ops[0]:{op:"batch",ops:ops,name:"remove"},"remove");sel=[]}
-  else if(k==="z"){const p=undo.pop();if(p)post({op:"replace",film:JSON.parse(p.film)},"undo "+p.name).then(()=>{undo.pop()})}
+  else if(k==="z"){e.preventDefault();undoOnce()}else if(k==="Z"){e.preventDefault();redoOnce()}
   else if(k==="Escape"){sel=[];kfSel=null;paint();render()}}
 document.addEventListener("keydown",onKey);
 document.addEventListener("focusin",e=>{const fk=e.target&&e.target.dataset&&e.target.dataset.fk;if(fk)lastFocus=fk});
-window.addEventListener("resize",()=>{if(F)fitStages()});
+let resizeT=null;
+window.addEventListener("resize",()=>{if(!F)return;clearTimeout(resizeT);resizeT=setTimeout(()=>{const was=stages[1]&&!stages[1].pane.hidden;layoutPanes();const now=stages[1]&&!stages[1].pane.hidden;if(was!==now)mount();else fitStages()},150)});
+$("undoBtn").onclick=undoOnce;$("redoBtn").onclick=redoOnce;
 window.mhEdit={state:state,
   select:a=>{const p=a.split(".");let path=a;if(F.scenes.some(s=>s.id===p[0])){if(p[0]!==sceneId){sceneId=p[0];frame=0}path=p.slice(1).join(".")}pick(path,false);return show()},
   set:(addr,value)=>post({op:"set",addr:addr,value:value},"set "+addr),
@@ -568,7 +606,9 @@ window.mhEdit={state:state,
   frame:n=>{frame=clampF(n);return show()},
   play:togglePlay,
   reload:async()=>{await load();await mount()},
-  selection:()=>sel.map(p=>scene().id+"."+p)};
+  selection:()=>sel.map(p=>scene().id+"."+p),
+  undo:undoOnce,
+  redo:redoOnce};
 (async()=>{await load();const fs=$("format");Object.keys(F.formats).forEach(f=>{const o=document.createElement("option");o.value=f;o.textContent=f;fs.appendChild(o)});fs.value=format;
   const dl=$("mh-tokens");tokens().concat(["white","black","transparent"]).forEach(t=>{const o=document.createElement("option");o.value=t;dl.appendChild(o)});
   buildStages();
