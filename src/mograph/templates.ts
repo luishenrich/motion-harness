@@ -363,7 +363,7 @@ const compare: MgTemplate = {
     const marker = (S(p, "marker") || "dash") as "dot" | "number" | "check" | "dash" | "none";
     const col = (side: "left" | "right", head: string, items: string[], x: number, delay: number, vy: [number, number]): Layer[] => [
       {
-        id: `${side}-head`, type: "text", text: head, size: 52, weight: 700, color: side === "right" ? c.accentText : c.fg, accent: c.accentText, uppercase: true, letterSpacing: 0.08, align: "center",
+        id: `${side}-head`, type: "text", text: head, size: 52, weight: 700, color: side === "right" ? c.accentText : c.dim, accent: c.accentText, uppercase: true, letterSpacing: 0.08, align: "center",
         at: at(x, 0.3), maxWidth: 0.34, in: { preset: "rise", at: delay, dur: 12, ease: "out" },
         ...V({ size: 50, maxWidth: 0.8, at: at(0.5, vy[0]) }),
       },
@@ -503,7 +503,7 @@ const chart: MgTemplate = {
         direction: horizontal ? "horizontal" : "vertical", w: horizontal ? 1080 : 720, h: horizontal ? Math.max(200, rows * 120) : 420,
         thickness: horizontal ? 52 : 96, gap: 30,
         color: c.accent, labelColor: c.fg, labelSize: 34, format: S(p, "format") || "0.0",
-        at: at(0.5, 0.55), in: { preset: "grow", at: 16, dur: 20, ease: "out", stagger: { by: "item", each: 6 } },
+        at: at(0.5, 0.6), in: { preset: "grow", at: 16, dur: 20, ease: "out", stagger: { by: "item", each: 6 } },
         ...V({ w: horizontal ? 900 : 640, h: horizontal ? Math.max(200, rows * 130) : 460, thickness: horizontal ? 56 : 88, labelSize: 32, at: at(0.5, 0.55) }),
       },
       S(p, "note") && {
@@ -627,21 +627,21 @@ const steps: MgTemplate = {
       layers.push({
         // wide: a rail under the numbers; vertical: the same rail standing between the numbers and their labels
         id: "track", type: "shape", shape: "line", w: 1160, thickness: 3, fill: c.dim, probe: false,
-        at: at(0.5, 0.505), in: { preset: "grow", at: 8, dur: 20, ease: "out" },
-        ...V({ shape: "rect", w: 3, h: 640, at: at(0.34, 0.5), in: { preset: "fade", at: 8, dur: 12, ease: "out" } }),
+        at: at(0.5, 0.56), in: { preset: "grow", at: 8, dur: 20, ease: "out" },
+        ...V({ shape: "rect", w: 3, h: 640, at: at(0.34, 0.56), in: { preset: "fade", at: 8, dur: 12, ease: "out" } }),
       });
     }
     list3.forEach((item, i) => {
       // vertical: one row per step, the number left of its label, the rows centred in the frame
-      const vy = Math.round((0.5 + (i - (list3.length - 1) / 2) * 0.15) * 1000) / 1000;
+      const vy = Math.round((0.56 + (i - (list3.length - 1) / 2) * 0.15) * 1000) / 1000;
       layers.push({
         id: `n${i + 1}`, type: "text", text: `0${i + 1}`, role: "mono", size: 60, weight: 700, color: c.accentText, accent: c.accentText, align: "center",
-        at: at(xs[i] ?? 0.5, 0.43), maxWidth: 0.16, in: { preset: "pop", at: 12 + i * 6, dur: 12, ease: "back" },
+        at: at(xs[i] ?? 0.5, 0.485), maxWidth: 0.16, in: { preset: "pop", at: 12 + i * 6, dur: 12, ease: "back" },
         ...V({ size: 52, maxWidth: 0.16, at: at(0.26, vy) }),
       });
       layers.push({
         id: `s${i + 1}`, type: "text", text: item, size, weight: 500, color: c.fg, accent: c.accentText, align: "center",
-        at: at(xs[i] ?? 0.5, 0.6), maxWidth: Math.max(0.18, span), in: { preset: "rise", at: 18 + i * 6, dur: 12, ease: "out" },
+        at: at(xs[i] ?? 0.5, 0.66), maxWidth: Math.max(0.18, span), in: { preset: "rise", at: 18 + i * 6, dur: 12, ease: "out" },
         ...V({ size, maxWidth: 0.5, align: "left", anchor: "left", at: at(0.4, vy) }),
       });
     });
@@ -677,12 +677,12 @@ const split: MgTemplate = {
       {
         id: "headline", type: "text", text: S(p, "headline"), size: 72, weight: 700, color: c.fg, accent: c.accentText, align: "left",
         at: at(0.08, 0.42), anchor: "left", maxWidth: 0.34, in: { preset: "rise", at: 4, dur: 14, ease: "out" },
-        ...V({ size: 62, at: at(0.09, 0.24), maxWidth: 0.82 }),
+        ...V({ size: 62, at: at(0.09, 0.2), maxWidth: 0.82 }),
       },
       S(p, "body") && {
         id: "body", type: "text", text: S(p, "body"), role: "body", size: 36, weight: 400, color: c.dim, accent: c.accentText, align: "left",
         at: at(0.08, 0.56), anchor: "left", maxWidth: 0.32, in: { preset: "fade", at: 20, dur: 14, ease: "out" },
-        ...V({ size: 34, at: at(0.09, 0.35), maxWidth: 0.8 }),
+        ...V({ size: 34, at: at(0.09, 0.3), maxWidth: 0.8 }),
       },
       figure,
     ));
