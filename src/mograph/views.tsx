@@ -11,9 +11,9 @@
 import React from "react";
 import type { CounterLayer, LineChartLayer, MgFilm, MgScene, ParticlesLayer, ShapeLayer, TextLayer, Layer, RingsLayer } from "./schema.ts";
 import { colorOf, layerTiming } from "./schema.ts";
-import { backgroundStyle, layerPaint, paintOf, textStyle, type Paint } from "./colour.ts";
+import { backgroundStyle, flatOf, isGradient, layerPaint, paintOf, textStyle, type ColorValue, type Gradient, type Paint } from "./colour.ts";
 import { effectStyle, gradientTextOf, inProgress, scrambleText } from "./effects.ts";
-import { arrowBox, arrowPath, chartGeometry, odometerCells, padDigits, polygonPath, ringGeometry, starPath } from "./shapes.ts";
+import { arrowBox, arrowPath, chartGeometry, drawnProgress, odometerCells, padDigits, polygonPath, ringGeometry, starPath } from "./shapes.ts";
 import { particlesAt, MAX_PARTICLES } from "./particles.ts";
 import { poseAt, staggerDelay, type Pose } from "./pose.ts";
 import type { Frame } from "./layout.ts";
@@ -37,6 +37,27 @@ export const Fx: React.FC<{ ctx: VCtx; layer: Layer; children: React.ReactNode }
   const style: React.CSSProperties = { ...effectStyle(ctx.film, layer, ctx.fr.u) } as React.CSSProperties;
   if (g) Object.assign(style, textStyle({ css: paintOf(ctx.film.design, g, ctx.film.design.accent), gradient: true, animated: false }));
   return <div style={style}>{children}</div>;
+};
+
+/**
+ * svg paints no gradient by name: a declared gradient becomes a <defs> entry
+ * and the shape refers to it. A colour a track mixed is already one colour, so
+ * it is used as it is; a gradient a track mixed falls back to its first stop.
+ */
+export const svgPaint = (film: MgFilm, value: ColorValue | undefined, css: string, fallback: string, id: string): { paint: string; def: React.ReactNode } => {
+  if (!css.includes("gradient(")) return { paint: css, def: null };
+  if (!isGradient(value)) return { paint: flatOf(film.design, value, fallback), def: null };
+  const g = value as Gradient;
+  const stops = (g.gradient.length > 1 ? g.gradient : [g.gradient[0], g.gradient[0]]).map((c, i, all) => (
+    <stop key={i} offset={`${(i / (all.length - 1)) * 100}%`} stopColor={colorOf(film.design, c, fallback)} />
+  ));
+  if (g.radial) {
+    const at = g.at ?? { x: 0.5, y: 0.5 };
+    return { paint: `url(#${id})`, def: <radialGradient id={id} cx={at.x} cy={at.y} r={0.7}>{stops}</radialGradient> };
+  }
+  const a = ((g.angle ?? 180) * Math.PI) / 180;
+  const dx = Math.sin(a), dy = -Math.cos(a);
+  return { paint: `url(#${id})`, def: <linearGradient id={id} x1={0.5 - dx / 2} y1={0.5 - dy / 2} x2={0.5 + dx / 2} y2={0.5 + dy / 2}>{stops}</linearGradient> };
 };
 
 /* ---------- text presets that a pose cannot carry ---------- */
@@ -93,11 +114,16 @@ export const DRAWN_SHAPES = ["path", "polygon", "star", "arrow"] as const;
 export const isDrawnShape = (shape: string | undefined): boolean => (DRAWN_SHAPES as readonly string[]).includes(shape ?? "");
 
 /** path, polygon, star and arrow: one svg, drawn by the layer's progress with a normalised dash */
-export const ShapeSvg: React.FC<{ ctx: VCtx; layer: ShapeLayer; pose: Pose; fill: string; stroke: string }> = ({ ctx, layer, pose, fill, stroke }) => {
+export const ShapeSvg: React.FC<{ ctx: VCtx; layer: ShapeLayer; pose: Pose; fill: string; stroke: string }> = ({ ctx, layer, pose, fill: fillCss, stroke: strokeCss }) => {
   const { film, scene, frame, fr } = ctx;
   const u = fr.u;
-  const th = (layer.thickness ?? 6) * u;
-  const drawn = layer.tracks?.progress || layer.progress !== undefined ? Math.max(0, Math.min(1, (layer.progress ?? 1) * pose.progress)) : inProgress(film, scene, layer, frame);
+  const id = `${scene.id}-${layer.id}`;
+  const f = svgPaint(film, layer.fill, fillCss, film.design.accent, `${id}-fill`);
+  const st = svgPaint(film, layer.stroke ?? layer.fill, strokeCss, film.design.accent, `${id}-stroke`);
+  const fill = f.paint;
+  const stroke = st.paint;
+  const defs = f.def || st.def ? <defs>{f.def}{st.def}</defs> : null;
+  const drawn = drawnProgress(layer.progress, !!layer.tracks?.progress, pose.progress, inProgress(film, scene, layer, frame));
   const caps = layer.effects?.roundCaps === false ? "butt" : "round";
   let d = "";
   let w = 0;
@@ -109,6 +135,7 @@ export const ShapeSvg: React.FC<{ ctx: VCtx; layer: ShapeLayer; pose: Pose; fill
     d = typeof layer.d === "string" ? layer.d : "";
     return (
       <svg width={w} height={h} viewBox={`0 0 ${box[0]} ${box[1]}`} style={{ display: "block", overflow: "visible" }}>
+        {defs}
         <path d={d} fill={layer.draw === false ? fill : "none"} stroke={stroke} strokeWidth={(layer.thickness ?? 6) * (box[0] / (layer.w ?? box[0]))} strokeLinecap={caps} strokeLinejoin="round" pathLength={1} strokeDasharray={1} strokeDashoffset={1 - drawn} />
       </svg>
     );
@@ -122,6 +149,7 @@ export const ShapeSvg: React.FC<{ ctx: VCtx; layer: ShapeLayer; pose: Pose; fill
     d = arrowPath(wu, head, layer.thickness ?? 6);
     return (
       <svg width={w} height={h} viewBox={`0 0 ${bw} ${bh}`} style={{ display: "block", overflow: "visible" }}>
+        {defs}
         <path d={d} fill="none" stroke={stroke} strokeWidth={layer.thickness ?? 6} strokeLinecap={caps} strokeLinejoin="round" pathLength={1} strokeDasharray={1} strokeDashoffset={1 - drawn} />
       </svg>
     );
@@ -134,6 +162,7 @@ export const ShapeSvg: React.FC<{ ctx: VCtx; layer: ShapeLayer; pose: Pose; fill
   const outline = layer.draw === true;
   return (
     <svg width={w} height={h} viewBox={`0 0 ${size} ${size}`} style={{ display: "block", overflow: "visible" }}>
+      {defs}
       <path d={d} fill={outline ? "none" : fill} stroke={outline || layer.stroke ? stroke : "none"} strokeWidth={layer.thickness ?? 6} strokeLinecap={caps} strokeLinejoin="round" pathLength={1} strokeDasharray={outline ? 1 : undefined} strokeDashoffset={outline ? 1 - drawn : undefined} />
     </svg>
   );
@@ -157,10 +186,10 @@ export const LineChartView: React.FC<{ ctx: VCtx; layer: LineChartLayer; pose: P
   const w = (layer.w ?? 860) * u;
   const h = (layer.h ?? 380) * u;
   const geom = chartGeometry(layer.points, w, h, { min: layer.min, max: layer.max, smooth: layer.smooth });
-  const drawn = layer.tracks?.progress ? pose.progress : inProgress(film, scene, layer, frame);
+  const drawn = drawnProgress(undefined, !!layer.tracks?.progress, pose.progress, inProgress(film, scene, layer, frame));
   const stroke = layerPaint(film, scene, layer, "stroke", frame, film.design.accent);
-  const strokeCss = stroke.gradient ? "url(#lineGradient)" : stroke.css;
-  const area = paintOf(film.design, layer.areaColor ?? layer.stroke ?? "accent", film.design.accent);
+  const line = svgPaint(film, layer.stroke, stroke.css, film.design.accent, `${scene.id}-${layer.id}-line`);
+  const fillUnder = svgPaint(film, layer.areaColor ?? layer.stroke, paintOf(film.design, layer.areaColor ?? layer.stroke ?? "accent", film.design.accent), film.design.accent, `${scene.id}-${layer.id}-area`);
   const axis = layer.axis ? colorOf(film.design, layer.axis, film.design.muted ?? "#6B6B6B") : null;
   const th = (layer.thickness ?? 8) * u;
   const labelSize = (layer.labelSize ?? 26) * u;
@@ -168,13 +197,12 @@ export const LineChartView: React.FC<{ ctx: VCtx; layer: LineChartLayer; pose: P
   return (
     <div style={{ width: w }}>
       <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: "block", overflow: "visible" }}>
-        {layer.area ? (
-          <path d={geom.area} fill={area} opacity={0.16 * drawn} />
-        ) : null}
+        {line.def || fillUnder.def ? <defs>{line.def}{fillUnder.def}</defs> : null}
+        {layer.area ? <path d={geom.area} fill={fillUnder.paint} opacity={0.16 * drawn} /> : null}
         {axis ? <line x1={0} y1={h} x2={w} y2={h} stroke={axis} strokeWidth={2 * u} /> : null}
-        <path d={geom.line} fill="none" stroke={strokeCss} strokeWidth={th} strokeLinecap={layer.effects?.roundCaps === false ? "butt" : "round"} strokeLinejoin="round" pathLength={1} strokeDasharray={1} strokeDashoffset={1 - drawn} />
+        <path d={geom.line} fill="none" stroke={line.paint} strokeWidth={th} strokeLinecap={layer.effects?.roundCaps === false ? "butt" : "round"} strokeLinejoin="round" pathLength={1} strokeDasharray={1} strokeDashoffset={1 - drawn} />
         {layer.dots
-          ? geom.points.slice(0, shown).map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={th * 0.85} fill={stroke.gradient ? area : stroke.css} />)
+          ? geom.points.slice(0, shown).map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={th * 0.85} fill={line.paint} />)
           : null}
       </svg>
       {layer.labels?.length ? (
@@ -201,6 +229,7 @@ export const RingsView: React.FC<{ ctx: VCtx; layer: RingsLayer; pose: Pose }> =
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 40 * u }}>
       <svg width={dia} height={dia} viewBox={`0 0 ${dia} ${dia}`} style={{ display: "block", transform: "rotate(-90deg)" }}>
+        <defs>{layer.values.map((v, i) => svgPaint(film, v.color, paintOf(film.design, v.color ?? "accent", film.design.accent), film.design.accent, `${scene.id}-${layer.id}-${i}`).def)}</defs>
         {layer.values.map((v, i) => {
           const { r, c } = ringGeometry(i, dia, th, gap);
           const p = poseAt(film, scene, layer, frame, staggerDelay(st, i, layer.values.length));
@@ -209,7 +238,7 @@ export const RingsView: React.FC<{ ctx: VCtx; layer: RingsLayer; pose: Pose }> =
           return (
             <g key={i}>
               <circle cx={dia / 2} cy={dia / 2} r={r} fill="none" stroke={track} strokeWidth={th} opacity={0.22} />
-              <circle cx={dia / 2} cy={dia / 2} r={r} fill="none" stroke={paintOf(film.design, v.color ?? "accent", film.design.accent)} strokeWidth={th} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - frac)} />
+              <circle cx={dia / 2} cy={dia / 2} r={r} fill="none" stroke={svgPaint(film, v.color, paintOf(film.design, v.color ?? "accent", film.design.accent), film.design.accent, `${scene.id}-${layer.id}-${i}`).paint} strokeWidth={th} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - frac)} />
             </g>
           );
         })}

@@ -4,6 +4,8 @@ import { colorOf } from "./schema.ts";
 import { colorTrackAt, flatOf, gradientCss, groundFlat, groundPaint, layerPaint, mixHex, oklabToRgb, paintOf, rgbToOklab, toHex, toRgb } from "./colour.ts";
 import { effectStyle, filterOf, gradientTextOf, highlightAt, inProgress, lintFlags, scrambleText, strokeStyle } from "./effects.ts";
 import { inTracks, poseAt, staggerDelay } from "./pose.ts";
+import { arrowBox, arrowPath, chartGeometry, drawnProgress, odometerCells, padDigits, polygonPath, ringGeometry, starPath } from "./shapes.ts";
+import { MAX_PARTICLES, particlesAt, rng } from "./particles.ts";
 import { lintFilm } from "./edit.ts";
 
 const film = (): MgFilm => ({
@@ -204,5 +206,88 @@ describe("text presets", () => {
     expect(inProgress(f, s, l, 5)).toBeCloseTo(0.5, 5);
     expect(inProgress(f, s, l, 20)).toBe(1);
     expect(inProgress(f, s, l, 5, staggerDelay(l.in.stagger, 2, 6))).toBeCloseTo(0.1, 5);
+  });
+});
+
+describe("shapes and charts", () => {
+  test("a polygon, a star and an arrow are points on a circle", () => {
+    const tri = polygonPath(50, 50, 40, 3);
+    expect(tri.startsWith("M50,10L")).toBe(true);
+    expect(tri.endsWith("Z")).toBe(true);
+    expect(tri.split("L").length).toBe(3);
+    const star = starPath(50, 50, 40, 5, 0.5);
+    expect(star.split("L").length).toBe(10);
+    expect(polygonPath(50, 50, 40, 1).split("L").length).toBe(3);
+    expect(arrowBox(200, 30, 6)).toEqual([206, 36]);
+    expect(arrowPath(200, 30, 6)).toBe("M3,18 L182,18 M167,3 L185,18 L167,33");
+  });
+  test("a line chart maps its values into its box and closes its area", () => {
+    const g = chartGeometry([0, 5, 10], 100, 50, { min: 0, max: 10 });
+    expect(g.points).toEqual([{ x: 0, y: 50 }, { x: 50, y: 25 }, { x: 100, y: 0 }]);
+    expect(g.line).toBe("M0,50 L50,25 L100,0");
+    expect(g.area.endsWith("L100,50 L0,50 Z")).toBe(true);
+    const smooth = chartGeometry([0, 5, 2, 8], 90, 60, { smooth: true });
+    expect(smooth.line).toContain(" C");
+    const explicit = chartGeometry([{ x: 0, y: 2 }, { x: 3, y: 6 }], 60, 30);
+    expect(explicit.points[1]).toEqual({ x: 60, y: 0 });
+  });
+  test("rings sit inside each other", () => {
+    const a = ringGeometry(0, 300, 30, 10);
+    const b = ringGeometry(1, 300, 30, 10);
+    expect(a.r).toBe(135);
+    expect(b.r).toBe(95);
+    expect(a.c).toBeCloseTo(2 * Math.PI * 135, 5);
+  });
+  test("a drawn outline follows its progress", () => {
+    expect(drawnProgress(undefined, false, 1, 0.4)).toBe(0.4);
+    expect(drawnProgress(0.5, false, 1, 1)).toBe(0.5);
+    expect(drawnProgress(undefined, true, 0.25, 1)).toBe(0.25);
+    expect(drawnProgress(1, true, 2, 1)).toBe(1);
+  });
+  test("an odometer keeps its columns and rolls the last one", () => {
+    expect(padDigits("40", 3)).toBe("040");
+    expect(padDigits("1,240", 6)).toBe("001,240");
+    expect(padDigits("40 ms", undefined)).toBe("40 ms");
+    const cells = odometerCells(1240, "1,240");
+    expect(cells.map((c) => c.char).join("")).toBe("1,240");
+    expect(cells.filter((c) => c.digit).length).toBe(4);
+    expect(cells[1].digit).toBe(false);
+    // the last column shows the value itself, the ones above it their own place
+    expect(odometerCells(7, "40")[1].offset).toBe(7);
+    expect(odometerCells(7, "40")[0].offset).toBe(0);
+    expect(odometerCells(37.5, "40")[0].offset).toBe(3);
+    expect(odometerCells(37.5, "40")[1].offset).toBe(7.5);
+  });
+});
+
+describe("particles", () => {
+  test("the same frame draws the same field, another seed another one", () => {
+    const f = { count: 40, seed: 3, size: 8, speed: 1.2, spread: 20 };
+    const a = particlesAt(f, 120, { w: 1920, h: 1080 });
+    const b = particlesAt(f, 120, { w: 1920, h: 1080 });
+    expect(a).toEqual(b);
+    expect(a.length).toBe(40);
+    expect(particlesAt({ ...f, seed: 4 }, 120, { w: 1920, h: 1080 })).not.toEqual(a);
+    expect(particlesAt(f, 121, { w: 1920, h: 1080 })).not.toEqual(a);
+  });
+  test("every particle stays in its box and the count is capped", () => {
+    const parts = particlesAt({ count: 900, seed: 1 }, 400, { w: 800, h: 600 });
+    expect(parts.length).toBe(MAX_PARTICLES);
+    for (const p of parts) {
+      expect(p.x).toBeGreaterThanOrEqual(0);
+      expect(p.x).toBeLessThanOrEqual(800);
+      expect(p.y).toBeGreaterThanOrEqual(0);
+      expect(p.y).toBeLessThanOrEqual(600);
+      expect(p.opacity).toBeLessThanOrEqual(1);
+    }
+    expect(rng(7)()).toBe(rng(7)());
+  });
+  test("the lint counts them and asks for the layer to stay out of the way", () => {
+    const f = film();
+    f.scenes[0].layers.push({ id: "dust", type: "particles", count: 900, shape: "sparks" as never });
+    const rules = lintFilm(f).map((x) => `${x.rule}:${x.where}`);
+    expect(rules).toContain("particles:one.dust.count");
+    expect(rules).toContain("particles:one.dust.shape");
+    expect(rules).toContain("particles:one.dust");
   });
 });

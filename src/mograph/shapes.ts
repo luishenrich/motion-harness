@@ -88,6 +88,16 @@ export const ringGeometry = (i: number, d: number, thickness: number, gap: numbe
   return { r, c: 2 * Math.PI * r };
 };
 
+/**
+ * How much of an outline is drawn at a frame: an explicit `progress` (or a
+ * progress track) wins, otherwise the layer's own in draws it. The same number
+ * drives a path, an arrow, a ring and a chart line.
+ */
+export const drawnProgress = (explicit: number | undefined, tracked: boolean, poseProgress: number, inProgress: number): number => {
+  const v = explicit !== undefined || tracked ? (explicit ?? 1) * poseProgress : inProgress;
+  return Math.max(0, Math.min(1, v));
+};
+
 /* ---------- odometer ---------- */
 
 export type OdometerCell = { char: string; digit: boolean; offset: number };
