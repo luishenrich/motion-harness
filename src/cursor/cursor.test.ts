@@ -23,6 +23,11 @@ describe("cursor legs", () => {
   });
   test("a bad ref or key names the leg", () => {
     expect(() => planLegs(c, [["probe.nope", "x"]])).toThrow(/leg #0 "probe.nope": scene "probe" has no event/);
+    const hover = planLegs(c, [["probe.pick2", "blank?"]])[0];
+    expect(hover.key).toBe("blank");
+    expect(hover.hover).toBe(true);
+    expect(hover.park).toBe(false);
+    expect(() => planLegs(c, [["probe.pick2", "?"]])).toThrow(/before "\?"/);
     expect(() => planLegs(c, [["probe", ""]])).toThrow(/leg #0 must be \[ref, key\]/);
     expect(() => planLegs(c, [["probe"] as any])).toThrow(/leg #0/);
   });
