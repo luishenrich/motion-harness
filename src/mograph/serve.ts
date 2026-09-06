@@ -125,13 +125,30 @@ export const applyOp = (film: MgFilm, o: Op): MgFilm => {
   }
 };
 
+const BODY_CAP = 4 * 1024 * 1024;
 const readBody = (req: IncomingMessage): Promise<string> =>
   new Promise((resolve, reject) => {
     let s = "";
-    req.on("data", (c) => (s += c));
+    req.on("data", (c) => {
+      s += c;
+      if (s.length > BODY_CAP) {
+        reject(new Error(`body over ${BODY_CAP} bytes`));
+        req.destroy();
+      }
+    });
     req.on("end", () => resolve(s));
     req.on("error", reject);
   });
+
+/** only a page served by this server may write: same origin (or no origin, the CLI) and a JSON body */
+const allowedWrite = (req: IncomingMessage): string | null => {
+  const ct = String(req.headers["content-type"] ?? "");
+  if (!ct.includes("application/json")) return "the body must be application/json";
+  const origin = req.headers.origin;
+  const host = req.headers.host;
+  if (origin && host && !origin.endsWith(`//${host}`)) return `origin ${origin} may not write here`;
+  return null;
+};
 
 const json = (res: ServerResponse, code: number, body: unknown) => {
   res.statusCode = code;
@@ -167,19 +184,26 @@ export const editMiddleware = (cfg: LoadedConfig, filmName: string, filmPath: st
     if (url !== "/__mh/film") return next();
     if (req.method === "GET") return json(res, 200, snapshot());
     if (req.method === "POST") {
+      const refused = allowedWrite(req);
+      if (refused) return json(res, 403, { ok: false, error: refused });
       try {
-        const o = JSON.parse(await readBody(req)) as Op;
+        const body = JSON.parse(await readBody(req)) as Op & { force?: boolean };
         const before = JSON.stringify(film);
-        const next = applyOp(JSON.parse(before) as MgFilm, o);
-        film = next;
-        findings = lintFilm(film, cfg.projectDir);
-        saveFilm(filmPath, film);
+        // apply, lint and save into locals: a bad op leaves the served film untouched
+        const candidate = applyOp(JSON.parse(before) as MgFilm, body);
+        if (!candidate || typeof candidate !== "object" || !Array.isArray(candidate.scenes)) throw new Error("the op did not produce a film");
+        const nextFindings = lintFilm(candidate, cfg.projectDir);
+        const errors = nextFindings.filter((f) => f.level === "error");
+        if (errors.length && !body.force) return json(res, 422, { ok: false, error: `${errors.length} lint error${errors.length === 1 ? "" : "s"}; nothing saved (pass force to save anyway)`, findings: nextFindings });
+        saveFilm(filmPath, candidate);
+        film = candidate;
+        findings = nextFindings;
         history.push(before);
-        if (history.length > 200) history.shift();
-        log(`${opLabel(o)}  (${findings.filter((f) => f.level === "error").length} errors)`);
+        while (history.length > 100 || history.reduce((n, h) => n + h.length, 0) > 32 * 1024 * 1024) history.shift();
+        log(`${opLabel(body)}  (${errors.length} errors)`);
         return json(res, 200, { ok: true, ...snapshot() });
       } catch (e) {
-        return json(res, 400, { ok: false, error: String((e as Error).message ?? e), ...snapshot() });
+        return json(res, 400, { ok: false, error: String((e as Error).message ?? e) });
       }
     }
     next();

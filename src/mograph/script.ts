@@ -37,7 +37,12 @@ Timing rules: the first layer of a scene arrives at frame 0 to 6, the next 8 to 
 Copy rules: plain human voice, short lines, at most 8 words per line, no exclamation marks, no emojis, no em dashes, one accent word per headline at most (*like this*), numbers as counters when a number is the point.
 Composition: text at x 0.5 centred unless the scene is a left-aligned list (then anchor "left", x 0.12); keep a headline and its support line 0.12 to 0.16 apart in y; in vertical move blocks toward y 0.45 and shrink sizes by a tenth through "formats".`;
 
-const hex = (v: unknown, fallback: string) => (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v.trim()) ? v.trim().toUpperCase() : fallback);
+const hex = (v: unknown, fallback: string) => {
+  if (typeof v !== "string") return fallback;
+  const h = v.trim();
+  if (/^#[0-9a-f]{3}$/i.test(h)) return ("#" + [...h.slice(1)].map((c) => c + c).join("")).toUpperCase();
+  return /^#[0-9a-f]{6}$/i.test(h) || /^#[0-9a-f]{8}$/i.test(h) ? h.toUpperCase() : fallback;
+};
 const kebab = (v: unknown, fallback: string) => (String(v ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || fallback);
 const clamp = (v: unknown, lo: number, hi: number, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
 
@@ -52,7 +57,7 @@ export const normalizeFilm = (input: Partial<MgFilm>, opts: { fps?: number; form
     paper: hex(d.paper, "#F4F1EA"),
     accent: hex(d.accent, "#F2B441"),
     muted: hex(d.muted, "#6A707A"),
-    colors: Object.fromEntries(Object.entries(d.colors ?? {}).filter(([k, v]) => /^[a-z][a-z0-9-]*$/.test(k) && /^#[0-9a-f]{6}$/i.test(String(v))).map(([k, v]) => [k, String(v).toUpperCase()])),
+    colors: Object.fromEntries(Object.entries(d.colors ?? {}).filter(([k, v]) => /^[a-z][a-z0-9-]*$/.test(k) && /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(String(v))).map(([k, v]) => [k, hex(v, "#000000")])),
     fontDisplay: typeof d.fontDisplay === "string" && d.fontDisplay.trim() ? d.fontDisplay.trim() : undefined,
     fontBody: typeof d.fontBody === "string" && d.fontBody.trim() ? d.fontBody.trim() : undefined,
     fontMono: typeof d.fontMono === "string" && d.fontMono.trim() ? d.fontMono.trim() : undefined,
@@ -67,7 +72,7 @@ export const normalizeFilm = (input: Partial<MgFilm>, opts: { fps?: number; form
     seenScene.add(id);
     const seen = new Set<string>();
     const layers: Layer[] = (Array.isArray(s.layers) ? s.layers : [])
-      .filter((l) => l && typeof l === "object" && ["text", "shape", "image", "counter", "bars", "list", "group"].includes((l as Layer).type))
+      .filter((l) => l && typeof l === "object" && ["text", "shape", "image", "counter", "bars", "list", "group", "line", "rings", "particles"].includes((l as Layer).type))
       .map((l, j) => {
         const L = { ...(l as Layer) } as Layer & Record<string, unknown>;
         let lid = kebab(L.id, `${L.type}-${j + 1}`);
@@ -99,7 +104,10 @@ export const normalizeFilm = (input: Partial<MgFilm>, opts: { fps?: number; form
         return L as Layer;
       });
     const dur = clamp(s.dur, 20, 900, 90);
-    return { id, dur: Math.round(dur), ground: typeof s.ground === "string" ? s.ground : i % 2 ? "paper" : "ink", enter: s.enter, exit: s.exit, layers, events: s.events, why: typeof s.why === "string" ? s.why : undefined, caption: s.caption, template: typeof s.template === "string" ? s.template : undefined, params: s.params };
+    const groundIn = s.ground as unknown;
+    const ground = typeof groundIn === "string" || (groundIn && typeof groundIn === "object" && "gradient" in (groundIn as object)) ? (groundIn as MgScene["ground"]) : i % 2 ? "paper" : "ink";
+    const extra = s as unknown as Record<string, unknown>;
+    return { id, dur: Math.round(dur), ground, enter: s.enter, exit: s.exit, layers, events: s.events, why: typeof s.why === "string" ? s.why : undefined, caption: s.caption, template: typeof s.template === "string" ? s.template : undefined, params: s.params , ...(extra.groundTracks ? { groundTracks: extra.groundTracks } : {}), ...(extra.sound ? { sound: extra.sound } : {}), ...(extra.camera ? { camera: extra.camera } : {}), ...(extra.transition ? { transition: extra.transition } : {}) } as MgScene;
   });
   return {
     title: String(raw.title ?? "Untitled").trim() || "Untitled",
