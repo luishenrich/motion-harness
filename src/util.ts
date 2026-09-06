@@ -154,6 +154,19 @@ export const ffprobeDuration = async (file: string): Promise<number> => {
   return parseFloat(r.out.trim());
 };
 
+export type MediaStats = { file: string; bytes: number; seconds: number; kbps: number };
+
+/** size, length and the resulting bitrate of a rendered file: the numbers that say whether a render is plausible */
+export const mediaStats = async (file: string): Promise<MediaStats> => {
+  const bytes = statSync(file).size;
+  const seconds = await ffprobeDuration(file);
+  return { file, bytes, seconds, kbps: seconds > 0 ? Math.round((bytes * 8) / seconds / 1000) : 0 };
+};
+
+export const statsLine = (s: MediaStats, frames?: number) => `${frames !== undefined ? `${frames}f, ` : ""}${s.seconds.toFixed(2)}s, ${mb(s.bytes)}, ${s.kbps} kbit/s`;
+
+export const sha1File = (file: string) => createHash("sha1").update(readFileSync(file)).digest("hex").slice(0, 12);
+
 /**
  * Ports for remotion's per-call servers, from a high range so they never collide
  * with dev servers on 3000-3999 (remotion's own free-port search starts there).

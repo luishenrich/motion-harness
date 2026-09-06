@@ -3,8 +3,9 @@
  * Root component is, which films exist (timeline + compositions per format) and
  * which colors are allowed.
  */
-import { existsSync } from "node:fs";
-import { resolve as resolvePath, dirname, isAbsolute } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve as resolvePath, dirname, isAbsolute, join } from "node:path";
+import { homedir } from "node:os";
 import type { Timeline, Rules } from "./timeline/schema.ts";
 
 export type Film = {
@@ -18,10 +19,16 @@ export type Film = {
   cursor?: Cursor;
 };
 
-export type CursorLeg = [ref: string, key: string];
+export type CursorLegOpts = {
+  /** frames the hand rests on this target before it may leave for the next one (a change of mind that pauses first) */
+  dwell?: number;
+};
+
+export type CursorLeg = [ref: string, key: string] | [ref: string, key: string, opts: CursorLegOpts];
 
 export type Cursor = {
-  /** [moment ref, data-probe key] in film order; key "park" leaves the frame after the previous target */
+  /** [moment ref, data-probe key] in film order; key "park" leaves the frame after the previous target;
+   *  a key ending in "?" is a hover without a press; a third element { dwell } holds the hand there for N frames */
   legs: CursorLeg[];
   /** per format: the TS module to write, relative to the project (exports CURSOR_TARGETS) */
   out: Record<string, string>;
@@ -68,6 +75,41 @@ export type LoadedConfig = HarnessConfig & {
   publicPath: string;
 };
 
+export type ProjectSource = "flag" | "env" | "cwd" | "last";
+
+const lastFile = () => join(process.env.MH_HOME ?? join(homedir(), ".mh"), "last");
+
+const hasConfig = (dir: string) => ["harness.config.ts", "harness.config.tsx", "harness.config.js", "harness.config.mjs"].some((n) => existsSync(resolvePath(dir, n)));
+
+/**
+ * Which project a command means: --project, then MH_PROJECT, then the cwd when it holds a
+ * config, then the project used last (~/.mh/last). The cwd resets between an agent's shell
+ * calls, so "mh check" from the wrong directory used to fail even with the project one call earlier.
+ */
+export const resolveProjectDir = (explicit?: string, cwd = process.cwd()): { dir: string; from: ProjectSource } => {
+  if (explicit) return { dir: resolvePath(cwd, explicit), from: "flag" };
+  const env = process.env.MH_PROJECT;
+  if (env) return { dir: resolvePath(cwd, env), from: "env" };
+  if (hasConfig(cwd)) return { dir: cwd, from: "cwd" };
+  const f = lastFile();
+  if (existsSync(f)) {
+    const last = readFileSync(f, "utf8").trim();
+    if (last && hasConfig(last)) return { dir: last, from: "last" };
+  }
+  return { dir: cwd, from: "cwd" };
+};
+
+/** remember a project that loaded, for the next call without --project */
+export const rememberProject = (dir: string) => {
+  try {
+    const f = lastFile();
+    mkdirSync(dirname(f), { recursive: true });
+    if (!existsSync(f) || readFileSync(f, "utf8").trim() !== dir) writeFileSync(f, dir);
+  } catch {
+    /* a read-only home is not an error */
+  }
+};
+
 export const findConfig = (projectDir: string): string => {
   for (const name of ["harness.config.ts", "harness.config.tsx", "harness.config.js", "harness.config.mjs"]) {
     const p = resolvePath(projectDir, name);
@@ -85,6 +127,7 @@ export const loadConfig = async (projectDir: string): Promise<LoadedConfig> => {
   const abs = (p: string) => (isAbsolute(p) ? p : resolvePath(dir, p));
   const rootPath = abs(cfg.root);
   if (!existsSync(rootPath)) throw new Error(`config.root does not exist: ${rootPath}`);
+  rememberProject(dir);
   return {
     ...cfg,
     projectDir: dir,

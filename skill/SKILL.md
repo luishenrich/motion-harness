@@ -63,6 +63,18 @@ Never guess where something is in time and never guess what a frame looks like. 
 | do the cuts land on the beat, which scene lengths to change | `mh beats --suggest --part <id>` |
 | what did the human say | `mh feedback` (`--all` includes done items) |
 | the edit list as markdown for docs | `mh docs --out path.md` |
+| show me exactly frame turn+40 (not the nearest check frame) | `mh frame turn+40 --format all` (any address; `--crop x,y,w,h`) |
+| are the thumbnails, cover and OG image right | `mh still all --jpg --width 1280 --sheet` (linted like frames: overflow, wrap, collision) |
+| the subtitle file, the chapter list | `mh srt --out film-en.srt`, `mh srt --chapters` (scene `text`, or `caption` for silent scenes) |
+| both formats rendered | `mh render --format all --out-dir dir` (size and bitrate per segment and film in the log) |
+| is that 150 ms key heard under the bed | `mh audio`: per sfx cue the >2 kHz peak delta in dB, AUDIBLE / FAINT / MASKED |
+| where does the music become audible (cold start trim) | `mh audio`: "audible from X s" and the 0-3 s head profile per music file |
+| hand everything over | `mh deliver --out dir --stills all` (films, stills, srt, manifest with sha1 and chapters, .gitignore for mp4) |
+
+`mh lint --rendered` refuses a run rendered from an older bundle than the sources (the frames
+would describe the previous edit); it renders fresh ones, or `--allow-stale` reads the old run.
+The project is `--project`, else `$MH_PROJECT`, else the cwd, else the last one used, so a shell
+whose cwd reset still hits the right film (the log says which one when it was not the flag).
 
 ## One hand for the whole film (cursor targets from the probe)
 
@@ -83,6 +95,10 @@ after any layout change; `mh doctor` does not catch stale targets, the sheet doe
 
 Contact sheets are too small to judge a 50 px cursor, its trail or a ripple. For those, crop the
 full frame (`out/.../frames/<tag>/<part>/f<partFrame>.png`) and read the crop.
+
+A leg whose key ends in `?` is a hover: the hand travels there and rests without a press
+(a change of mind before the real click). A third element `{ dwell: 10 }` keeps it there ten
+frames past the usual hold before it may leave: `["probe.optD", "opt-d?", { dwell: 10 }]`.
 
 ## Reading a contact sheet
 

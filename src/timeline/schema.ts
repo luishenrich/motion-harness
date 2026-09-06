@@ -29,8 +29,10 @@ export type Scene = {
   ground?: string;
   /** free label for the kind of scene; "demo" scenes share the stage top per format (lint `same-top`) */
   stage?: string;
-  /** on-screen copy, used by the text-duration rule */
+  /** on-screen copy, used by the text-duration rule and as the subtitle line (mh srt) */
   text?: string | string[];
+  /** subtitle line for a scene without on-screen copy ("Bo is mapping your course: 12 files, 5 topics"), mh srt only */
+  caption?: string;
   why?: string;
   /** named moments inside the scene, in local frames. Address them as `scene.event`. */
   events?: Record<string, number>;
@@ -119,6 +121,7 @@ export type CompiledScene = {
   ground?: string;
   stage?: string;
   text?: string[];
+  caption?: string;
   why?: string;
   /** first frame inside the part composition */
   start: number;
@@ -208,6 +211,7 @@ export const compile = (t: Timeline): Compiled => {
         ground: s.ground,
         stage: s.stage,
         text: s.text === undefined ? undefined : Array.isArray(s.text) ? s.text : [s.text],
+        caption: s.caption,
         why: s.why,
         start: at,
         end: at + s.dur,

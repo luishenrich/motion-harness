@@ -9,11 +9,11 @@
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, rmSync, cpSync } from "node:fs";
 import { join, resolve as resolvePath, basename, dirname } from "node:path";
 import { getCompositions } from "@remotion/renderer";
-import { loadConfig, pickFilm, pickFormat, type LoadedConfig } from "./config.ts";
+import { loadConfig, pickFilm, pickFormat, resolveProjectDir, type LoadedConfig } from "./config.ts";
 import { compile, compositionFor, fmtTime, type Compiled, type CompiledScene } from "./timeline/schema.ts";
 import { resolve as resolveRef, checkFramesFor, type CheckFrame } from "./timeline/resolve.ts";
 import { timelineMarkdown, timelineJson } from "./timeline/docs.ts";
-import { bundleProject, staleBundleWarnings, projectSrcDir } from "./render/bundle.ts";
+import { bundleProject, staleBundleWarnings, projectSrcDir, currentBundleHash, isStale } from "./render/bundle.ts";
 import { openRenderer, renderFrameSet, getComposition, frameFile, type ProbeResult, type Renderer } from "./render/frames.ts";
 import { measureLegs, writeTargets } from "./cursor/cursor.ts";
 import { makeSheet, zoomWindow, type SheetCell } from "./sheet/sheet.ts";
@@ -24,6 +24,10 @@ import { lintStaticColors, lintTimeline, lintProbe, lintFormatParity, cursorLegF
 import { diffSets } from "./diff/diff.ts";
 import { measureScene, sparkline } from "./motion/metrics.ts";
 import { audioProfile, rmsAt, db, loudSpan } from "./audio/probe.ts";
+import { cueAudibility, highpass, headProfile, audibleFrom, AUDIBILITY_SR } from "./audio/audibility.ts";
+import { srtEntries, srtText, chapterLines } from "./srt/srt.ts";
+import { listStills, pickStills, renderStills, stillSheet } from "./still/still.ts";
+import { deliver } from "./deliver/deliver.ts";
 import { decodeMono, onsetStrength, pickOnsets, beatGrid, nearest } from "./audio/beats.ts";
 import { spanOf, cuePlacement } from "./audio/coverage.ts";
 import { analyzeFile, looksLikeHit, hitWarnings, type SfxAnalysis } from "./audio/sfx.ts";
@@ -32,7 +36,7 @@ import { resolveUnclamped, locate } from "./timeline/resolve.ts";
 import { renderSegments, renderPartAudio, concatParts, concatScenes, mixFilm, partDurationCheck, picturePath, FULL, DRAFT } from "./film/film.ts";
 import { cpus } from "node:os";
 import { startReviewServer, loadComments, feedbackMarkdown, commentsPath } from "./review/server.ts";
-import { ensureDir, readJson, writeJson, stamp, table, ms, run, dirSize, mb, withLock, ffprobeDuration } from "./util.ts";
+import { ensureDir, readJson, writeJson, stamp, table, ms, run, dirSize, mb, withLock, ffprobeDuration, mediaStats, statsLine } from "./util.ts";
 
 /* ---------- args ---------- */
 
@@ -68,9 +72,19 @@ const die = (s: string): never => {
 
 type Ctx = { cfg: LoadedConfig; filmName: string; c: Compiled; format: string; size: { width: number; height: number }; args: Args };
 
+/** --project, MH_PROJECT, the cwd, or the last project used; says so once when it was not the flag or the cwd */
+let projectNoted = false;
+const projectDirOf = (args: Args): string => {
+  const { dir, from } = resolveProjectDir(str(args, "project"));
+  if (!projectNoted && (from === "env" || from === "last")) {
+    projectNoted = true;
+    log(`project: ${dir} (from ${from === "env" ? "MH_PROJECT" : "the last project used; pass --project to change"})`);
+  }
+  return dir;
+};
+
 const ctx = async (args: Args): Promise<Ctx> => {
-  const projectDir = resolvePath(str(args, "project", process.cwd())!);
-  const cfg = await loadConfig(projectDir);
+  const cfg = await loadConfig(projectDirOf(args));
   const { name: filmName, film } = pickFilm(cfg, str(args, "film"));
   const format = pickFormat(film, str(args, "format"));
   return { cfg, filmName, c: compile(film.timeline), format, size: film.formats[format], args };
@@ -78,7 +92,7 @@ const ctx = async (args: Args): Promise<Ctx> => {
 
 /** "--format all" fans a command out over every format of the film; everything else is one format */
 const formatsOf = async (args: Args): Promise<string[]> => {
-  const cfg = await loadConfig(resolvePath(str(args, "project", process.cwd())!));
+  const cfg = await loadConfig(projectDirOf(args));
   const { film } = pickFilm(cfg, str(args, "film"));
   const f = str(args, "format");
   return f === "all" ? Object.keys(film.formats) : [pickFormat(film, f)];
@@ -128,6 +142,9 @@ const loadRun = (x: Ctx, tag?: string): Manifest => {
   if (!existsSync(m)) die(`no run "${t}" (have: ${[...runTags(x), ...(hasRun(x, APPROVED) ? [APPROVED] : [])].join(", ")})`);
   return readJson<Manifest>(m);
 };
+
+/** a run rendered from other sources than the ones on disk: its frames say nothing about the current film */
+const staleNote = (x: Ctx, m: Manifest): string | null => (isStale(m.bundleHash, currentBundleHash(x.cfg)) ? `run "${m.tag}" was rendered from an older bundle (${m.bundleHash.slice(0, 12)} vs now ${currentBundleHash(x.cfg).slice(0, 12)}): the sources changed since` : null);
 
 /* ---------- commands ---------- */
 
@@ -374,6 +391,8 @@ const cmdSheet = async (args: Args) => {
     await cmdFrames({ ...args, quiet: true });
   }
   m = loadRun(x, from);
+  const stale = staleNote(x, m);
+  if (stale) log(`warning: ${stale}; the sheet shows the old frames`);
   const scenes = scenesOf(x.c, args);
   const zoomKey = str(args, "zoom");
   if (zoomKey && !m.probe) die(`run "${m.tag}" has no probe data, --zoom needs element boxes: mh frames --zoom ${zoomKey}`);
@@ -530,6 +549,138 @@ const cmdProbe = async (args: Args) => {
   });
 };
 
+/** exactly these frames, by any address resolve accepts, rendered now: no guessing which check frame is nearest */
+const frameRun = async (x: Ctx, refs: string[]): Promise<{ ref: string; file: string; L: ReturnType<typeof resolveRef>; ms: number; probeFile?: string }[]> => {
+  const args = x.args;
+  const crop = list(args, "crop")?.map(Number);
+  if (crop && (crop.length !== 4 || crop.some((n) => !Number.isFinite(n)))) die("--crop wants x,y,w,h in frame pixels");
+  const dir = ensureDir(join(x.cfg.cachePath, "frame", `${x.filmName}-${x.format}`));
+  const probe = (str(args, "probe") as "probe" | "text" | "all" | undefined) ?? (flag(args, "probe") ? "text" : false);
+  const jobs = refs.map((ref) => {
+    const L = resolveRef(x.c, ref);
+    const part = x.c.parts.find((p) => p.id === L.part)!;
+    return { ref, L, compId: compositionFor(part, x.format), file: join(dir, `${L.scene.id}+${L.local}${crop ? `-crop${crop.join("x")}` : ""}.png`) };
+  });
+  const out: { ref: string; file: string; L: ReturnType<typeof resolveRef>; ms: number; probeFile?: string }[] = [];
+  await withRenderer(x, async (r, serveUrl) => {
+    const byComp = new Map<string, typeof jobs>();
+    for (const j of jobs) byComp.set(j.compId, [...(byComp.get(j.compId) ?? []), j]);
+    for (const [compId, js] of byComp) {
+      const uniq = [...new Map(js.map((j) => [j.L.partFrame, j])).values()];
+      const outs = await renderFrameSet(r, serveUrl, compId, uniq.map((j) => ({ frame: j.L.partFrame, file: j.file })), { probe, settleMs: num(args, "settle", 150), concurrency: num(args, "concurrency", 4), scale: num(args, "scale", 1) });
+      for (const [i, o] of outs.entries()) {
+        const j = uniq[i];
+        if (crop) {
+          const [cx, cy, cw, ch] = crop;
+          const buf = await sharp(o.file).extract({ left: Math.max(0, cx), top: Math.max(0, cy), width: Math.min(cw, x.size.width - cx), height: Math.min(ch, x.size.height - cy) }).png().toBuffer();
+          await sharp(buf).toFile(o.file);
+        }
+        let probeFile: string | undefined;
+        if (o.probe) {
+          probeFile = o.file.replace(/\.png$/, ".probe.json");
+          writeJson(probeFile, o.probe);
+        }
+        for (const jj of js.filter((k) => k.L.partFrame === j.L.partFrame)) out.push({ ref: jj.ref, file: o.file, L: jj.L, ms: o.ms, probeFile });
+      }
+    }
+  });
+  return out;
+};
+
+const cmdFrame = async (args: Args) => {
+  if (!args._.length) die("usage: mh frame <ref> [<ref>...] [--format all] [--crop x,y,w,h] [--probe] [--json]   e.g. turn+40  20.5s  probe.pick1+3  f616");
+  const rows: (string | number)[][] = [];
+  const all: Record<string, unknown>[] = [];
+  await eachFormat(args, async (a) => {
+    const x = await ctx(a);
+    for (const f of await frameRun(x, args._)) {
+      rows.push([x.format, f.ref, `${f.L.scene.id}+${f.L.local}`, `f${f.L.partFrame}`, fmtTime(f.L.filmFrame, x.c.fps), f.L.inTransition ? "in transition" : "", `${f.ms}ms`, f.file]);
+      all.push({ format: x.format, ref: f.ref, scene: f.L.scene.id, local: f.L.local, partFrame: f.L.partFrame, filmFrame: f.L.filmFrame, filmSeconds: f.L.filmSeconds, inTransition: f.L.inTransition, file: f.file, probeFile: f.probeFile });
+    }
+  });
+  log(table(rows, ["format", "ref", "scene", "part", "film", "", "took", "file"]));
+  if (flag(args, "json")) out(JSON.stringify(all));
+};
+
+/** every <Still> the project registers, rendered through the probe and linted; jpg copies and a sheet on request */
+const cmdStill = async (args: Args) => {
+  const x = await ctx(args);
+  const jpg = flag(args, "jpg") || str(args, "width") !== undefined;
+  const outDir = str(args, "out") ? resolvePath(str(args, "out")!) : undefined;
+  const t0 = performance.now();
+  const results = await withRenderer(x, async (r, serveUrl) => {
+    const available = await listStills(serveUrl);
+    if (!available.length) die("the Root registers no <Still> (a composition of one frame)");
+    if (!args._.length) {
+      log(table(available.map((s) => [s.id, `${s.width}x${s.height}`]), ["still", "size"]));
+      return null;
+    }
+    const wanted = pickStills(available, args._.flatMap((k) => k.split(",")).map((k) => k.trim()).filter(Boolean));
+    return renderStills(x.cfg, r, serveUrl, wanted, { outDir, jpg, width: num(args, "width", 0) || undefined, quality: num(args, "quality", 90), settleMs: num(args, "settle", 150), concurrency: num(args, "concurrency", 2), log });
+  });
+  if (!results) return log(`mh still <id,...|all> renders them`);
+  const findings = results.flatMap((s) => s.findings);
+  log("");
+  log(table(results.map((s) => [s.id, `${s.width}x${s.height}`, s.findings.filter((f) => f.level === "error").length || "", s.findings.filter((f) => f.level === "warn").length || "", s.jpg ?? s.png]), ["still", "size", "errors", "warns", "file"]));
+  if (findings.length) {
+    log("");
+    log(formatFindings(findings));
+  }
+  if (flag(args, "sheet")) {
+    const sheet = await stillSheet(results, join(outDir ?? join(x.cfg.cachePath, "stills"), "sheet.png"), `${x.filmName} stills (${results.length}) · ${new Date().toISOString().slice(0, 16)}`);
+    log(`sheet -> ${sheet}`);
+  }
+  if (flag(args, "json")) out(JSON.stringify(results.map((s) => ({ id: s.id, width: s.width, height: s.height, png: s.png, jpg: s.jpg, findings: s.findings }))));
+  const errors = findings.filter((f) => f.level === "error").length;
+  log(`${results.length} still${results.length === 1 ? "" : "s"} in ${ms(t0)}, ${errors} lint error${errors === 1 ? "" : "s"}`);
+  if (errors && !flag(args, "no-fail")) process.exit(2);
+};
+
+/** subtitles from the timeline: scenes with text, or a caption for the ones without; chapter lines for the description */
+const cmdSrt = async (args: Args) => {
+  const x = await ctx(args);
+  const entries = srtEntries(x.c, { useCaption: args["captions"] !== "false" });
+  if (!entries.length) die("no scene carries text or caption, nothing to subtitle");
+  const text = srtText(entries);
+  const outFile = str(args, "out");
+  if (flag(args, "chapters")) return log(chapterLines(entries).join("\n"));
+  if (outFile) {
+    writeFileSync(resolvePath(outFile), text);
+    log(`${entries.length} entries -> ${outFile}`);
+    log(table(entries.map((e) => [e.index, e.scene, `${e.start.toFixed(2)}s`, `${e.end.toFixed(2)}s`, e.text.replace(/\n/g, " / ")]), ["#", "scene", "from", "to", "text"]));
+  } else out(text);
+};
+
+/** films, stills, srt and a manifest into one folder, mp4 kept out of git */
+const cmdDeliver = async (args: Args) => {
+  const dir = str(args, "out");
+  if (!dir) die("usage: mh deliver --out <dir> [--format all] [--stills a,b|all] [--lang en]");
+  const formats = await formatsOf({ ...args, format: str(args, "format") ?? "all" });
+  const first = await ctx({ ...args, format: formats[0] });
+  const films = [];
+  for (const format of formats) {
+    const x = await ctx({ ...args, format });
+    const master = join(x.cfg.cachePath, "out", `${x.filmName}-${x.format}.mp4`);
+    films.push({ format, master, web: master.replace(/\.mp4$/, "-web.mp4"), size: x.size });
+  }
+  const wantStills = list(args, "stills");
+  let stills: { id: string; file: string; width: number; height: number }[] = [];
+  if (wantStills) {
+    const res = await withRenderer(first, async (r, serveUrl) => renderStills(first.cfg, r, serveUrl, pickStills(await listStills(serveUrl), wantStills), { jpg: true, width: num(args, "width", 0) || undefined, log }));
+    stills = res.map((s) => ({ id: s.id, file: s.jpg ?? s.png, width: s.width, height: s.height }));
+    const errors = res.flatMap((s) => s.findings).filter((f) => f.level === "error");
+    if (errors.length) {
+      log(formatFindings(errors));
+      if (!flag(args, "no-fail")) die(`${errors.length} still lint error${errors.length === 1 ? "" : "s"}, not delivering (--no-fail overrides)`);
+    }
+  }
+  log(`delivering ${first.filmName} to ${dir}`);
+  const d = await deliver({ film: first.filmName, c: first.c, films, stills, lang: str(args, "lang", "en") }, resolvePath(dir!), { log });
+  const delivered = d.files.filter((f) => f.kind === "film").length;
+  if (!delivered) log(`warning: no rendered film found in the cache (mh render --format all first)`);
+  log(`manifest -> ${d.manifest}${d.manifest.endsWith("MANIFEST.md") ? " (README.md in that folder is hand-written and was left alone)" : ""}`);
+};
+
 const lintRun = async (x: Ctx, args: Args): Promise<Finding[]> => {
   // --format all (the default when the film has more than one format) lints every format and compares them
   const wantAll = str(args, "format") === "all";
@@ -549,7 +700,11 @@ const lintRun = async (x: Ctx, args: Args): Promise<Finding[]> => {
       const tag = str(args, "from") ?? latestTag(xf);
       if (tag) {
         const cand = loadRun(xf, tag);
-        if (cand.probe) m = cand;
+        const stale = staleNote(xf, cand);
+        if (stale && !flag(args, "allow-stale")) {
+          if (str(args, "from")) throw new Error(`${stale}. Re-render (mh frames --probe text) or pass --allow-stale to lint the old frames anyway.`);
+          log(`${format}: ${stale}; rendering fresh frames`);
+        } else if (cand.probe) m = cand;
       }
       if (!m) {
         log(`${format}: no probe run found, rendering settled frames with the probe`);
@@ -714,6 +869,12 @@ const audioCoverage = async (x: Ctx) => {
     const loud = loudSpan(prof, 12);
     if (loud) log(`    loud span ${sec(loud.first)} -> ${sec(loud.last)} of ${sec(prof.seconds)} (250 ms rms within 12 dB of the max ${db(loud.maxRms).toFixed(1)} dBFS)${cue.trim && (cue.trim[1] < loud.last - 0.5 || cue.trim[0] > loud.first + 0.5) ? "  note: the trim cuts inside the loud span" : ""}`);
     else log(`    loud span: the file is silent`);
+    // the head of the file in 100 ms steps: a cold start reads its trim off this line
+    const mono = await decodeMono(file, 8000);
+    const from = audibleFrom(mono, 8000, -40);
+    const headDb = headProfile(mono, 8000, 3, 0.1);
+    log(`    audible from ${from === null ? "never (under -40 dBFS throughout)" : sec(from)}${cue.trim ? `, trim starts at ${sec(cue.trim[0])}${from !== null && cue.trim[0] < from ? " (before the sound: the film opens on silence)" : ""}` : ""}`);
+    log(`    head 0-3s ${sparkline(headDb.map((d) => Math.max(0, d + 60)))}  (100 ms rms, ${headDb.filter((d) => d > -40).length}/${headDb.length} windows above -40 dBFS)`);
   }
   if (total - latestEnd > 1) log(`  WARNING film is ${sec(total - latestEnd)} longer than all music (music ends at ${sec(latestEnd)}, film at ${sec(total)})`);
 };
@@ -778,13 +939,27 @@ const cmdAudio = async (args: Args) => {
     const v = rmsAt(p, t + 0.1);
     if (v < 0.002) log(`  silent at scene ${s.id} (${t.toFixed(2)}s): rms ${v.toFixed(4)}`);
   }
+  // short cues under a bed: the rms window is too wide to see a 150 ms key, the high-passed peak is not
+  const mixHp = highpass(await decodeMono(file, AUDIBILITY_SR), AUDIBILITY_SR, 2000);
   for (const cue of x.c.timeline.audio ?? []) {
-    const t = resolveRef(x.c, cue.at).filmSeconds;
+    const raw = resolveUnclamped(x.c, cue.at).filmSeconds;
+    const t = Math.max(0, raw);
     const before = rmsAt(p, Math.max(0, t - 0.3)), after = rmsAt(p, t + 0.3);
-    log(`  cue ${cue.id} (${cue.kind}) at ${t.toFixed(2)}s: rms before ${before.toFixed(3)} after ${after.toFixed(3)}${after < 0.002 ? "  NOTHING AUDIBLE" : ""}`);
+    // a cue whose first ramp starts where it starts is a fade-in, not silence: judge it after the ramp
+    const fadeIn = (cue.ramps ?? []).map((r) => ({ at: resolveUnclamped(x.c, r.at).filmSeconds, over: r.over ?? 0, to: r.to })).find((r) => Math.abs(r.at - raw) < 0.05 && r.over > 0 && (cue.gain ?? 1) < r.to);
+    const afterFade = fadeIn ? rmsAt(p, t + fadeIn.over + 0.3) : after;
+    const silent = afterFade < 0.002;
+    let verdict = silent ? "  NOTHING AUDIBLE" : "";
+    if (fadeIn) verdict = `  fade-in over ${fadeIn.over}s (gain ${cue.gain ?? 1} -> ${fadeIn.to}), rms after it ${afterFade.toFixed(3)}${silent ? "  NOTHING AUDIBLE" : ""}`;
+    log(`  cue ${cue.id} (${cue.kind}) at ${t.toFixed(2)}s${raw < 0 ? ` (placed ${(-raw).toFixed(2)}s before the film, head cut)` : ""}: rms before ${before.toFixed(3)} after ${after.toFixed(3)}${verdict}`);
+    if (cue.kind === "sfx") {
+      const a = cueAudibility(mixHp, AUDIBILITY_SR, t, { window: num(args, "cue-window", 0.06), before: num(args, "cue-before", 0.2) });
+      log(`    >2 kHz peak in ${Math.round(a.window * 1000)}ms at the cue ${a.peakAtDb.toFixed(1)} dBFS vs ${Math.round(a.before * 1000)}ms before ${a.peakBeforeDb.toFixed(1)} dBFS: ${a.deltaDb >= 0 ? "+" : ""}${a.deltaDb.toFixed(1)} dB  ${a.verdict.toUpperCase()}${a.verdict === "masked" ? " (the bed covers it: more gain, a brighter sample, or duck the bed)" : ""}`);
+    }
     for (const rmp of cue.ramps ?? []) {
-      const rt = resolveRef(x.c, rmp.at).filmSeconds;
-      log(`    ramp -> ${rmp.to} at ${rt.toFixed(2)}s: rms ${rmsAt(p, rt - 0.3).toFixed(3)} -> ${rmsAt(p, rt + (rmp.over ?? 0) + 0.3).toFixed(3)}`);
+      const rr = resolveUnclamped(x.c, rmp.at).filmSeconds;
+      const rt = Math.max(0, rr);
+      log(`    ramp -> ${rmp.to} at ${rt.toFixed(2)}s${rr < 0 ? ` (WARNING resolves to ${rr.toFixed(2)}s, before the film: clamped to 0)` : ""}: rms ${rmsAt(p, Math.max(0, rt - 0.3)).toFixed(3)} -> ${rmsAt(p, rt + (rmp.over ?? 0) + 0.3).toFixed(3)}`);
     }
   }
 };
@@ -938,6 +1113,16 @@ const cmdBeats = async (args: Args) => {
 };
 
 const cmdRender = async (args: Args) => {
+  const formats = await formatsOf(args);
+  const outDir = str(args, "out-dir");
+  if (formats.length > 1 && str(args, "out")) die("--out names one file; with --format all use --out-dir <dir> (files are named <film>-<format>.mp4)");
+  for (const format of formats) {
+    if (formats.length > 1) log(`\n== render ${format}`);
+    await renderOne({ ...args, format, ...(outDir ? { out: join(ensureDir(resolvePath(outDir)), `${(await ctx({ ...args, format })).filmName}-${format}.mp4`) } : {}) });
+  }
+};
+
+const renderOne = async (args: Args) => {
   const x = await ctx(args);
   const t0 = performance.now();
   const mixOpts = { out: str(args, "out"), web: flag(args, "web") && !flag(args, "draft"), log, audioRoot: str(args, "audio-root") };
@@ -978,7 +1163,8 @@ const cmdRender = async (args: Args) => {
       return mixFilm(x.cfg, x.c, picture, x.filmName, x.format, mixOpts);
     });
   }, log);
-  log(`film -> ${res.master}${res.web ? `\nweb  -> ${res.web}` : ""}  (${ms(t0)})`);
+  const st = await mediaStats(res.master);
+  log(`film -> ${res.master}  ${statsLine(st, Math.round(st.seconds * x.c.fps))}${res.web ? `\nweb  -> ${res.web}  ${statsLine(await mediaStats(res.web))}` : ""}  (${ms(t0)})`);
 };
 
 /**
@@ -987,8 +1173,7 @@ const cmdRender = async (args: Args) => {
  * anything touched in the last N days.
  */
 const cmdClean = async (args: Args) => {
-  const projectDir = resolvePath(str(args, "project", process.cwd())!);
-  const cfg = await loadConfig(projectDir);
+  const cfg = await loadConfig(projectDirOf(args));
   const cache = cfg.cachePath;
   if (!existsSync(cache)) return log(`nothing to clean, no cache at ${cache}`);
   const keepApproved = !flag(args, "all") && args["keep-approved"] !== "false";
@@ -1086,7 +1271,7 @@ const cursorRun = async (x: Ctx): Promise<string> => {
   if (!rel) throw new Error(`films.${x.filmName}.cursor.out has no file for format "${x.format}" (has: ${Object.keys(cursor.out ?? {}).join(", ") || "none"})`);
   const targets = await withRenderer(x, (r, serveUrl) => measureLegs(r, serveUrl, x.cfg, x.c, x.format, x.size.width, cursor, { settleMs: num(x.args, "settle", 150), concurrency: num(x.args, "concurrency", 4), log }));
   const w = writeTargets(resolvePath(x.cfg.projectDir, rel), targets);
-  log(table(targets.map((t) => [t.id, `f${t.frame}`, t.x, t.y, t.click ? "click" : "park"]), ["leg", "part f", "x", "y", ""]));
+  log(table(targets.map((t) => [t.id, `f${t.frame}`, t.x, t.y, `${t.click ? "click" : t.id.endsWith("(hover)") ? "hover" : "park"}${t.dwell ? ` dwell ${t.dwell}f` : ""}`]), ["leg", "part f", "x", "y", ""]));
   log(`${x.format}: ${targets.length} targets -> ${rel}${w.changed ? "" : " (unchanged)"}`);
   return `${rel}${w.changed ? " updated" : " unchanged"}`;
 };
@@ -1162,7 +1347,7 @@ const cmdBundle = async (args: Args) => {
 };
 
 const cmdInit = async (args: Args) => {
-  const projectDir = resolvePath(str(args, "project", process.cwd())!);
+  const projectDir = resolvePath(str(args, "project") ?? process.env.MH_PROJECT ?? process.cwd());
   const file = join(projectDir, "harness.config.ts");
   if (existsSync(file) && !flag(args, "force")) die(`${file} exists`);
   writeFileSync(file, readFileSync(join(import.meta.dir, "../templates/harness.config.ts"), "utf8"));
@@ -1182,6 +1367,10 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
 
   frames [--scene a,b] [--dense N] [--probe text] [--tag t] [--sheet] [--at ref,ref] [--zoom key]
                                     render the check frames of each scene (enter, settled, events with their -6..+18 window, mid, last), plus any --at refs
+  frame <ref...> [--format all] [--crop x,y,w,h] [--probe] [--json]
+                                    exactly these frames, now, by any address resolve accepts (turn+40, 20.5s, probe.pick1+3, f616); prints the paths
+  still [<id,...>|all] [--jpg] [--width 1280] [--sheet] [--out dir] [--no-fail]
+                                    every <Still> the Root registers (no args lists them): rendered through the probe, linted (overflow, wrap, collision), jpg copies, one sheet
   sheet [--scene a,b] [--from tag] [--all] [--columns 4] [--zoom key]
                                     contact sheets with frame numbers, scene addresses and transition marks; --zoom crops 480x320 at 1:1 around the probed element
   approve [--from tag]              copy a run (default latest) to "approved", the fixed side of every later diff
@@ -1202,8 +1391,8 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
                                     onsets in the mix, beat grid from the music, every cut measured; --suggest quantizes scene lengths to the grid (timeline rules veto)
 
   bench --scene id [--concurrencies 4,6,8,10]   one scene at each concurrency, full and draft: pick the defaults from numbers
-  render [--scene a,b] [--force] [--draft] [--crf 18] [--web] [--no-audio] [--out file]
-                                    scene segments (cached), parts by concat, music and sfx mixed from the timeline
+  render [--scene a,b] [--force] [--draft] [--crf 18] [--web] [--no-audio] [--out file] [--format all --out-dir dir]
+                                    scene segments (cached), parts by concat, music and sfx mixed from the timeline; every segment and film logs size and bitrate
   render --scene a[,b] --preview    only those scenes as a clip, with the cues that sound in them (contiguous scenes)
   render --remix                    no picture work: the cached picture mixed again (music/sfx/gain changes)
   clean [--older-than days] [--keep-approved=false] [--all] [--verbose]
@@ -1212,7 +1401,15 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
   feedback [--all] [--json] [--clear]
                                     the comments as an agent-readable list, grouped by scene
   feedback --from <file|->          free text ("bei 1:09", "Sekunde 19-21", "beim Klicken") turned into scene addresses
+  srt [--out file] [--chapters] [--captions=false]
+                                    subtitles from the timeline: one entry per scene with text (or caption), times from the compile; --chapters prints the YouTube list
+  deliver --out dir [--format all] [--stills a,b|all] [--lang en]
+                                    films per format, stills as jpg, the srt, a manifest (sizes, durations, bitrates, sha1, chapters, scenes) and a .gitignore for the mp4
   init [--force]                    write a harness.config.ts template into the project
+
+  project: --project dir, else $MH_PROJECT, else the cwd when it holds harness.config.ts, else the project used last (~/.mh/last)
+  --format all fans check, frames, frame, lint, cursor, render and deliver out over every format of the film
+  lint --rendered refuses a run whose bundle is older than the sources (--allow-stale reads it anyway); sheet warns
 `;
 
 const commands: Record<string, (a: Args) => Promise<void>> = {
@@ -1224,6 +1421,10 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   check: cmdCheck,
   cursor: cmdCursor,
   frames: cmdFrames,
+  frame: cmdFrame,
+  still: cmdStill,
+  srt: cmdSrt,
+  deliver: cmdDeliver,
   sheet: cmdSheet,
   approve: cmdApprove,
   locate: cmdLocate,

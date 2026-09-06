@@ -46,6 +46,15 @@ registerRoot(HarnessRoot);
 
 export type Bundled = { serveUrl: string; hash: string; fresh: boolean };
 
+/** the hash the next bundle would get from the sources as they are now, no bundling: what "stale" is measured against */
+export const currentBundleHash = (cfg: LoadedConfig): string => {
+  const entryDir = join(cfg.cachePath, "entry");
+  return hashDir(cfg.projectDir, { ignore: ["public", "harness.config.ts"] }) + ":" + hashString(wrapperSource(cfg, entryDir)) + ":" + (cfg.webpackOverride ? "wo" : "plain");
+};
+
+/** true when a run was rendered from other sources than the ones on disk now */
+export const isStale = (runHash: string | undefined, nowHash: string) => !!runHash && runHash !== nowHash;
+
 /** one bundle per source hash within a process: check, cursor and frames share it */
 const memo = new Map<string, Bundled>();
 
@@ -58,7 +67,7 @@ export const bundleProject = async (cfg: LoadedConfig, opts: { force?: boolean; 
 
   const outDir = join(cfg.cachePath, "bundle");
   const hashFile = join(cfg.cachePath, "bundle.hash");
-  const hash = hashDir(cfg.projectDir, { ignore: ["public", "harness.config.ts"] }) + ":" + hashString(src) + ":" + (cfg.webpackOverride ? "wo" : "plain");
+  const hash = currentBundleHash(cfg);
   const had = memo.get(outDir);
   if (had && had.hash === hash && !opts.force) return { ...had, fresh: false };
   if (!opts.force && existsSync(hashFile) && readFileSync(hashFile, "utf8") === hash && existsSync(join(outDir, "index.html"))) {

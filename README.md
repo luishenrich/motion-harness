@@ -76,6 +76,24 @@ typecheck, one bundle, static and timeline lint, doctor, the cursor targets (bel
 frames with contact sheets and the rendered lint of the touched scenes, per format, and prints
 one pass/fail table (exit 2 on failure).
 
+Around the film, not only inside it:
+
+```bash
+mh frame turn+40 20.5s --format all         # exactly these frames, now; any address resolve accepts
+mh still all --jpg --width 1280 --sheet     # every <Still> (thumbnails, covers, OG image) linted like a frame
+mh srt --out film-en.srt                    # subtitles from the timeline (scene text, or `caption`)
+mh render --format all --out-dir out/       # both formats, one command; size and bitrate per segment and film
+mh deliver --out docs/.../deliverables --stills all
+                                            # films, stills, srt, manifest (sizes, sha1, chapters), .gitignore for the mp4
+```
+
+`mh lint --rendered` refuses a frames run rendered from an older bundle than the sources on
+disk (`--allow-stale` reads it anyway). `mh audio` judges a short sfx cue by the peak of the
+high-passed mix in a 60 ms window against the 200 ms before it, reports where a music file
+becomes audible so a cold-start trim is read off, and treats a cue that ramps up from its own
+start as a fade-in, not silence. A ramp that resolves before the film starts is a lint warning.
+The project comes from `--project`, else `$MH_PROJECT`, else the cwd, else the last project used.
+
 The film's one hand is timeline data too. Declare it on the film in `harness.config.ts`, and
 `mh cursor` (or `mh check`) measures every leg with the DOM probe per format and writes the
 `CURSOR_TARGETS` module the composition reads. Frame files are named by scene address
@@ -130,12 +148,15 @@ scenes); `mh doctor` checks the totals against the compositions.
 src/timeline/   schema (defineTimeline, compile), resolve, docs
 src/render/     bundle (wrapper entry + cache), frames (renderStill through one browser, probe capture)
 src/probe/      the injected DOM probe (plain JS, runs inside the page)
-src/cursor/     cursor legs -> probe-measured targets module per format
+src/cursor/     cursor legs -> probe-measured targets module per format (hover legs, dwell)
+src/still/      every registered <Still> through the probe: lint, jpg, sheet
+src/srt/        subtitles and chapter lines from the timeline
+src/deliver/    a delivery folder with manifest and .gitignore
 src/sheet/      contact sheets (sharp)
 src/lint/       static colors, timeline rules, painted colors / safe zone / expected probes
 src/diff/       frame set comparison with diff images
 src/motion/     per-scene motion curve (renderFrames, small jpegs)
-src/audio/      RMS profile via ffmpeg
+src/audio/      RMS profile via ffmpeg, short-cue audibility (high-passed peak), onsets, beat grid
 src/film/       scene segments (cached), part audio, concat, mix from cues
 src/review/     the review player (Bun.serve) and feedback export
 src/cli.ts      mh

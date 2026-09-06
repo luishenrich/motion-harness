@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import type { LoadedConfig } from "../config.ts";
 import type { Compiled } from "../timeline/schema.ts";
-import { resolve } from "../timeline/resolve.ts";
+import { resolve, resolveUnclamped } from "../timeline/resolve.ts";
 import type { ProbeItem, ProbeResult } from "../render/frames.ts";
 
 export type Finding = { level: "error" | "warn"; rule: string; where: string; message: string };
@@ -85,6 +85,35 @@ export const lintTimeline = (cfg: LoadedConfig, c: Compiled): Finding[] => {
   for (const s of c.scenes) {
     if (ids.has(s.id)) out.push({ level: "error", rule: "scene-id-unique", where: s.id, message: "duplicate scene id" });
     ids.add(s.id);
+  }
+  out.push(...lintAudioCues(c));
+  return out;
+};
+
+/** cue refs that no longer point where they were written: a ramp before the film starts is clamped to 0 by the mix, silently */
+export const lintAudioCues = (c: Compiled): Finding[] => {
+  const out: Finding[] = [];
+  for (const cue of c.timeline.audio ?? []) {
+    let start: number;
+    try {
+      start = resolveUnclamped(c, cue.at).filmSeconds;
+    } catch (e) {
+      out.push({ level: "error", rule: "cue-ref", where: `audio ${cue.id}`, message: (e as Error).message });
+      continue;
+    }
+    if (start >= c.seconds) out.push({ level: "error", rule: "cue-after-end", where: `audio ${cue.id}`, message: `starts at ${start.toFixed(2)}s, the film ends at ${c.seconds.toFixed(2)}s` });
+    for (const r of cue.ramps ?? []) {
+      let at: number;
+      try {
+        at = resolveUnclamped(c, r.at).filmSeconds;
+      } catch (e) {
+        out.push({ level: "error", rule: "cue-ref", where: `audio ${cue.id} ramp ${String(r.at)}`, message: (e as Error).message });
+        continue;
+      }
+      if (at < 0) out.push({ level: "warn", rule: "ramp-before-start", where: `audio ${cue.id} ramp ${String(r.at)}`, message: `resolves to ${at.toFixed(2)}s, before the film: the mix clamps it to 0 and the ramp${r.over ? ` (${r.over}s)` : ""} runs from the first frame. Retime it or drop it.` });
+      else if (at < start) out.push({ level: "warn", rule: "ramp-before-cue", where: `audio ${cue.id} ramp ${String(r.at)}`, message: `at ${at.toFixed(2)}s, before the cue starts at ${start.toFixed(2)}s: it only sets the starting gain` });
+      if (at >= c.seconds) out.push({ level: "warn", rule: "ramp-after-end", where: `audio ${cue.id} ramp ${String(r.at)}`, message: `at ${at.toFixed(2)}s, after the film ends (${c.seconds.toFixed(2)}s): never heard` });
+    }
   }
   return out;
 };

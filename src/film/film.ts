@@ -12,7 +12,7 @@ import { resolve as resolveRef, resolveUnclamped } from "../timeline/resolve.ts"
 import { cuesInSpan, volumeExprFor, type Span } from "./mix.ts";
 import { partHash } from "../render/deps.ts";
 import { getComposition, type Renderer } from "../render/frames.ts";
-import { ensureDir, hashString, run, ffprobeDuration, ms, nextPort } from "../util.ts";
+import { ensureDir, hashString, run, ffprobeDuration, ms, nextPort, mediaStats, statsLine } from "../util.ts";
 import { cuePlacement, cueSpan, sourceSeconds } from "../audio/coverage.ts";
 
 export type SegmentResult = { scene: CompiledScene; file: string; cached: boolean; ms: number };
@@ -85,7 +85,8 @@ export const renderSegments = async (
       const t = Math.round(performance.now() - t0);
       const fps = (s.dur / (t / 1000));
       if (fps < 8) log(`  SLOW ${compId}/${s.id}: ${fps.toFixed(1)} f/s (video decode, blur or filters in this scene; see mh bench)`);
-      log(`  ${part.id}/${s.id} ${s.dur}f rendered in ${(t / 1000).toFixed(1)}s`);
+      const st = await mediaStats(file);
+      log(`  ${part.id}/${s.id} ${s.dur}f rendered in ${(t / 1000).toFixed(1)}s: ${statsLine(st)}`);
       results.push({ scene: s, file, cached: false, ms: t });
     }
     out.set(part.id, results);
