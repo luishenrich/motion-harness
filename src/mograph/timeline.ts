@@ -59,7 +59,10 @@ export const toScene = (film: MgFilm, s: MgScene, index = film.scenes.indexOf(s)
         : s.enter === "fade"
           ? { type: "fade", dur: film.defaults?.enterFrames ?? 10 }
           : { type: s.enter.type, dur: s.enter.dur ?? film.defaults?.enterFrames ?? 10 };
-  const exit = s.exit === undefined ? undefined : s.exit === "cut" ? undefined : s.exit === "fade" ? { type: "fade", dur: 8 } : { type: s.exit.type, dur: s.exit.dur ?? 8 };
+  // the next scene's handover replaces this scene's exit fade
+  const next = film.scenes[index + 1];
+  const handedOver = !!next && transitionDur(film, next, index + 1) > 0;
+  const exit = handedOver || s.exit === undefined ? undefined : s.exit === "cut" ? undefined : s.exit === "fade" ? { type: "fade", dur: 8 } : { type: s.exit.type, dur: s.exit.dur ?? 8 };
   const text = sceneText(s);
   return {
     id: s.id,

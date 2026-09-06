@@ -497,7 +497,7 @@
     },
     {
       "id": "travel",
-      "dur": 120,
+      "dur": 132,
       "ground": "ink",
       "transition": {
         "type": "dissolve",
@@ -516,12 +516,16 @@
               "v": 55
             },
             {
-              "at": 80,
+              "at": 64,
               "v": 0,
               "ease": "inOut"
             },
             {
-              "at": 116,
+              "at": 90,
+              "v": 0
+            },
+            {
+              "at": 106,
               "v": -55,
               "ease": "inOut"
             }

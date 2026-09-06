@@ -549,14 +549,17 @@ export const MgFilmView: React.FC<{ film: MgFilm; format?: string }> = ({ film, 
   const url = fontsUrl(film);
   let at = 0;
   const parts: React.ReactNode[] = [];
-  film.scenes.forEach((s, i) => {
+  film.scenes.forEach((s0, i) => {
     const from = at;
-    at += s.dur;
+    at += s0.dur;
+    // the next scene's handover replaces this scene's exit fade: the content stays until the handover takes it
+    const handedOver = i + 1 < film.scenes.length && handoverDur(film, film.scenes[i + 1], i + 1) > 0;
+    const s = handedOver ? { ...s0, exit: "cut" as const } : s0;
     const dur = handoverDur(film, s, i);
     if (dur > 0) {
       parts.push(
         <Sequence key={`${s.id}-under`} from={from} durationInFrames={dur} name={`${s.id} over ${film.scenes[i - 1].id}`}>
-          <MgSceneUnder film={film} prev={film.scenes[i - 1]} spec={s.transition!} dur={dur} format={fmt} />
+          <MgSceneUnder film={film} prev={{ ...film.scenes[i - 1], exit: "cut" }} spec={s.transition!} dur={dur} format={fmt} />
         </Sequence>,
       );
     }
