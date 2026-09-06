@@ -523,9 +523,10 @@ const cta: MgTemplate = {
       at: at(0.5, 0.34), maxWidth: 0.72, in: { preset: "rise", at: 2, dur: 14, ease: "out", stagger: { by: "word", each: 3 } },
       ...V({ size: 64, maxWidth: 0.86, at: at(0.5, 0.36) }),
     };
-    // the button's plate is decoration: the label sits on it, so only the label is probed
-    const plate: Layer = { id: "plate", type: "shape", shape: "rect", w, h: 108, radius: 54, fill: c.accent, probe: false, at: at(0.5, 0.6), in: { preset: "pop", at: 18, dur: 14, ease: "back" }, ...V({ w: Math.round(w * 0.92), at: at(0.5, 0.55) }) };
-    const label: Layer = { id: "label", type: "text", text: S(p, "label"), size: 40, weight: 600, color: c.light ? "paper" : "ink", align: "center", at: at(0.5, 0.6), maxWidth: 0.4, in: { preset: "pop", at: 20, dur: 12, ease: "back" }, ...V({ size: 36, maxWidth: 0.7, at: at(0.5, 0.55) }) };
+    // the plate is an outline, not a fill: the contrast lint reads a label against the ground it
+    // sits on, never against a sibling behind it, so a filled plate would make every label a finding
+    const plate: Layer = { id: "plate", type: "shape", shape: "rect", w, h: 108, radius: 54, fill: "transparent", stroke: c.accent, thickness: 3, probe: false, at: at(0.5, 0.6), in: { preset: "pop", at: 18, dur: 14, ease: "back" }, ...V({ w: Math.round(w * 0.92), at: at(0.5, 0.55) }) };
+    const label: Layer = { id: "label", type: "text", text: S(p, "label"), size: 40, weight: 600, color: c.accentText, align: "center", at: at(0.5, 0.6), maxWidth: 0.4, in: { preset: "pop", at: 20, dur: 12, ease: "back" }, ...V({ size: 36, maxWidth: 0.7, at: at(0.5, 0.55) }) };
     const url: Layer | null = S(p, "url")
       ? { id: "url", type: "text", text: S(p, "url"), role: "mono", size: 30, weight: 400, color: c.dim, at: at(0.5, 0.76), maxWidth: 0.6, in: { preset: "fade", at: 34, dur: 12, ease: "out" }, ...V({ size: 27, maxWidth: 0.86, at: at(0.5, 0.65) }) }
       : null;
