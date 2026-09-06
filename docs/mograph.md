@@ -27,7 +27,7 @@ mh edit                                              the editor in the browser: 
   (`out: { at: -12 }` starts twelve frames before the end).
 - `maxWidth` of a text is a fraction of the frame width.
 - Colours are design names (`ink`, `paper`, `accent`, `muted`, `white`, `black`, any key of
-  `design.colors`) or a hex.
+  `design.colors`), a hex, or a gradient (see Colour).
 - Per format overrides: `formats: { vertical: { size: 80, at: { y: 0.4 } } }` on any layer.
 - Addresses: `<scene>`, `<scene>.<prop>`, `<scene>.<layer>`, `<scene>.<layer>.<path.to.prop>`,
   `design.<prop>`, `defaults.<prop>`, `easings.<name>`, `audio.<id>.<prop>`.
@@ -64,15 +64,18 @@ mh edit                                              the editor in the browser: 
 | type | fields | notes |
 |---|---|---|
 | `text` | `text`, `role` (display, body, mono), `size`, `weight`, `color`, `accent`, `align`, `lineHeight`, `letterSpacing`, `maxWidth`, `uppercase`, `lines` | `\n` breaks lines; `*word*` renders in the accent colour; `lines` is the expected line count for the wrap lint |
-| `shape` | `shape` (rect, circle, line, ring), `w`, `h`, `d`, `thickness`, `radius`, `fill`, `stroke`, `progress` | a ring draws `progress` of its circle (animate it with a `progress` track); a line grows with the `grow` preset |
+| `shape` | `shape` (rect, circle, line, ring, path, polygon, star, arrow), `w`, `h`, `d`, `thickness`, `radius`, `fill`, `stroke`, `progress`, `viewBox`, `sides`, `inner`, `head`, `draw` | a ring draws `progress` of its circle (animate it with a `progress` track); a line grows with the `grow` preset; a path, an arrow and an outlined polygon or star draw themselves (see Shapes) |
 | `image` | `src` (under public/), `w` or `h`, `fit`, `radius`, `shadow` | svg, png, jpg, webp |
-| `counter` | `from`, `to`, `format` (0, 0,0, 0.0, 0%), `prefix`, `suffix`, `dur`, `size`, `weight`, `color`, `role` | counts over `dur` frames from its in, eased; a `progress` track takes over when given |
+| `counter` | `from`, `to`, `format` (0, 0,0, 0.0, 0%), `prefix`, `suffix`, `dur`, `size`, `weight`, `color`, `role`, `roll`, `pad` | counts over `dur` frames from its in, eased; a `progress` track takes over when given; `roll: true` makes it an odometer, `pad: 4` gives it leading zeros |
 | `bars` | `values` [{label, value, color}], `max`, `direction`, `w`, `h`, `thickness`, `gap`, `color`, `labelSize`, `showValues`, `format` | bars grow one after another (`stagger` by item) |
 | `list` | `items`, `marker` (dot, number, check, dash, none), `size`, `weight`, `color`, `markerColor`, `gap`, `maxWidth`, `align` | items arrive one after another; each item is a probe `<id>-<n>` |
+| `line` | `points` (numbers or {x, y}), `labels`, `w`, `h`, `stroke`, `thickness`, `area`, `areaColor`, `dots`, `smooth`, `min`, `max`, `axis`, `labelSize`, `labelColor` | a line chart drawn left to right by its progress |
+| `rings` | `values` [{label, value, color}], `max`, `d`, `thickness`, `gap`, `trackColor`, `legend`, `showValues`, `format`, `labelSize`, `labelColor` | concentric rings, one per value, one after another (`stagger` by item) |
+| `particles` | `count` (400 at most), `color`, `size`, `speed`, `spread`, `seed`, `shape` (dot, line, confetti), `fade`, `w`, `h` | decoration; every particle is placed by the frame number and the seed, so two renders match. Set `probe: false` |
 
 Common to every layer: `at`, `anchor`, `offset`, `opacity`, `scale`, `rotate`, `in`, `out`,
-`tracks`, `span` ([from, to] frames the layer exists), `probe: false` (decoration, not checked),
-`formats`, `why`.
+`tracks`, `colorTracks`, `effects`, `span` ([from, to] frames the layer exists), `probe: false`
+(decoration, not checked), `formats`, `why`.
 
 ## In and out
 
@@ -90,6 +93,11 @@ Common to every layer: `at`, `anchor`, `offset`, `opacity`, `scale`, `rotate`, `
 | `blur` | opacity and a blur of `distance` (14) px |
 | `typewriter` | characters appear over `dur`, with a cursor (text) |
 | `mask` | slides up out of an invisible slot (text; with `stagger` by line or word) |
+| `flip` | every character turns over on its own axis (text; `stagger` by char) |
+| `track` | the letter spacing tightens from `distance` (30 = 0.3 em) to the layer's own (text) |
+| `scramble` | the line resolves out of noise, left to right, the same letters at the same frame every time (text) |
+| `fall` | the words drop in with a bounce (text; `stagger` by word) |
+| `line-wipe` | one line at a time, revealed by a wipe from `from` (text; `stagger` by line) |
 
 `out: { preset, at, dur, ease }` with `fade`, `sink`, `lift`, `shrink`, `slide`, `wipe`, `blur`, `cut`.
 No `out` means the layer stays until the scene ends (the scene's own `exit` fade covers it).
@@ -103,6 +111,103 @@ Built in: `linear`, `in`, `out`, `inOut`, `expo`, `quart`, `back`, `anticipate`,
 springs `spring`, `soft`, `bouncy`, `snappy`. A film adds its own under `easings` as
 `"cubic-bezier(x1, y1, x2, y2)"`, `"steps(n)"` or `{ "spring": { "damping", "stiffness", "mass" } }`.
 Springs ignore `dur`; the timeline measures how long they take to settle.
+
+## Colour
+
+A colour field (`ground`, `fill`, `color`, `stroke`, `accent`, `markerColor`, `labelColor`,
+`trackColor`, `areaColor`, `axis`) takes a design name, a hex, or a gradient:
+
+```jsonc
+"ground": { "gradient": ["ink", "deep"], "angle": 155 }
+"fill":   { "gradient": ["accent", "rose"], "radial": true, "at": { "x": 0.3, "y": 0.4 } }
+```
+
+`angle` is css degrees (0 points up, 90 to the right), `at` is the centre of a radial gradient as
+fractions of the box. Every stop must be a design colour or a hex; the lint checks each one. A
+gradient stands for its first stop wherever one flat colour is needed (the contrast rule, a scene's
+light or dark mood, an svg that cannot take a css gradient).
+
+Colours animate with their own tracks, in frames local to the scene:
+
+```jsonc
+"colorTracks": { "fill": [{ "at": 40, "v": "accent" }, { "at": 90, "v": "teal", "ease": "inOut" }] }
+"groundTracks": [{ "at": 0, "v": { "gradient": ["plum", "ink"] } }, { "at": 70, "v": { "gradient": ["deep", "ink"] }, "ease": "inOut" }]
+```
+
+Values in between are mixed in OKLab, so gold to teal stays colourful instead of passing through
+grey. Two gradients of the same shape and stop count mix stop by stop; a gradient against a flat
+colour turns the colour into a gradient of the same shape first; two gradients of different shapes
+crossfade, the second over the first. The painted-colour lint would see the mixes as colours the
+design never named, so a layer with a colour track carries `data-lint="color-track"` and the probe
+leaves its colours out of the count. The stops themselves are still checked, statically, by
+`lintFilm`.
+
+`mh set design.colors.rose "#E86F7A"` adds a name; `mh set end.rule.colorTracks.fill '[{"at":0,"v":"accent"},{"at":40,"v":"teal"}]'` writes a track.
+
+## Effects
+
+```jsonc
+"effects": { "shadow": { "y": 24, "blur": 60, "alpha": 0.28 },
+             "glow": { "color": "accent", "blur": 40, "alpha": 0.6 },
+             "stroke": { "color": "ink", "width": 3 },
+             "highlight": { "color": "accent", "in": { "at": 20, "dur": 12 }, "pad": 8, "only": "marks" },
+             "gradientText": ["accent", "rose"], "blend": "multiply", "roundCaps": true }
+```
+
+| effect | what it does |
+|---|---|
+| `shadow` | `x`, `y`, `blur`, `alpha`, `color`: a drop shadow that follows the shape of the layer, not its box |
+| `glow` | `color`, `blur`, `alpha`: a tight core and a wide halo in the same colour |
+| `stroke` | `color`, `width`: an outline around the glyphs of a text, a hugging ring around anything else |
+| `highlight` | a marker rectangle that sweeps behind a text layer's words, or with `"only": "marks"` behind its `*marked*` words only; `in` gives it its own timing (default: just after the layer settles), `pad` and `radius` shape it |
+| `gradientText` | two or more stops painted through the glyphs |
+| `blend` | a css blend mode against what is behind the layer (`screen` lifts particles off a dark ground) |
+| `roundCaps` | `false` squares off the ends of a drawn path, an arrow or a chart line |
+
+The transform order is: place the box, move and scale it, apply the effects, then rotate. A shadow
+therefore keeps falling the same way however far the layer is turned.
+
+A highlight sweeps in the layer's own colour behind the words, so give the marked words a colour
+that reads on the marker (`"accent": "ink"` on a gold marker) instead of leaving them gold on gold.
+
+## Shapes
+
+| shape | fields | notes |
+|---|---|---|
+| `path` | `d` (the path data), `viewBox` [w, h], `w`, `h`, `thickness`, `stroke`, `draw` | drawn by its progress through a normalised dash; `draw: false` fills it instead |
+| `polygon` | `d` (diameter), `sides`, `fill`, `stroke`, `draw` | a regular polygon, first point at the top |
+| `star` | `d` (diameter), `sides` (spikes), `inner` (0.44), `fill` | |
+| `arrow` | `w`, `head`, `thickness`, `fill` | a shaft and a chevron, drawn like a path |
+
+A drawn shape follows its own `progress` (or a `progress` track) when it has one, and otherwise the
+progress of its `in`: `{ "preset": "fade", "at": 6, "dur": 26 }` writes the path over 26 frames.
+
+## Charts
+
+```jsonc
+{ "id": "week", "type": "line", "points": [12, 18, 15, 26, 34, 48, 62], "labels": ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
+  "w": 900, "h": 330, "stroke": { "gradient": ["teal", "accent"], "angle": 90 }, "area": true, "dots": true, "axis": "muted",
+  "at": { "x": 0.5, "y": 0.55 }, "in": { "preset": "fade", "at": 10, "dur": 46 } }
+
+{ "id": "dials", "type": "rings", "values": [{ "label": "colour", "value": 82, "color": "accent" }], "max": 100,
+  "d": 330, "thickness": 30, "gap": 12, "in": { "at": 14, "dur": 22, "stagger": { "by": "item", "each": 6 } } }
+```
+
+The line is drawn left to right by the layer's progress, the area and the dots follow it. Rings are
+concentric, the first value outermost, each ring drawn clockwise from the top with a faint track
+behind it and a legend beside it (`"legend": false` drops the legend).
+
+## Particles
+
+```jsonc
+{ "id": "dust", "type": "particles", "probe": false, "count": 70, "color": "accent", "size": 7,
+  "speed": 0.9, "spread": 40, "seed": 7, "shape": "dot", "effects": { "blend": "screen" } }
+```
+
+Dots and lines drift up, confetti falls and turns. Every particle is placed from the seed and the
+frame number alone, so the same frame always draws the same field and two renders match. 400 is the
+cap the lint enforces; `probe: false` keeps the field out of the layout rules it would otherwise
+cover.
 
 ## Tracks
 
@@ -172,11 +277,13 @@ anything else reads the film, so what lands on disk is layers either way.
 
 ## What the harness checks
 
-- After every edit: `lintFilm` (unknown colour, easing or preset; an in past the scene; an out
-  before the in has finished; a stagger that runs past the scene; text that does not hold long
-  enough to read; a missing image; ids).
+- After every edit: `lintFilm` (unknown colour, easing, preset, shape or effect; a gradient stop or
+  a colour keyframe that is not a colour; an in past the scene; an out before the in has finished; a
+  stagger that runs past the scene, or a preset that needs one and has none; text that does not hold
+  long enough to read; a missing image; more particles than a frame may cost; ids).
 - `mh check --format all`: the frames at every layer's in, settled and out, sheets per scene, the
-  DOM probe (overflow, wrap, collision, contrast, safe zone, painted colours vs the design's).
+  DOM probe (overflow, wrap, collision, contrast, safe zone, painted colours vs the design's; a
+  layer whose colour is mid-track is left out of that last count, its stops are checked instead).
 - `mh motion --scene hook`: when the scene settles and how long it holds, as numbers.
 - `mh review`: the player; comments come back as `scene+frame`.
 

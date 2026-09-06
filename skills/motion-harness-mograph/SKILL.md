@@ -44,6 +44,23 @@ to read; a missing image) and names the frame to look at. Look at it. Then `mh c
 --format all` for the rendered lints (overflow, wrap, collision, contrast, safe zone, painted
 colours) and the sheets.
 
+## Colour, effects and the drawn kinds
+
+| want | write |
+|---|---|
+| a gradient anywhere a colour goes | `mh set hook.ground '{"gradient":["ink","deep"],"angle":155}'` (radial: `{"gradient":[...],"radial":true,"at":{"x":0.3,"y":0.4}}`) |
+| a colour that changes | `mh set end.rule.colorTracks.fill '[{"at":40,"v":"accent"},{"at":90,"v":"teal","ease":"inOut"}]'`, the ground with `groundTracks` (mixed in OKLab) |
+| a shadow, a glow, an outline | `mh set count.big.effects '{"shadow":{"y":26,"blur":60,"alpha":0.4}}'`, `{"glow":{"color":"accent","blur":30}}`, `{"stroke":{"color":"ink","width":3}}` |
+| a marker behind the words | `mh set sweep.head.effects.highlight '{"color":"accent","only":"marks","pad":12,"in":{"at":26,"dur":16}}'` (give the marked words a colour that reads on the marker) |
+| gradient text, a blend mode | `mh set chart.head.effects.gradientText '["accent","rose"]'`, `mh set hook.dust.effects.blend screen` |
+| text that flips, tracks, scrambles, falls, wipes line by line | `mh set hook.title.in '{"preset":"flip","at":4,"dur":12,"stagger":{"by":"char","each":2}}'`, also `track`, `scramble`, `fall` (by word), `line-wipe` (by line) |
+| a shape that draws itself | `{"type":"shape","shape":"path","d":"M8 54 L44 90 L112 12","viewBox":[120,100],"w":240,"thickness":10,"stroke":"accent"}`, plus `polygon` (sides), `star`, `arrow` |
+| an odometer | `mh set count.big.roll true`, `mh set count.big.pad 4` |
+| charts | `{"type":"line","points":[12,18,26,48],"labels":["Mo","Tu","We","Th"],"area":true,"dots":true}`, `{"type":"rings","values":[{"label":"colour","value":82,"color":"accent"}],"max":100}` |
+| particles | `{"type":"particles","probe":false,"count":70,"color":"accent","shape":"dot","speed":0.9,"seed":7}` (dot, line, confetti; 400 at most, deterministic) |
+
+`examples/mograph-effects` is 24 seconds that show every one of these.
+
 ## Rules of thumb the lint does not enforce
 
 - One idea per scene, two or three layers, four at most. Alternate grounds.
