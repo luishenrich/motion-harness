@@ -119,7 +119,7 @@ written by hand. The scene keeps `template` and the parameters it was given, so
 `mh template apply stat --param label="ms a frame"` builds it again from the same values.
 
 ```
-mh template list                                  every template with its parameters and their defaults
+mh template list                                  every template and the parameters it takes
 mh template show stat --param value=40            what it writes, as the scene JSON
 mh template add stat --param value=40 --after hook
 mh template apply stat --param label="ms a frame"
