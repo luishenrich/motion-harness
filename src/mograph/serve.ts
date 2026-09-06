@@ -503,7 +503,7 @@ function ctlColor(value,label,onSet){const box=document.createElement("div");box
   tokens().forEach(t=>{const b=document.createElement("button");b.type="button";b.className="sw"+(value===t?" on":"");b.style.background=hexOf(t);b.title=t;b.setAttribute("aria-label",label+": "+t);b.onclick=()=>onSet(t);box.appendChild(b)});
   const hex=ctl("text",isGrad?"":value,label+" as a colour name or hex",v=>onSet(v));hex.setAttribute("list","mh-tokens");hex.placeholder="token or #hex";box.appendChild(hex);
   const g=document.createElement("button");g.type="button";g.textContent=isGrad?"plain":"gradient";g.setAttribute("aria-label",isGrad?label+": back to one colour":label+": make it a gradient");
-  g.onclick=()=>onSet(isGrad?value.gradient[0]:{gradient:[typeof value==="string"&&value?value:"accent","ink"],angle:160});box.appendChild(g);
+  g.onclick=()=>{const a=typeof value==="string"&&value?value:"accent";onSet(isGrad?value.gradient[0]:{gradient:[a,a==="ink"?"accent":"ink"],angle:160})};box.appendChild(g);
   if(isGrad){const gr=document.createElement("div");gr.className="grad";
     const put=(t,node)=>{const l=document.createElement("label");l.textContent=t;gr.append(l,node)};
     put("stop 1",ctl("text",value.gradient[0],label+" gradient stop 1",v=>onSet(Object.assign({},value,{gradient:[v||"accent",value.gradient[1]]}))));
