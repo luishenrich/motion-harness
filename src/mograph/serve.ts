@@ -136,6 +136,7 @@ const readBody = (req: IncomingMessage): Promise<string> =>
 const json = (res: ServerResponse, code: number, body: unknown) => {
   res.statusCode = code;
   res.setHeader("Content-Type", "application/json");
+  res.setHeader("Cache-Control", "no-store");
   res.end(JSON.stringify(body));
 };
 
@@ -158,6 +159,8 @@ export const editMiddleware = (cfg: LoadedConfig, filmName: string, filmPath: st
     const url = (req.url ?? "").split("?")[0];
     if (url === "/__mh/edit" || url === "/__mh/edit/") {
       res.setHeader("Content-Type", "text/html");
+      // the page is generated: a browser must never keep yesterday's editor
+      res.setHeader("Cache-Control", "no-store");
       res.end(editorPage({ title: `${film.title} (${filmName})` }));
       return;
     }
@@ -200,7 +203,7 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
   .pane[hidden]{display:none}
   .pane.act{outline:2px solid var(--acc)}
   .pane .tag{position:absolute;left:6px;top:6px;z-index:2;background:rgba(0,0,0,.55);color:#fff;font-size:11px;padding:1px 6px;border-radius:4px}
-  @media (max-width:900px){main{grid-template-columns:1fr;overflow:auto}aside{border-left:0;border-top:1px solid var(--line)}}
+  @media (max-width:900px){main{display:block;overflow:auto}aside{border-left:0;border-top:1px solid var(--line);overflow:visible}.stage{overflow:visible}.view{flex:0 0 auto;height:34vh}}
   .pane iframe{position:absolute;left:0;top:0;border:0;transform-origin:0 0;background:#000}
   .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .bar button,.bar select,.bar input,aside button,aside select,aside input,aside textarea{font:inherit}
