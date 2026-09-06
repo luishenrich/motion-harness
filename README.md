@@ -41,9 +41,10 @@ motion-harness sits next to a Remotion project and gives the agent:
 - **an agent skill** (`skill/SKILL.md`) that teaches the loop
 
 - **a native engine**: Vite serves the film through a shim of the Remotion API, Playwright drives
-  Chrome one frame at a time, frames stream into ffmpeg. No Remotion install, no company license,
-  no version pin. A frame in about 40 ms, a 60 second film in about a minute, the same pixels
-  as Remotion (the film's `interpolate`, `spring`, `Easing` and `random` are ports, pinned by tests
+  Chrome one frame at a time over the devtools protocol, frames stream into ffmpeg. No Remotion
+  install, no company license, no version pin. One still in 60 ms instead of 570, a 59 second
+  film in 35 s instead of 51 (measured, `docs/benchmark-2026-09-06.md`), the same pixels as
+  Remotion (the film's `interpolate`, `spring`, `Easing` and `random` are ports, pinned by tests
   against the real package). `--engine remotion` keeps the project's Remotion when you want it
 - **stills, subtitles, voice, loudness, deliveries**: every `<Still>` linted like a frame, an SRT
   and burned captions from the timeline, voice lines synthesised and measured, loudness per
@@ -109,6 +110,20 @@ mh srt --out film-en.srt                    # subtitles from the timeline (scene
 mh render --format all --out-dir out/       # both formats, one command; size and bitrate per segment and film
 mh deliver --out docs/.../deliverables --stills all
                                             # films, stills, srt, manifest (sizes, sha1, chapters), .gitignore for the mp4
+```
+
+From nothing to a checkable project, and out of the harness into an editor:
+
+```bash
+mh new my-film --brief "30 seconds: ..." --formats wide,vertical
+                                            # a model writes the script (Azure, OpenRouter or OpenAI keys from the env),
+                                            # the scaffold writes timeline, components, Root, config, installs react; mh check runs on it
+mh image "a wooden desk from above, warm light" --width 1920 --height 1080
+                                            # a plate from the image provider (Azure Foundry MAI or FLUX, OpenAI), fitted, registered
+mh otio --out film.otio                     # the cut for Resolve, Premiere, Final Cut: a clip per scene on the rendered segments
+mh clips add clip.mp4 --model kling --attempts 3 --credits 105 --license "Kling commercial"
+                                            # generated clips with cost and rights; lint clip-colour-drift between consecutive clips
+mh judge --scene probe                      # Gemini watches the clip and returns findings with film times (leads, not verdicts)
 ```
 
 `mh lint --rendered` refuses a frames run rendered from an older bundle than the sources on
@@ -194,8 +209,11 @@ skill/SKILL.md  the agent skill
 |---|---|---|
 | bundling | Vite dev server, one module transform per edit | webpack bundle, cached by source hash |
 | browser | Playwright over the Remotion headless shell or any Chrome | @remotion/renderer's Chrome |
-| a still | about 40 ms after the page is up | 150 to 700 ms |
-| a 60 s film, 1760 frames | about 60 s | several minutes |
+| one still, warm | 0.06 s | 0.57 s |
+| 70 check frames with the probe | 4.3 s | 6.4 s |
+| one 144 f segment, full quality, 4 pages | 2.1 s (70 f/s) | 3.5 s (41 f/s) |
+| the 59 s film, 1760 frames, forced, one format | 35 s | 51 s |
+| draft segment (half size, jpeg) | 3.3 s | 1.9 s (hardware encoder) |
 | composition sound (`<Audio>`) | not rendered; sound is timeline cues (`part.audio: false`) | rendered |
 | license | MIT | Remotion's, company license above three people |
 | pixels | identical on static frames; moving text edges differ under 0.1 % of pixels | reference |

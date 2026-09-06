@@ -20,6 +20,8 @@ export type ProbeItem = {
   opacity: number;
   color: string;
   bg: string;
+  /** the first opaque background up the tree, the ground the element is read against */
+  effBg?: string;
   fontSize: string;
   fontWeight: string;
   fontFamily: string;

@@ -239,12 +239,20 @@ const SeekedVideo = forwardRef<HTMLVideoElement, VideoProps>(({ startFrom = 0, e
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const inner = useRef<HTMLVideoElement | null>(null);
+  const [missing, setMissing] = useState(false);
   const t = Math.max(0, (startFrom + frame * playbackRate) / fps);
   useLayoutEffect(() => {
     const el = inner.current;
-    if (!el || !src) return;
+    if (!el || !src || missing) return;
     let dead = false;
     const h = delayRender(`video ${src} @${t.toFixed(3)}`);
+    // a clip that is not there yet (an animatic before the generation is paid for) is a labelled box, not a hang
+    const onError = () => {
+      if (dead) return;
+      setMissing(true);
+      continueRender(h);
+    };
+    el.addEventListener("error", onError, { once: true });
     const seek = () => {
       if (dead) return;
       const target = loop && el.duration ? t % el.duration : Math.min(t, Number.isFinite(el.duration) ? Math.max(0, el.duration - 1 / 1000) : t);
@@ -262,9 +270,22 @@ const SeekedVideo = forwardRef<HTMLVideoElement, VideoProps>(({ startFrom = 0, e
     return () => {
       dead = true;
       el.removeEventListener("loadedmetadata", seek);
+      el.removeEventListener("error", onError);
       continueRender(h);
     };
-  }, [src, t, fps, loop]);
+  }, [src, t, fps, loop, missing]);
+  if (missing) {
+    const label = (src ?? "").split("/").pop() ?? "clip";
+    return (
+      <div data-probe={`animatic:${label}`} data-lint="no-collision" style={{ ...style, background: "repeating-linear-gradient(135deg, #2a2723 0 24px, #1c1a17 24px 48px)", display: "flex", alignItems: "center", justifyContent: "center", color: "#F7F4E3", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 28, textAlign: "center" }} {...(rest as React.HTMLAttributes<HTMLDivElement>)}>
+        <div>
+          <div style={{ opacity: 0.7, fontSize: 18, letterSpacing: 2 }}>ANIMATIC</div>
+          <div>{label}</div>
+          <div style={{ opacity: 0.7, fontSize: 18 }}>{t.toFixed(2)}s</div>
+        </div>
+      </div>
+    );
+  }
   return <video ref={(el) => { inner.current = el; if (typeof ref === "function") ref(el); else if (ref) (ref as React.MutableRefObject<HTMLVideoElement | null>).current = el; }} src={src} muted playsInline preload="auto" style={style} {...rest} />;
 });
 SeekedVideo.displayName = "Video";
@@ -548,4 +569,3 @@ export const __mh = {
 
 // keep React referenced for classic-runtime consumers
 void React;
-void useState;

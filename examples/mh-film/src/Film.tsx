@@ -33,7 +33,7 @@ const Title: React.FC<{ story: boolean }> = ({ story }) => {
   const chars = Math.floor(interpolate(f, [6, 40], [0, 14], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
   return (
     <Ground dark>
-      <AbsoluteFill style={{ justifyContent: "center", alignItems: "center", padding: story ? "0 80px" : "0 200px" }}>
+      <AbsoluteFill style={{ justifyContent: "center", alignItems: "center", padding: story ? "0 80px" : "0 200px", boxSizing: "border-box" }}>
         <div data-probe="wordmark" style={{ fontFamily: MONO, fontSize: story ? 64 : 84, letterSpacing: -2, color: CREAM }}>
           {"motion-harness".slice(0, chars)}
           <span style={{ color: GOLD, opacity: f % 20 < 10 ? 1 : 0 }}>_</span>
@@ -174,7 +174,7 @@ const End: React.FC<{ story: boolean }> = ({ story }) => {
         <div data-probe="cmd" style={{ ...rise(f, 4), fontFamily: MONO, fontSize: story ? 56 : 72, color: CREAM }}>
           <span style={{ color: GOLD }}>$ </span>npx motion-harness
         </div>
-        <div style={{ ...rise(f, url), marginTop: 30, fontSize: story ? 30 : 32, color: MUTED }}>github.com/luishenrich/motion-harness · MIT · skills for Claude Code, Codex, Cursor</div>
+        <div data-lines={story ? 2 : 1} style={{ ...rise(f, url), marginTop: 30, fontSize: story ? 30 : 32, lineHeight: 1.4, color: MUTED, textAlign: "center", maxWidth: story ? 860 : 1500, padding: "0 40px" }}>github.com/luishenrich/motion-harness · MIT · skills for Claude Code, Codex, Cursor</div>
       </AbsoluteFill>
     </Ground>
   );

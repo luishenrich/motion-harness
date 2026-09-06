@@ -152,6 +152,59 @@ export const lintOverflow = (label: string, probe: ProbeResult): Finding[] => {
   return out;
 };
 
+/* WCAG relative luminance and contrast ratio, from the probe's computed colours */
+const channel = (v: number) => {
+  const c = v / 255;
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+};
+const luminance = (hex: string) => {
+  const [r, g, b] = hexToRgb(hex);
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+};
+export const contrastRatio = (a: string, b: string) => {
+  const la = luminance(a), lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+};
+
+/**
+ * Text against the ground it sits on: the element's own background, else the nearest
+ * ancestor item with an opaque background, else the frame's dominant background colour.
+ * Large text (>= 24 px, or >= 19 px bold) needs 3:1, the rest 4.5:1 (WCAG AA).
+ */
+export const lintContrast = (label: string, probe: ProbeResult): Finding[] => {
+  const out: Finding[] = [];
+  const items = probe.items as LayoutItem[];
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const bgOf = (it: LayoutItem): string | null => {
+    const eff = it.effBg ? parseCssColor(it.effBg) : null;
+    if (eff && eff.alpha >= 0.9) return eff.hex;
+    const own = parseCssColor(it.bg);
+    if (own && own.alpha >= 0.9) return own.hex;
+    for (const aid of it.ancestors ?? []) {
+      const a = byId.get(aid);
+      const c = a ? parseCssColor(a.bg) : null;
+      if (c && c.alpha >= 0.9) return c.hex;
+    }
+    const dominant = probe.colors.filter((c) => c.prop === "bg").sort((p, q) => q.count - p.count)[0];
+    const d = dominant ? parseCssColor(dominant.value) : null;
+    return d && d.alpha >= 0.9 ? d.hex : null;
+  };
+  for (const it of items) {
+    if (!it.visible || !isText(it) || it.opacity < 0.9) continue;
+    const fg = parseCssColor(it.color);
+    if (!fg || fg.alpha < 0.9) continue;
+    const bg = bgOf(it);
+    if (!bg) continue;
+    const ratio = contrastRatio(fg.hex, bg);
+    const size = parseFloat(it.fontSize) || 16;
+    const bold = parseInt(it.fontWeight, 10) >= 700;
+    const large = size >= 24 || (bold && size >= 19);
+    const need = large ? 3 : 4.5;
+    if (ratio < need) out.push({ level: ratio < need * 0.7 ? "error" : "warn", rule: "contrast", where: `${label} ${it.key}`, message: `${fg.hex} on ${bg} is ${ratio.toFixed(2)}:1, ${large ? "large" : "body"} text needs ${need}:1 (${Math.round(size)}px${bold ? " bold" : ""})` });
+  }
+  return out;
+};
+
 export const lintWrap = (label: string, probe: ProbeResult): Finding[] => {
   const out: Finding[] = [];
   for (const it of probe.items as LayoutItem[]) {
@@ -269,6 +322,13 @@ export const lintProbe = (cfg: LoadedConfig, c: Compiled, format: string, frames
     const local = f.local ?? (Number(f.label.split("+")[1]) || 0);
     out.push(...lintOverflow(f.label, f.probe));
     if (local >= overlap) out.push(...lintCollision(f.label, f.probe));
+    // one contrast finding per scene and element: a colour does not change between check frames
+    for (const w of lintContrast(f.label, f.probe)) {
+      const k = `contrast ${f.sceneId} ${w.where.slice(f.label.length + 1)}`;
+      if (wrapped.has(k)) continue;
+      wrapped.add(k);
+      out.push(w);
+    }
     // a wrapped line stays wrapped for the whole scene, one finding per scene and element is enough
     for (const w of lintWrap(f.label, f.probe)) {
       const k = `${f.sceneId} ${w.where.slice(f.label.length + 1)}`;

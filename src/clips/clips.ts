@@ -34,6 +34,8 @@ export type Clip = {
   colour: { first: ClipColour; mid: ClipColour; last: ClipColour };
   addedAt: string;
   tags?: string[];
+  /** terms the generating service grants ("Kling commercial plan", "Runway Standard"), printed in the delivery manifest */
+  license?: string;
 };
 
 export const clipsPath = (cfg: LoadedConfig) => join(cfg.projectDir, "clips.json");
@@ -72,7 +74,7 @@ export const probeClip = async (file: string, workDir: string): Promise<Pick<Cli
   return { width: st.width, height: st.height, fps: Math.round((num / (den || 1)) * 100) / 100, seconds, bytes: parseInt(j.format.size, 10), colour: { first: await at(0.05, "first"), mid: await at(Math.max(0.05, seconds / 2), "mid"), last: await at(Math.max(0.05, seconds - 0.1), "last") } };
 };
 
-export const addClip = async (cfg: LoadedConfig, file: string, meta: Partial<Pick<Clip, "id" | "prompt" | "model" | "seed" | "credits" | "cost" | "currency" | "attempts" | "tags">>, workDir: string): Promise<Clip> => {
+export const addClip = async (cfg: LoadedConfig, file: string, meta: Partial<Pick<Clip, "id" | "prompt" | "model" | "seed" | "credits" | "cost" | "currency" | "attempts" | "tags" | "license">>, workDir: string): Promise<Clip> => {
   const abs = resolve(cfg.projectDir, file);
   if (!existsSync(abs)) throw new Error(`no such clip: ${abs}`);
   const rel = relative(cfg.projectDir, abs);

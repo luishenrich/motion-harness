@@ -9,7 +9,7 @@ import sharp from "sharp";
 import type { LoadedConfig } from "../config.ts";
 import type { ProbeResult } from "../render/frames.ts";
 import type { Engine } from "../render/engine.ts";
-import { lintOverflow, lintWrap, lintCollision, type Finding } from "../lint/lint.ts";
+import { lintOverflow, lintWrap, lintCollision, lintContrast, type Finding } from "../lint/lint.ts";
 import { makeSheet, type SheetCell } from "../sheet/sheet.ts";
 import { ensureDir, writeJson } from "../util.ts";
 
@@ -34,7 +34,7 @@ export type StillOut = { id: string; width: number; height: number; png: string;
 /** lint a still's probe the way a check frame is linted, minus the rules that need a timeline (safe zone, probes, same-top) */
 export const lintStill = (id: string, probe: ProbeResult | undefined): Finding[] => {
   if (!probe || probe.error) return [{ level: "warn", rule: "probe-missing", where: id, message: probe?.error ?? "no probe result" }];
-  return [...lintOverflow(id, probe), ...lintCollision(id, probe), ...lintWrap(id, probe)];
+  return [...lintOverflow(id, probe), ...lintCollision(id, probe), ...lintWrap(id, probe), ...lintContrast(id, probe)];
 };
 
 export const renderStills = async (

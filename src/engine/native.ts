@@ -6,7 +6,7 @@
  */
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { chromium, type Browser, type BrowserContext, type CDPSession, type Page } from "playwright-core";
 import sharp from "sharp";
 import type { LoadedConfig } from "../config.ts";
 import type { FrameJob, FrameOut, ProbeResult } from "../render/frames.ts";
@@ -52,7 +52,7 @@ export const findChrome = (cfg: LoadedConfig): { executablePath?: string; channe
   return { channel: "chrome" };
 };
 
-type Slot = { page: Page; context: BrowserContext; comp: string; scale: number; busy: boolean };
+type Slot = { page: Page; context: BrowserContext; cdp: CDPSession; comp: string; scale: number; busy: boolean };
 
 class NativeEngine implements Engine {
   readonly kind = "native" as const;
@@ -82,7 +82,10 @@ class NativeEngine implements Engine {
     await page.addScriptTag({ content: `${PROBE_MEASURE_SOURCE}\nwindow.__mh.measure = __measure;` });
     await page.evaluate(([id, props]) => window.__mh.select(id as string, props as Record<string, unknown>), [comp, inputProps] as const);
     if (errors.length) this.log(`warning: ${comp}: ${errors.length} page error${errors.length === 1 ? "" : "s"}, first: ${errors[0].slice(0, 200)}`);
-    return { page, context, comp, scale, busy: false };
+    // screenshots go straight over the devtools protocol: Playwright's screenshot pipeline waits and re-checks per call
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Page.enable");
+    return { page, context, cdp, comp, scale, busy: false };
   }
 
   /** up to `n` pages on one composition, reused across calls */
@@ -131,7 +134,8 @@ class NativeEngine implements Engine {
 
   private async shot(slot: Slot, frame: number, settleMs: number, jpeg: boolean, quality = 90): Promise<{ buf: Buffer; audioTags: number; ms: number }> {
     const r = (await slot.page.evaluate(([n, s]) => window.__mh.frame(n as number, s as number), [frame, settleMs] as const)) as { frame: number; audioTags: number; ms: number };
-    const buf = await slot.page.screenshot({ type: jpeg ? "jpeg" : "png", ...(jpeg ? { quality } : {}), animations: "disabled", caret: "hide", fullPage: false });
+    const shot = await slot.cdp.send("Page.captureScreenshot", { format: jpeg ? "jpeg" : "png", ...(jpeg ? { quality } : {}), fromSurface: true, captureBeyondViewport: false, optimizeForSpeed: true });
+    const buf = Buffer.from(shot.data, "base64");
     if (r.audioTags > 0 && !this.warnedAudio.has(slot.comp)) {
       this.warnedAudio.add(slot.comp);
       this.log(`warning: ${slot.comp} mounts ${r.audioTags} <Audio> tag${r.audioTags === 1 ? "" : "s"}; the native engine renders no composition sound, declare it as timeline cues (part.audio: false)`);

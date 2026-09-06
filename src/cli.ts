@@ -6,7 +6,7 @@
  *   mh frames | sheet | probe | lint | diff | motion | audio
  *   mh render | review | feedback
  */
-import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, rmSync, cpSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, rmSync, cpSync, realpathSync } from "node:fs";
 import { join, resolve as resolvePath, basename, dirname } from "node:path";
 import { loadConfig, pickFilm, pickFormat, resolveProjectDir, type LoadedConfig } from "./config.ts";
 import { compile, compositionFor, fmtTime, type Compiled, type CompiledScene } from "./timeline/schema.ts";
@@ -35,6 +35,12 @@ import { runVoice } from "./voice/voice.ts";
 import { addClip, loadClips, lintClips, clipCost } from "./clips/clips.ts";
 import { judgeClip, judgePrompt, DEFAULT_CHECKLIST } from "./judge/judge.ts";
 import { measureReference, compareCurves } from "./motion/metrics.ts";
+import { writeScript, parseScriptMarkdown, scriptMarkdown, scaffoldFiles, writeScaffold } from "./script/script.ts";
+import { makeImage, loadImages } from "./image/image.ts";
+import { otioDocument } from "./otio/otio.ts";
+import { segmentKey } from "./film/film.ts";
+import { partHash } from "./render/deps.ts";
+import { relative } from "node:path";
 import { decodeMono, onsetStrength, pickOnsets, beatGrid, nearest } from "./audio/beats.ts";
 import { spanOf, cuePlacement } from "./audio/coverage.ts";
 import { analyzeFile, looksLikeHit, hitWarnings, type SfxAnalysis } from "./audio/sfx.ts";
@@ -270,11 +276,17 @@ const doctorRun = async (x: Ctx, args: Args): Promise<string[]> => {
   const fp = await run(["ffprobe", "-version"], { quiet: true });
   if (fp.code !== 0) bad("ffprobe: MISSING");
 
-  const pkgs = ["remotion", "@remotion/bundler", "@remotion/renderer"].map((p) => ({ p, found: findPackage(x.cfg.projectDir, p) }));
-  const versions = new Set(pkgs.map((k) => k.found?.version ?? "missing"));
-  const line = pkgs.map((k) => `${k.p}@${k.found?.version ?? "MISSING"}`).join(", ");
-  if (versions.size === 1 && !versions.has("missing")) log(`remotion: ${line} (from ${pkgs[0].found!.dir.replace(/\/node_modules\/.*$/, "/node_modules")})`);
-  else bad(`remotion: VERSION MISMATCH ${line}. Remotion needs the three at one version, pin them together.`);
+  if (engineOf(x) === "native") {
+    const react = findPackage(x.cfg.projectDir, "react");
+    log(`engine: native (vite + playwright); react ${react ? `${react.version} from ${react.dir.replace(/\/node_modules\/.*$/, "/node_modules")}` : "NOT FOUND from the project (bun add react react-dom)"}; remotion not required`);
+    if (!react) bad("react: not resolvable from the project");
+  } else {
+    const pkgs = ["remotion", "@remotion/bundler", "@remotion/renderer"].map((p) => ({ p, found: findPackage(x.cfg.projectDir, p) }));
+    const versions = new Set(pkgs.map((k) => k.found?.version ?? "missing"));
+    const line = pkgs.map((k) => `${k.p}@${k.found?.version ?? "MISSING"}`).join(", ");
+    if (versions.size === 1 && !versions.has("missing")) log(`remotion: ${line} (from ${pkgs[0].found!.dir.replace(/\/node_modules\/.*$/, "/node_modules")})`);
+    else bad(`remotion: VERSION MISMATCH ${line}. Remotion needs the three at one version, pin them together (or engine: "native").`);
+  }
 
   log(`project: ${x.cfg.projectDir}`);
   log(`root: ${x.cfg.rootPath} (${x.cfg.rootExport ?? "Root"})`);
@@ -701,7 +713,7 @@ const cmdDeliver = async (args: Args) => {
   const uploadPrefix = str(args, "upload");
   const upload = uploadPrefix ? uploadTargetFromEnv(uploadPrefix) : undefined;
   if (upload) log(`upload -> ${upload.endpoint} ${upload.bucket}/${upload.prefix}${upload.publicUrl ? ` (public ${upload.publicUrl})` : " (set MH_S3_PUBLIC_URL for public links)"}`);
-  const d = await deliver({ film: first.filmName, c: first.c, films, stills, lang: str(args, "lang", "en"), platforms, captions, upload }, resolvePath(dir!), { log });
+  const d = await deliver({ film: first.filmName, c: first.c, films, stills, lang: str(args, "lang", "en"), platforms, captions, upload, clips: loadClips(first.cfg) }, resolvePath(dir!), { log });
   for (const f of d.files) produced(f.file);
   produced(d.manifest);
   const delivered = d.files.filter((f) => f.kind === "film").length;
@@ -743,7 +755,7 @@ const cmdClips = async (args: Args) => {
   if (sub === "add") {
     const file = args._[1];
     if (!file) die("usage: mh clips add <file> [--id x] [--prompt ...] [--model ...] [--seed ...] [--credits N] [--cost N --currency USD] [--attempts N] [--tags a,b]");
-    const clip = await addClip(x.cfg, resolvePath(file), { id: str(args, "id"), prompt: str(args, "prompt"), model: str(args, "model"), seed: str(args, "seed"), credits: str(args, "credits") ? num(args, "credits", 0) : undefined, cost: str(args, "cost") ? num(args, "cost", 0) : undefined, currency: str(args, "currency"), attempts: str(args, "attempts") ? num(args, "attempts", 1) : undefined, tags: list(args, "tags") }, join(x.cfg.cachePath, "clips"));
+    const clip = await addClip(x.cfg, resolvePath(file), { id: str(args, "id"), prompt: str(args, "prompt"), model: str(args, "model"), seed: str(args, "seed"), credits: str(args, "credits") ? num(args, "credits", 0) : undefined, cost: str(args, "cost") ? num(args, "cost", 0) : undefined, currency: str(args, "currency"), attempts: str(args, "attempts") ? num(args, "attempts", 1) : undefined, tags: list(args, "tags"), license: str(args, "license") }, join(x.cfg.cachePath, "clips"));
     log(`added ${clip.id}: ${clip.width}x${clip.height} ${clip.fps} fps ${clip.seconds.toFixed(2)}s, luma first ${clip.colour.first.luma} mid ${clip.colour.mid.luma} last ${clip.colour.last.luma}`);
     return;
   }
@@ -898,24 +910,44 @@ const out2 = out;
 const cmdBench = async (args: Args) => {
   const x = await ctx(args);
   const ids = list(args, "scene") ?? [];
-  if (!ids.length) return die("usage: mh bench --scene <id> [--concurrencies 4,6,8,10]");
+  if (!ids.length) return die("usage: mh bench --scene <id> [--engines remotion,native] [--concurrencies 4,8]");
   const s = x.c.scenes.find((k) => k.id === ids[0]);
   if (!s) return die(`no scene "${ids[0]}"`);
   const dur = s.dur;
-  const concs = (str(args, "concurrencies") ?? "4,6,8,10").split(",").map(Number);
+  const concs = (str(args, "concurrencies") ?? "4,8").split(",").map(Number);
+  const engines = (list(args, "engines") ?? [engineOf(x)]) as ("remotion" | "native")[];
   const rows: (string | number)[][] = [];
-  await withEngine(x, async (e) => {
+  const part = x.c.parts.find((p) => p.id === s.part)!;
+  const compId = compositionFor(part, x.format);
+  const checks = checkFramesFor(s);
+  for (const kind of engines) {
+    const t0 = performance.now();
+    const e = await openEngine(x.cfg, { kind, log, force: kind === "remotion" && flag(args, "rebundle") });
+    const up = (performance.now() - t0) / 1000;
+    rows.push([kind, "engine up", "", `${up.toFixed(1)}s`, ""]);
+    const dir = ensureDir(join(x.cfg.cachePath, "bench", kind));
+    // one still, warm (the page or the tab exists): what mh frame costs
+    await e.stills(compId, [{ frame: s.start, file: join(dir, "warm.png") }], { concurrency: 1 });
+    const t1 = performance.now();
+    await e.stills(compId, [{ frame: s.start + 1, file: join(dir, "one.png") }], { concurrency: 1 });
+    rows.push([kind, "one still", "1f", `${((performance.now() - t1) / 1000).toFixed(2)}s`, ""]);
+    const t2 = performance.now();
+    await e.stills(compId, checks.map((cf, i) => ({ frame: cf.partFrame, file: join(dir, `check-${i}.png`) })), { concurrency: 4, probe: "text" });
+    const sec2 = (performance.now() - t2) / 1000;
+    rows.push([kind, "check frames + probe", `${checks.length}f`, `${sec2.toFixed(1)}s`, `${(checks.length / sec2).toFixed(1)} f/s`]);
     for (const q of [FULL, DRAFT]) {
       for (const conc of concs) {
-        const t0 = performance.now();
+        const t3 = performance.now();
         await renderSegments(x.cfg, e, x.c, x.filmName, x.format, { subset: [s.id], only: [s.id], quality: q, concurrency: conc, force: true });
-        const sec = (performance.now() - t0) / 1000;
-        rows.push([q === FULL ? "full" : "draft", conc, `${sec.toFixed(1)}s`, `${(dur / sec).toFixed(1)} f/s`]);
-        log(`${q === FULL ? "full " : "draft"} concurrency ${conc}: ${sec.toFixed(1)}s for ${dur}f`);
+        const sec = (performance.now() - t3) / 1000;
+        rows.push([kind, `${q === FULL ? "segment full" : "segment draft"} x${conc}`, `${dur}f`, `${sec.toFixed(1)}s`, `${(dur / sec).toFixed(1)} f/s`]);
+        log(`${kind} ${q === FULL ? "full " : "draft"} concurrency ${conc}: ${sec.toFixed(1)}s for ${dur}f`);
       }
     }
-  });
-  log(table(rows, ["quality", "concurrency", "time", "speed"]));
+  }
+  log("");
+  log(table(rows, ["engine", "step", "frames", "time", "speed"]));
+  if (flag(args, "json")) out(JSON.stringify(rows));
 };
 
 const cmdMotion = async (args: Args) => {
@@ -1517,6 +1549,101 @@ const cmdBundle = async (args: Args) => {
   log(`bundle: ${b.serveUrl} (${b.hash.slice(0, 12)})`);
 };
 
+const HARNESS_SRC = resolvePath(import.meta.dir);
+
+/** how a scaffolded project imports the harness: the package when installed, a relative path inside this checkout, else the absolute path */
+const harnessImportFor = (projectDir: string) => {
+  if (HARNESS_SRC.includes("/node_modules/")) return "motion-harness/src";
+  const root = dirname(HARNESS_SRC);
+  const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+  if (real(projectDir).startsWith(real(root) + "/")) return relative(real(projectDir), real(HARNESS_SRC)).replace(/\\/g, "/") || ".";
+  return real(HARNESS_SRC);
+};
+
+/** a brief becomes a script (a model writes it), a script becomes a project the harness can check */
+const cmdScript = async (args: Args) => {
+  const brief = str(args, "brief") ?? args._.join(" ");
+  if (!brief) die('usage: mh script --brief "..." [--seconds 30] [--language English] [--out script.md] [--model m]');
+  const t0 = performance.now();
+  const r = await writeScript(brief, { seconds: num(args, "seconds", 30), model: str(args, "model"), language: str(args, "language") });
+  const md = scriptMarkdown(r.script);
+  const out = str(args, "out");
+  if (out) {
+    writeFileSync(resolvePath(out), md);
+    produced(resolvePath(out));
+    log(`${r.script.scenes.length} scenes, ${r.script.scenes.reduce((a, b) => a + b.seconds, 0).toFixed(1)}s from ${r.provider} ${r.model} in ${ms(t0)} -> ${out}`);
+  } else log(md);
+  if (flag(args, "json")) out2(JSON.stringify(r.script));
+};
+
+const cmdNew = async (args: Args) => {
+  const dir = args._[0];
+  if (!dir) die('usage: mh new <dir> (--brief "..." | --script script.md) [--seconds 30] [--formats wide,vertical] [--language English] [--force]');
+  const target = resolvePath(dir);
+  const scriptFile = str(args, "script");
+  let script;
+  if (scriptFile) script = parseScriptMarkdown(readFileSync(resolvePath(scriptFile), "utf8"));
+  else {
+    const brief = str(args, "brief");
+    if (!brief) die("mh new needs --brief or --script");
+    const t0 = performance.now();
+    const r = await writeScript(brief!, { seconds: num(args, "seconds", 30), model: str(args, "model"), language: str(args, "language") });
+    log(`script: ${r.script.scenes.length} scenes, ${r.script.scenes.reduce((a, b) => a + b.seconds, 0).toFixed(1)}s from ${r.provider} ${r.model} in ${ms(t0)}`);
+    script = r.script;
+  }
+  const files = scaffoldFiles(script, { harnessImport: str(args, "harness-import") ?? harnessImportFor(target), formats: list(args, "formats") ?? ["wide", "vertical"] });
+  const written = writeScaffold(target, files, { force: flag(args, "force") });
+  for (const f of written) produced(f);
+  log(written.map((f) => `  ${f.replace(target + "/", "")}`).join("\n"));
+  if (!flag(args, "no-install")) {
+    const t1 = performance.now();
+    const r = await run(["bun", "install"], { cwd: target, quiet: true });
+    log(r.code === 0 ? `bun install in ${ms(t1)} (react, react-dom, typescript)` : `bun install failed: ${r.err.slice(-300)}; run it in ${target}`);
+  }
+  log(`project -> ${target}\nnext: mh check --project ${dir} --format all --scene ${script.scenes.map((s) => s.id).join(",")}`);
+};
+
+/** an image from a prompt through the configured provider, fitted to the size, registered in images.json */
+const cmdImage = async (args: Args) => {
+  const x = await ctx(args);
+  const prompt = str(args, "prompt") ?? args._.join(" ");
+  if (!prompt) {
+    const list = loadImages(x.cfg);
+    if (!list.length) return log('usage: mh image "<prompt>" [--id x] [--out public/img/x.png] [--width 1920 --height 1080] [--provider azure-mai|azure-flux|openai] [--model m] [--no-text=false] [--license "..."]');
+    return log(table(list.map((e) => [e.id, e.file, `${e.width}x${e.height}`, `${e.provider} ${e.model}`, `${(e.ms / 1000).toFixed(1)}s`, e.prompt.slice(0, 50)]), ["image", "file", "size", "made by", "took", "prompt"]));
+  }
+  const e = await makeImage(x.cfg, prompt, { id: str(args, "id"), out: str(args, "out"), width: str(args, "width") ? num(args, "width", 1920) : undefined, height: str(args, "height") ? num(args, "height", 1080) : undefined, provider: str(args, "provider") as never, model: str(args, "model"), noText: args["no-text"] !== "false", license: str(args, "license"), log });
+  produced(join(x.cfg.projectDir, e.file));
+  if (flag(args, "json")) out2(JSON.stringify(e));
+};
+
+/** the cut as OpenTimelineIO: one clip per scene on the rendered segments, markers on the events */
+const cmdOtio = async (args: Args) => {
+  const x = await ctx(args);
+  const outFile = resolvePath(str(args, "out") ?? join(x.cfg.cachePath, "out", `${x.filmName}-${x.format}.otio`));
+  // the segment files the last render wrote, found by the same key the render used
+  const sources = await withEngine(x, async (e) => {
+    const list: { sceneId: string; file: string }[] = [];
+    for (const part of x.c.parts) {
+      const compId = compositionFor(part, x.format);
+      const dir = join(x.cfg.cachePath, "segments", `${x.filmName}-${x.format}`, part.id);
+      const sourceHash = `${e.kind}:${partHash(x.cfg, part, e.hash)}`;
+      for (const s of part.scenes) {
+        const f = join(dir, `${String(s.indexInPart).padStart(2, "0")}-${s.id}-${segmentKey(sourceHash, compId, s, FULL)}.mp4`);
+        if (existsSync(f)) list.push({ sceneId: s.id, file: f });
+      }
+    }
+    return list;
+  });
+  const master = join(x.cfg.cachePath, "out", `${x.filmName}-${x.format}.mp4`);
+  const doc = otioDocument(x.c, `${x.filmName} ${x.format}`, sources, { audio: flag(args, "no-audio") ? undefined : existsSync(master) ? master : undefined });
+  ensureDir(join(outFile, ".."));
+  writeFileSync(outFile, JSON.stringify(doc, null, 2));
+  produced(outFile);
+  const missing = x.c.scenes.length - sources.length;
+  log(`${x.c.scenes.length} clips on one video track${doc.tracks.children.length > 1 ? ", the mix on an audio track" : ""} -> ${outFile}${missing ? `\n${missing} scene${missing === 1 ? "" : "s"} without a rendered segment (MissingReference): mh render first` : ""}`);
+};
+
 /** the outer loop: mh as an MCP server on stdio (claude mcp add motion-harness -- mh mcp) */
 const cmdMcp = async () => {
   await import("./mcp/server.ts");
@@ -1568,7 +1695,8 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
   beats [file] [--tolerance 60] [--suggest]
                                     onsets in the mix, beat grid from the music, every cut measured; --suggest quantizes scene lengths to the grid (timeline rules veto)
 
-  bench --scene id [--concurrencies 4,6,8,10]   one scene at each concurrency, full and draft: pick the defaults from numbers
+  bench --scene id [--engines remotion,native] [--concurrencies 4,8]
+                                    the two engines head to head on one scene: engine start, one still, check frames with probe, segments full and draft
   render [--scene a,b] [--force] [--draft] [--crf 18] [--web] [--no-audio] [--out file] [--format all --out-dir dir]
                                     scene segments (cached), parts by concat, music and sfx mixed from the timeline; every segment and film logs size and bitrate
   render --scene a[,b] --preview    only those scenes as a clip, with the cues that sound in them (contiguous scenes)
@@ -1587,13 +1715,21 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
   captions [file] [--lang de] [--out file]
                                     the subtitles burned into the rendered film (config.captions for the style, bottom inset from the safe zone)
   voice [--force] [--dry-run]       voice cues (kind "voice" with text): synthesise missing or changed lines (ElevenLabs, ELEVENLABS_API_KEY), measure each against its scene
-  clips [add <file> --id --prompt --model --seed --credits --cost --attempts]
+  clips [add <file> --id --prompt --model --seed --credits --cost --attempts --license]
                                     generated clips registry (clips.json): what each cost and looks like; lint clip-colour-drift between consecutive clips
   judge --scene a[,b] [--model m] [--checklist "a;b"] [--file clip.mp4]
                                     a model watches the clip (Gemini, GEMINI_API_KEY): findings with film times, leads to confirm with mh frame
   deliver --out dir [--format all] [--films dir] [--stills a,b|all] [--lang en] [--platforms youtube,tiktok] [--captions] [--upload prefix]
                                     films per format, stills as jpg, the srt, per-platform loudness copies, burned captions, a manifest (sizes, sha1, loudness, chapters, urls) and a .gitignore for the mp4;
                                     --upload puts every file on S3/R2 (MH_S3_* or CLOUDFLARE_* env) and records the urls
+  script --brief "..." [--seconds 30] [--out script.md]
+                                    a model writes the script (scenes with headline, body, visual, seconds); Azure, OpenRouter or OpenAI from the environment
+  new <dir> (--brief "..." | --script script.md) [--formats wide,vertical]
+                                    a project the harness can check right away: timeline as data, one component per scene, Root, config
+  image "<prompt>" [--width --height] [--provider azure-mai|azure-flux|openai] [--out file]
+                                    an image plate from a prompt (config.imageStyle appended, no text asked of the model), fitted to the size, registered in images.json
+  otio [--out film.otio] [--no-audio]
+                                    the cut as OpenTimelineIO for Resolve, Premiere, Final Cut: a clip per scene on the rendered segments, markers on the events
   init [--force]                    write a harness.config.ts template into the project
   mcp                               serve mh as an MCP server on stdio (typed tools mh_timeline, mh_frame, mh_check, mh_render, mh_deliver, ... plus a raw "mh" tool)
 
@@ -1639,6 +1775,10 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   feedback: cmdFeedback,
   init: cmdInit,
   mcp: cmdMcp,
+  script: cmdScript,
+  new: cmdNew,
+  image: cmdImage,
+  otio: cmdOtio,
 };
 
 const main = async () => {

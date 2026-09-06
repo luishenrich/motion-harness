@@ -31,6 +31,8 @@ export type DeliverInput = {
   captions?: Omit<CaptionStyle, "bottom"> & { bottom?: Record<string, number> };
   /** upload every delivered file here and record the public urls */
   upload?: UploadTarget;
+  /** the film's registered clips, listed with their licenses */
+  clips?: { id: string; model?: string; file: string; seconds: number; attempts?: number; credits?: number; license?: string }[];
 };
 
 export type UploadTarget = { endpoint: string; bucket: string; prefix: string; accessKeyId: string; secretAccessKey: string; publicUrl?: string; region?: string };
@@ -79,9 +81,17 @@ export const manifestMarkdown = (inp: DeliverInput, files: DeliveredFile[], srtN
   lines.push("");
   if (c.timeline.audio?.length) {
     lines.push("## Audio", "");
-    for (const a of c.timeline.audio) lines.push(`- ${a.id} (${a.kind}): \`${basename(a.file)}\` at ${String(a.at)}${a.gain !== undefined ? `, gain ${a.gain}` : ""}${a.trim ? `, trim ${a.trim[0]}-${a.trim[1]} s` : ""}${a.loop ? ", loop" : ""}`);
+    for (const a of c.timeline.audio) lines.push(`- ${a.id} (${a.kind}): \`${basename(a.file)}\` at ${String(a.at)}${a.gain !== undefined ? `, gain ${a.gain}` : ""}${a.trim ? `, trim ${a.trim[0]}-${a.trim[1]} s` : ""}${a.loop ? ", loop" : ""}${a.license ? `, license: ${a.license}` : ", license: NOT DECLARED"}${a.credit ? `, credit: ${a.credit}` : ""}`);
     lines.push("");
   }
+  const clips = inp.clips ?? [];
+  if (clips.length) {
+    lines.push("## Generated clips", "", "| clip | model | file | length | attempts | credits | license |", "|---|---|---|---|---|---|---|");
+    for (const k of clips) lines.push(`| ${k.id} | ${k.model ?? ""} | \`${basename(k.file)}\` | ${k.seconds.toFixed(2)} s | ${k.attempts ?? ""} | ${k.credits ?? ""} | ${k.license ?? "NOT DECLARED"} |`);
+    lines.push("");
+  }
+  const undeclared = [...(c.timeline.audio ?? []).filter((a) => !a.license).map((a) => `audio ${a.id}`), ...clips.filter((k) => !k.license).map((k) => `clip ${k.id}`)];
+  if (undeclared.length) lines.push(`Rights to declare before publishing: ${undeclared.join(", ")} (set \`license\` on the cue or \`mh clips add --license\`).`, "");
   if (srtName) lines.push(`Subtitles: \`${srtName}\` (times from the timeline, same in every format).`, "");
   return lines.join("\n");
 };

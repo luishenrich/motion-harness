@@ -66,6 +66,15 @@ const __measure = (mode, settleMs) => {
     const w = Math.max(0, x1 - x0), h = Math.max(0, y1 - y0);
     return { left: x0, top: y0, right: x0 + w, bottom: y0 + h, width: w, height: h };
   };
+  // the ground an element is read against: the first ancestor (itself included) that paints an opaque background
+  const __effBg = (el) => {
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+      const bg = getComputedStyle(n).backgroundColor;
+      const m = bg && bg.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/);
+      if (m && (m[4] === undefined || parseFloat(m[4]) >= 0.9)) return bg;
+    }
+    return "";
+  };
   const add = (el, key, kind) => {
     if (seen.has(el)) return;
     const id = items.length;
@@ -85,7 +94,7 @@ const __measure = (mode, settleMs) => {
       lineHeight: cs.lineHeight, lines, brs, lint,
       x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height),
       visible, opacity: Math.round(op * 100) / 100,
-      color: cs.color, bg: cs.backgroundColor, fontSize: cs.fontSize, fontWeight: cs.fontWeight, fontFamily: cs.fontFamily.split(",")[0].replace(/"/g, ""),
+      color: cs.color, bg: cs.backgroundColor, effBg: __effBg(el), fontSize: cs.fontSize, fontWeight: cs.fontWeight, fontFamily: cs.fontFamily.split(",")[0].replace(/"/g, ""),
       text: __ownText(el).slice(0, 80),
     });
   };

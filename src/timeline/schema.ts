@@ -91,6 +91,10 @@ export type AudioCue = {
   loopCrossfade?: number;
   /** trim the source before use, seconds */
   trim?: [number, number];
+  /** where the file's rights come from ("Artlist subscription 2026", "own recording", "CC-BY 4.0 Kevin MacLeod"): printed in the delivery manifest */
+  license?: string;
+  /** credit line a license asks for, printed with the manifest */
+  credit?: string;
 };
 
 export type Rules = {

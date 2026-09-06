@@ -71,6 +71,8 @@ export type HarnessConfig = {
   captions?: { font?: string; size?: number; color?: string; bg?: string; weight?: number; bottom?: Record<string, number> };
   /** voice cues: default provider voice and model (ElevenLabs), key from ELEVENLABS_API_KEY */
   voice?: { provider?: "elevenlabs"; voice?: string; model?: string; dir?: string };
+  /** appended to every mh image prompt: the brand's visual language ("warm cream paper, gold accents, soft daylight, editorial photography") */
+  imageStyle?: string;
 };
 
 export const defineConfig = (c: HarnessConfig): HarnessConfig => c;

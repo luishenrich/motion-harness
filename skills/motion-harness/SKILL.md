@@ -77,7 +77,12 @@ Never guess where something is in time and never guess what a frame looks like. 
 | both formats rendered | `mh render --format all --out-dir dir` (size and bitrate per segment and film in the log) |
 | is that 150 ms key heard under the bed | `mh audio`: per sfx cue the >2 kHz peak delta in dB, AUDIBLE / FAINT / MASKED |
 | where does the music become audible (cold start trim) | `mh audio`: "audible from X s" and the 0-3 s head profile per music file |
-| hand everything over | `mh deliver --out dir --stills all` (films, stills, srt, manifest with sha1 and chapters, .gitignore for mp4) |
+| hand everything over | `mh deliver --out dir --stills all --platforms youtube,tiktok --captions [--upload prefix]` |
+| a new film from a brief | `mh new <dir> --brief "..."` (script by a model, project scaffolded, `mh check` runs on it) |
+| a background plate, a start frame | `mh image "<prompt>" --width --height` (no text from the model; typography stays in the still) |
+| the editor wants the cut | `mh otio --out film.otio` (Resolve, Premiere, Final Cut) |
+| generated clips: cost, rights, colour drift | `mh clips add ... --license`, `mh lint --clips` |
+| text readable on its ground | `mh lint --rendered` (rule `contrast`, WCAG AA: 4.5:1 body, 3:1 large) |
 
 `mh lint --rendered` refuses a run rendered from an older bundle than the sources (the frames
 would describe the previous edit); it renders fresh ones, or `--allow-stale` reads the old run.
