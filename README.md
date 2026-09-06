@@ -128,7 +128,10 @@ mh new my-film --brief "..." --assets footage/ --transcribe
 ```
 
 The scaffold's components are starting points: a text card, a clip with a focus point for the
-vertical crop and a headline over a scrim, a still with a slow zoom. Everything after that is
+vertical crop and a headline over a scrim, a still with a slow zoom. A clip that carries its own
+bars (measured by `mh ingest`, a bar is dark on every sampled frame and narrow) is zoomed past
+them; a wide interface is letterboxed in a vertical frame instead of cropped. `SHOW_VISUAL_NOTES`
+in `Film.tsx` puts each scene's visual note on the frame while blocking. Everything after that is
 the same loop as for any other film: `mh check`, `mh frame`, `mh render`, `mh deliver`.
 
 From nothing to a checkable project, and out of the harness into an editor:
