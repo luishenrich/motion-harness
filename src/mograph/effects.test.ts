@@ -255,8 +255,13 @@ describe("shapes and charts", () => {
     // the last column shows the value itself, the ones above it their own place
     expect(odometerCells(7, "40")[1].offset).toBe(7);
     expect(odometerCells(7, "40")[0].offset).toBe(0);
-    expect(odometerCells(37.5, "40")[0].offset).toBe(3);
-    expect(odometerCells(37.5, "40")[1].offset).toBe(7.5);
+    expect(odometerCells(37, "40")[0].offset).toBe(3);
+    expect(odometerCells(37, "40")[1].offset).toBe(7);
+    // a column holds its digit for most of the step and then flips, so a still frame shows whole numbers
+    expect(odometerCells(37.5, "40")[1].offset).toBe(7);
+    expect(odometerCells(37.9, "40")[1].offset).toBeCloseTo(7.5, 5);
+    expect(odometerCells(39.9, "40")[0].offset).toBeCloseTo(3.95, 2);
+    expect(odometerCells(1240, "1,240").filter((c) => c.digit).map((c) => c.offset)).toEqual([1, 2, 4, 0]);
   });
 });
 

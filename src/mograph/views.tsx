@@ -20,6 +20,14 @@ import type { Frame } from "./layout.ts";
 
 export type VCtx = { film: MgFilm; scene: MgScene; fr: Frame; frame: number };
 
+const SANS = "-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif";
+
+/** the film's own font for a role; a label inside an svg or a legend inherits nothing useful */
+export const fontFor = (film: MgFilm, role: "display" | "body" | "mono" = "body"): string => {
+  const family = role === "mono" ? film.design.fontMono : role === "body" ? (film.design.fontBody ?? film.design.fontDisplay) : film.design.fontDisplay;
+  return family ? `'${family}', ${SANS}` : SANS;
+};
+
 /** *word* spans in the accent colour, with the marker style when the layer highlights its marks */
 const mark = (text: string, accent: string, key: string, markStyle?: React.CSSProperties): React.ReactNode[] =>
   text.split(/(\*[^*]+\*)/).filter((s) => s.length).map((s, i) =>
@@ -206,7 +214,7 @@ export const LineChartView: React.FC<{ ctx: VCtx; layer: LineChartLayer; pose: P
           : null}
       </svg>
       {layer.labels?.length ? (
-        <div style={{ display: "flex", justifyContent: "space-between", width: w, marginTop: 14 * u, fontSize: labelSize, color: colorOf(film.design, layer.labelColor ?? "muted", film.design.muted ?? "#6B6B6B") }}>
+        <div style={{ display: "flex", justifyContent: "space-between", width: w, marginTop: 14 * u, fontFamily: fontFor(film), fontWeight: 500, fontSize: labelSize, color: colorOf(film.design, layer.labelColor ?? "muted", film.design.muted ?? "#6B6B6B") }}>
           {layer.labels.map((l, i) => <span key={i}>{l}</span>)}
         </div>
       ) : null}
@@ -244,7 +252,7 @@ export const RingsView: React.FC<{ ctx: VCtx; layer: RingsLayer; pose: Pose }> =
         })}
       </svg>
       {layer.legend === false ? null : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 * u, fontSize: labelSize, color: labelColor }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 * u, fontFamily: fontFor(film), fontWeight: 500, fontSize: labelSize, color: labelColor }}>
           {layer.values.map((v, i) => {
             const p = poseAt(film, scene, layer, frame, staggerDelay(st, i, layer.values.length));
             return (
@@ -268,7 +276,7 @@ export const Odometer: React.FC<{ ctx: VCtx; layer: CounterLayer; value: number;
   const cells = odometerCells(value, padDigits(text, layer.pad));
   const h = size * 1.06;
   return (
-    <div style={{ display: "flex", alignItems: "baseline", ...textStyle(paint) }}>
+    <div style={{ display: "flex", alignItems: "flex-start", ...textStyle(paint) }}>
       {cells.map((c, i) =>
         c.digit ? (
           <span key={i} style={{ display: "inline-block", height: h, overflow: "hidden", lineHeight: `${h}px`, width: size * 0.62, textAlign: "center" }}>
@@ -279,7 +287,7 @@ export const Odometer: React.FC<{ ctx: VCtx; layer: CounterLayer; value: number;
             </span>
           </span>
         ) : (
-          <span key={i} style={{ display: "inline-block", lineHeight: `${h}px` }}>{c.char}</span>
+          <span key={i} style={{ display: "inline-block", height: h, lineHeight: `${h}px` }}>{c.char}</span>
         ),
       )}
     </div>

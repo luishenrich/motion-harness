@@ -126,7 +126,8 @@ const TextView: React.FC<{ ctx: Ctx; layer: TextLayer }> = ({ ctx, layer }) => {
           const p = poseAt(film, ctx.scene, layer, frame, staggerDelay(st, i, units.length));
           // a line unit wraps inside its own row; a word or a character never wraps
           const body = lineStyle ? <span style={lineStyle}>{marked(u, accent, `u${i}`, markStyle)}</span> : marked(u, accent, `u${i}`, markStyle);
-          const inner = <span style={{ display: lines ? "block" : "inline-block", ...poseStyle(p, fr), whiteSpace: lines ? "pre-wrap" : "pre" }}>{body}</span>;
+          // a line that is wiped in shrinks to its own words: the reveal follows the ink, not the block's full width
+          const inner = <span style={{ display: lines && preset !== "line-wipe" ? "block" : "inline-block", ...poseStyle(p, fr), whiteSpace: lines ? "pre-wrap" : "pre" }}>{body}</span>;
           if (lines) return <div key={i} style={{ overflow: mask ? "hidden" : undefined }}>{inner}</div>;
           if (/^\s+$/.test(u)) return <span key={i}>{u}</span>;
           return mask ? <span key={i} style={{ display: "inline-block", overflow: "hidden", verticalAlign: "bottom" }}>{inner}</span> : <React.Fragment key={i}>{inner}</React.Fragment>;

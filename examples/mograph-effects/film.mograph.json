@@ -101,7 +101,7 @@
           "lineHeight": 1.15,
           "effects": { "highlight": { "color": "accent", "pad": 12, "radius": 6, "only": "marks", "in": { "at": 26, "dur": 16, "ease": "out" } } },
           "in": { "preset": "rise", "at": 4, "dur": 14 },
-          "formats": { "vertical": { "size": 74, "maxWidth": 0.84, "at": { "x": 0.5, "y": 0.38 } } }
+          "formats": { "vertical": { "size": 74, "maxWidth": 0.84, "at": { "x": 0.5, "y": 0.42 } } }
         },
         {
           "id": "sub",
@@ -114,8 +114,8 @@
           "at": { "x": 0.5, "y": 0.66 },
           "lines": 2,
           "lineHeight": 1.25,
-          "in": { "preset": "line-wipe", "at": 30, "dur": 12, "from": "left", "stagger": { "by": "line", "each": 8 } },
-          "formats": { "vertical": { "at": { "x": 0.5, "y": 0.6 } } }
+          "in": { "preset": "line-wipe", "at": 30, "dur": 14, "from": "left", "stagger": { "by": "line", "each": 8 } },
+          "formats": { "vertical": { "at": { "x": 0.5, "y": 0.62 } } }
         }
       ]
     },
@@ -139,7 +139,7 @@
           "at": { "x": 0.28, "y": 0.44 },
           "effects": { "roundCaps": true },
           "in": { "preset": "fade", "at": 6, "dur": 26 },
-          "formats": { "vertical": { "at": { "x": 0.28, "y": 0.4 } } }
+          "formats": { "vertical": { "at": { "x": 0.28, "y": 0.42 } } }
         },
         {
           "id": "arrow",
@@ -151,20 +151,20 @@
           "fill": "teal",
           "at": { "x": 0.53, "y": 0.44 },
           "in": { "preset": "fade", "at": 26, "dur": 22 },
-          "formats": { "vertical": { "w": 190, "at": { "x": 0.53, "y": 0.4 } } }
+          "formats": { "vertical": { "w": 190, "at": { "x": 0.53, "y": 0.42 } } }
         },
         {
           "id": "star",
           "type": "shape",
           "shape": "star",
-          "d": 150,
+          "d": 170,
           "sides": 5,
           "inner": 0.46,
           "rotate": -8,
           "fill": { "gradient": ["accent", "rose"], "angle": 120 },
           "at": { "x": 0.78, "y": 0.44 },
           "in": { "preset": "pop", "at": 44, "dur": 16, "ease": "back" },
-          "formats": { "vertical": { "at": { "x": 0.79, "y": 0.4 } } }
+          "formats": { "vertical": { "at": { "x": 0.79, "y": 0.42 } } }
         },
         {
           "id": "caption",
@@ -177,7 +177,7 @@
           "at": { "x": 0.5, "y": 0.72 },
           "lines": 1,
           "in": { "preset": "rise", "at": 54, "dur": 14 },
-          "formats": { "vertical": { "size": 40, "at": { "x": 0.5, "y": 0.6 } } }
+          "formats": { "vertical": { "size": 40, "at": { "x": 0.5, "y": 0.62 } } }
         }
       ]
     },
@@ -200,7 +200,7 @@
           "at": { "x": 0.5, "y": 0.42 },
           "effects": { "shadow": { "y": 26, "blur": 60, "alpha": 0.4 } },
           "in": { "preset": "pop", "at": 2, "dur": 14, "ease": "back" },
-          "formats": { "vertical": { "size": 170, "at": { "x": 0.5, "y": 0.42 } } }
+          "formats": { "vertical": { "size": 170, "at": { "x": 0.5, "y": 0.45 } } }
         },
         {
           "id": "label",
@@ -213,7 +213,7 @@
           "at": { "x": 0.5, "y": 0.62 },
           "lines": 1,
           "in": { "preset": "rise", "at": 26, "dur": 14 },
-          "formats": { "vertical": { "size": 40, "at": { "x": 0.5, "y": 0.56 } } }
+          "formats": { "vertical": { "size": 40, "at": { "x": 0.5, "y": 0.6 } } }
         }
       ]
     },
@@ -234,7 +234,7 @@
           "maxWidth": 0.8,
           "lines": 1,
           "in": { "preset": "scramble", "at": 2, "dur": 30 },
-          "formats": { "vertical": { "size": 46, "maxWidth": 0.9, "at": { "x": 0.5, "y": 0.2 } } }
+          "formats": { "vertical": { "size": 46, "maxWidth": 0.9, "at": { "x": 0.5, "y": 0.28 } } }
         },
         {
           "id": "dials",
@@ -249,11 +249,12 @@
           "thickness": 30,
           "gap": 12,
           "format": "0",
+          "labelSize": 34,
           "labelColor": "ink",
           "trackColor": "muted",
           "at": { "x": 0.5, "y": 0.58 },
           "in": { "preset": "fade", "at": 14, "dur": 22, "stagger": { "by": "item", "each": 6 } },
-          "formats": { "vertical": { "d": 300, "at": { "x": 0.5, "y": 0.55 } } }
+          "formats": { "vertical": { "d": 300, "labelSize": 32, "at": { "x": 0.5, "y": 0.52 } } }
         }
       ]
     },
@@ -274,7 +275,7 @@
           "color": "paper",
           "effects": { "gradientText": ["accent", "rose"] },
           "in": { "preset": "rise", "at": 2, "dur": 14 },
-          "formats": { "vertical": { "size": 62, "at": { "x": 0.5, "y": 0.2 } } }
+          "formats": { "vertical": { "size": 62, "at": { "x": 0.5, "y": 0.24 } } }
         },
         {
           "id": "week",
@@ -293,7 +294,7 @@
           "labelSize": 28,
           "at": { "x": 0.5, "y": 0.55 },
           "in": { "preset": "fade", "at": 10, "dur": 46 },
-          "formats": { "vertical": { "w": 840, "h": 300, "at": { "x": 0.5, "y": 0.5 } } }
+          "formats": { "vertical": { "w": 840, "h": 300, "at": { "x": 0.5, "y": 0.52 } } }
         },
         {
           "id": "note",
@@ -306,7 +307,7 @@
           "at": { "x": 0.5, "y": 0.85 },
           "lines": 1,
           "in": { "preset": "rise", "at": 60, "dur": 14 },
-          "formats": { "vertical": { "at": { "x": 0.5, "y": 0.72 } } }
+          "formats": { "vertical": { "at": { "x": 0.5, "y": 0.74 } } }
         }
       ]
     },
@@ -324,9 +325,9 @@
           "id": "confetti",
           "type": "particles",
           "probe": false,
-          "count": 120,
+          "count": 90,
           "color": "rose",
-          "size": 14,
+          "size": 22,
           "speed": 2.4,
           "spread": 70,
           "seed": 3,
@@ -350,13 +351,14 @@
           "id": "rule",
           "type": "shape",
           "shape": "line",
-          "w": 320,
+          "w": 520,
           "thickness": 10,
           "fill": "accent",
           "radius": 5,
           "at": { "x": 0.5, "y": 0.58 },
-          "colorTracks": { "fill": [{ "at": 40, "v": "accent" }, { "at": 90, "v": "teal", "ease": "inOut" }] },
-          "in": { "preset": "grow", "at": 34, "dur": 18 }
+          "colorTracks": { "fill": [{ "at": 44, "v": "accent" }, { "at": 96, "v": "teal", "ease": "inOut" }] },
+          "in": { "preset": "grow", "at": 34, "dur": 30, "ease": "inOut" },
+          "formats": { "vertical": { "w": 420, "at": { "x": 0.5, "y": 0.6 } } }
         }
       ]
     }
