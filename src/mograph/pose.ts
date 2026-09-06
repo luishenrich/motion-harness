@@ -5,7 +5,7 @@
  * line, item) with the unit's own delay. The result is plain numbers a
  * component turns into a style, and that a test can assert.
  */
-import { resolveEase, progressOf, type Resolved } from "./easing.ts";
+import { resolveEase, progressOf, springFrames, type Resolved } from "./easing.ts";
 import type { Camera, CameraProp, EaseRef, GroupLayer, InPreset, Keyframe, Layer, MgFilm, MgScene, Motion, OutPreset, Side, Stagger, TrackProp, Tracks } from "./schema.ts";
 import { CAMERA_PROPS, childrenOf, layerTiming } from "./schema.ts";
 
@@ -183,7 +183,7 @@ export const settleFrame = (film: MgFilm, scene: MgScene, layer: Layer, units = 
   const st = layer.in?.stagger ?? film.defaults?.layerIn?.stagger;
   const last = st ? staggerDelay(st, units - 1, units) : 0;
   const r = resolveEase(layer.in?.ease ?? film.defaults?.layerIn?.ease, film.easings ?? {});
-  const dur = r.kind === "spring" ? Math.max(t.inDur, 24) : t.inDur;
+  const dur = r.kind === "spring" ? Math.max(t.inDur, springFrames(r, film.fps, t.inDur)) : t.inDur;
   return Math.min(t.to - 1, t.inAt + last + dur);
 };
 

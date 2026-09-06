@@ -197,7 +197,7 @@ const pAccent: MgParamSpec = { type: "color", default: "auto", help: "colour of 
  * a template builds passes `mh check` today. Flip this to true when the runtime
  * has landed; `--param groups=true` asks for a group before that.
  */
-export const GROUPS_RENDER = false;
+export const GROUPS_RENDER = true;
 
 const pGroups: MgParamSpec = { type: "boolean", default: GROUPS_RENDER, help: "one group layer instead of flat layers; the group runtime draws it, so this is off until that has landed" };
 

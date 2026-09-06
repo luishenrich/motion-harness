@@ -4,7 +4,8 @@
  * uses (or all of them) under public/sfx, and reports what a film asks for
  * that nothing provides.
  */
-import { SOUND_BANK, SOUND_NAMES, ensureSoundBank, soundsUsed, unknownSounds, soundCues } from "./sound.ts";
+import { SOUND_BANK, SOUND_NAMES, soundsUsed, unknownSounds, soundCues } from "./sound.ts";
+import { ensureSoundBank } from "./sound-make.ts";
 import type { MgFilm } from "./schema.ts";
 
 export const HELP = `  sounds [--make] [--all] [--force] the synthesised sound bank (pop, tick, click, whoosh, rise, thud, ding, swell); --make writes the ones the film names under public/sfx, --all every one`;

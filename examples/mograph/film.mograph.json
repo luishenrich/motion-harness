@@ -862,7 +862,11 @@
           "in": {
             "preset": "mask",
             "at": 10,
-            "dur": 16
+            "dur": 16,
+            "stagger": {
+              "by": "word",
+              "each": 4
+            }
           },
           "out": {
             "preset": "sink",

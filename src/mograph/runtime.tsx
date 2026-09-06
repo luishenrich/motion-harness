@@ -157,12 +157,18 @@ const TextView: React.FC<{ ctx: Ctx; layer: TextLayer }> = ({ ctx, layer }) => {
     );
   }
   const { units, lines } = splitUnits(layer.text, st.by);
+  let realUnits = 0;
+  const unitIndex = units.map((u) => (/^\s+$/.test(u) ? realUnits : realUnits++));
+  realUnits = Math.max(1, realUnits);
   const mask = (layer.in?.preset ?? film.defaults?.layerIn?.preset) === "mask";
   return (
     <Box ctx={ctx} layer={layer} pose={{ ...whole, opacity: whole.visible ? 1 : 0, x: 0, y: 0, scale: 1, blur: 0, wipe: 1 }} lines={expectLines}>
       <div style={style}>
         {units.map((u, i) => {
-          const p = poseAt(film, ctx.scene, layer, frame, ctx.delay + staggerDelay(st, i, units.length));
+          // whitespace units keep their neighbour's delay: only real units count for the stagger
+          const space = /^\s+$/.test(u);
+          const idx = space ? Math.max(0, unitIndex[i] - 1) : unitIndex[i];
+          const p = poseAt(film, ctx.scene, layer, frame, ctx.delay + staggerDelay(st, idx, realUnits));
           // a line unit wraps inside its own row; a word or a character never wraps
           const body = inGradient(lineStyle ? <span style={lineStyle}>{marked(u, accent, `u${i}`, markStyle)}</span> : marked(u, accent, `u${i}`, markStyle), `g${i}`);
           // a line that is wiped in shrinks to its own words: the reveal follows the ink, not the block's full width
@@ -240,7 +246,7 @@ const CounterView: React.FC<{ ctx: Ctx; layer: CounterLayer }> = ({ ctx, layer }
   const { film, fr, frame } = ctx;
   const p = poseAt(film, ctx.scene, layer, frame, ctx.delay);
   const t = layerTiming(film, ctx.scene, layer);
-  const dur = layer.dur ?? Math.max(t.inDur, 30);
+  const dur = Math.max(1, layer.dur ?? Math.max(t.inDur, 30));
   const start = ctx.delay + t.inAt;
   const raw = interpolate(frame, [start, start + dur], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   // an explicit progress track wins; otherwise the count eases out over `dur`

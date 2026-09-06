@@ -49,8 +49,12 @@ export type Motion<P extends string = string> = {
 
 export type Anchor = "center" | "left" | "right" | "top" | "bottom" | "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
+/** a sound at a layer's in or a scene's start: a bank name (mh sounds) or a name from the film's sounds map, with gain and an offset in frames */
+export type SoundRef = string | { name: string; gain?: number; at?: number };
+
 export type LayerBase = {
   id: string;
+  sound?: SoundRef;
   /** fractions of the frame */
   at?: { x: number; y: number };
   anchor?: Anchor;
@@ -325,6 +329,7 @@ export type MgTransition = {
 
 export type MgScene = {
   id: string;
+  sound?: SoundRef;
   /** frames */
   dur: number;
   ground?: ColorValue;
@@ -390,6 +395,8 @@ export type MgFilm = {
   defaults?: { enterFrames?: number; layerIn?: Motion<InPreset>; layerOut?: Motion<OutPreset> };
   scenes: MgScene[];
   audio?: MgAudio[];
+  /** own sound files by name, relative to public/: { "chime": "sfx/chime.wav" } */
+  sounds?: Record<string, string>;
   rules?: { minSceneDur?: number; maxEnterFrames?: number; holdFrames?: [number, number]; safeZone?: Record<string, { top: number; bottom: number; x: number }> };
 };
 
@@ -454,6 +461,6 @@ export const layerTiming = (film: MgFilm, scene: MgScene, layer: Layer): { inAt:
   const hasOut = !!layer.out || !!film.defaults?.layerOut;
   const dOut = { ...DEFAULT_OUT, ...(film.defaults?.layerOut ?? {}), ...(layer.out ?? {}) };
   const outDur = dOut.preset === "cut" ? 0 : Math.max(0, dOut.dur ?? 8);
-  const outAt = hasOut ? from + localFrame(dOut.at ?? -outDur, to - from, to - from - outDur) : null;
+  const outAt = hasOut ? (dOut.at === undefined ? Math.max(from, to - outDur) : from + localFrame(dOut.at, to - from, to - from - outDur)) : null;
   return { inAt, inDur, outAt, outDur, from, to };
 };

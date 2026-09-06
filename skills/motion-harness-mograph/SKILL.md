@@ -61,6 +61,20 @@ colours) and the sheets.
 
 `examples/mograph-effects` is 24 seconds that show every one of these.
 
+## Groups, camera, handovers, colour, effects, sound
+
+| want | data |
+|---|---|
+| a card or panel that moves as one | `{"id":"card","type":"group","w":900,"h":520,"fill":"paper","radius":28,"at":{"x":0.5,"y":0.5},"in":{"preset":"pop","stagger":{"by":"item","each":4}},"layers":[...]}`; children's `at` are fractions of the box; address `scene.card.child.prop` |
+| a slow camera move | `mh set hook.camera '{"preset":"push","from":1,"to":1.06,"focus":{"x":0.5,"y":0.45}}'` (push, pull, pan, tilt, drift, orbit; `shake`; `ground: true` moves the ground too) |
+| a travelling shot | `mh set travel.camera.tracks.x '[{"at":0,"v":0},{"at":60,"v":-800,"ease":"inOut"},{"at":120,"v":-1600,"ease":"inOut"}]'` (u pixels) |
+| a handover between scenes | `mh set stat.transition '{"type":"push-up","dur":12}'` on the incoming scene (dissolve, dip, push-*, wipe-*, zoom, blur); the timeline marks those frames as the enter |
+| a gradient ground or fill | `mh set hook.ground '{"gradient":["ink","#0F3D5E"],"angle":160}'` |
+| a colour that changes | `mh set hook.rule.colorTracks.fill '[{"at":0,"v":"accent"},{"at":40,"v":"rose","ease":"inOut"}]'`, `mh set hook.groundTracks '[...]'` |
+| effects | `mh set hook.line.effects '{"glow":{"color":"accent","blur":40},"highlight":{"color":"accent"}}'` (shadow, glow, stroke, highlight, gradientText, blend) |
+| more presets and layers | text: flip (char stagger), track, scramble, fall, line-wipe; shapes: path, polygon, star, arrow; layers: line (chart), rings, particles; counters: `roll: true` |
+| a sound at a layer's in | `mh set stat.big.sound pop` then `mh sounds --make` (pop, tick, click, whoosh, rise, thud, ding, swell; or the film's own `sounds` map); the cue shows in `mh timeline` and `mh audio` |
+
 ## Rules of thumb the lint does not enforce
 
 - One idea per scene, two or three layers, four at most. Alternate grounds.

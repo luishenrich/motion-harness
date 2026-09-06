@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensureSoundBank, soundCues, unknownSounds, soundsUsed, SOUND_NAMES } from "./sound.ts";
+import { soundCues, unknownSounds, soundsUsed, SOUND_NAMES } from "./sound.ts";
+import { ensureSoundBank } from "./sound-make.ts";
 import type { MgFilm } from "./schema.ts";
 import { run } from "../util.ts";
 

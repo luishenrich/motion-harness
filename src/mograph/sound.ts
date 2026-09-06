@@ -4,13 +4,11 @@
  * too. The bank is a handful of synthesised sounds ffmpeg writes on demand
  * (no downloads, no rights), a film can map its own files under `sounds`.
  * Cues are plain timeline audio cues, so mh audio, mh sfx and mh beats see
- * them like any other.
+ * them like any other. This file is pure (the browser bundle imports it through
+ * the timeline); the ffmpeg writer lives in sound-make.ts.
  */
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 import type { AudioCue } from "../timeline/schema.ts";
-import type { Layer, MgFilm, MgScene } from "./schema.ts";
-import { run } from "../util.ts";
+import type { Layer, MgFilm } from "./schema.ts";
 
 export type SoundRef = string | { name: string; gain?: number; /** frames after the layer's in (negative: before) */ at?: number };
 
@@ -27,24 +25,6 @@ export const SOUND_BANK: Record<string, { source: string; filters: string; secon
 };
 
 export const SOUND_NAMES = Object.keys(SOUND_BANK);
-
-/** write the named sounds under public/sfx of the project when missing; returns the files */
-export const ensureSoundBank = async (projectDir: string, names: string[] = SOUND_NAMES, opts: { force?: boolean; log?: (s: string) => void } = {}): Promise<Record<string, string>> => {
-  const dir = join(projectDir, "public", "sfx");
-  mkdirSync(dir, { recursive: true });
-  const out: Record<string, string> = {};
-  for (const n of names) {
-    const spec = SOUND_BANK[n];
-    if (!spec) continue;
-    const file = join(dir, `${n}.wav`);
-    if (!existsSync(file) || opts.force) {
-      await run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", spec.source, "-af", spec.filters, "-ac", "1", "-ar", "48000", "-t", String(spec.seconds), file]);
-      opts.log?.(`sfx ${n}: ${spec.seconds}s, ${spec.what}`);
-    }
-    out[n] = file;
-  }
-  return out;
-};
 
 const refOf = (s: SoundRef | undefined): { name: string; gain: number; at: number } | null => (s === undefined ? null : typeof s === "string" ? { name: s, gain: 0.8, at: 0 } : { name: s.name, gain: s.gain ?? 0.8, at: s.at ?? 0 });
 

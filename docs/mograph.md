@@ -440,3 +440,15 @@ Beyond the ops of `mh set`, `mh key` and friends, the editor posts two of its ow
 as one save and one undo step, what align and a multi-selection nudge send) and `move-key` (a
 keyframe moved to another frame, value and easing kept). An address into a group child
 (`scene.group.child.prop`) is resolved to the index path underneath.
+
+## Sound
+
+A layer or a scene may carry `"sound"`: a name from the bank (`pop`, `tick`, `click`, `whoosh`,
+`rise`, `thud`, `ding`, `swell`) or from the film's own `sounds` map (`{ "chime": "sfx/chime.wav" }`),
+either as a string or as `{ "name", "gain", "at" }` (`at` in frames after the layer's in). The
+harness turns it into an sfx cue at `<scene>.<layer>In` (or the scene's start), so `mh timeline`,
+`mh audio`, `mh sfx` and `mh beats` see it like any other cue and `mh render` mixes it. `mh sounds`
+lists the bank and what the film uses; `mh sounds --make` writes the files the film names under
+`public/sfx` with ffmpeg (synthesised, no rights to clear); `--all` writes the whole bank. A name
+nothing provides is a lint error.
+

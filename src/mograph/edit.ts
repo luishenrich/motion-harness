@@ -16,6 +16,7 @@ import { cameraSpan, staggerDelay, unitsOf, walkLayers } from "./pose.ts";
 import { COLOR_TRACKS, isGradient, type ColorKey, type ColorTrackProp, type ColorValue } from "./colour.ts";
 import { BLEND_MODES, EFFECT_KEYS } from "./effects.ts";
 import { MAX_PARTICLES } from "./particles.ts";
+import { unknownSounds } from "./sound.ts";
 
 export type MgFinding = { level: "error" | "warn"; rule: string; where: string; message: string };
 
@@ -58,6 +59,11 @@ export type Target = {
 };
 
 /** names a group child may not shadow: an address segment that is one of these reads as a property, not as a layer */
+/** what a scene may carry besides its layers; a layer id may not shadow these */
+const SCENE_PROPS = new Set(["id", "dur", "ground", "enter", "exit", "layers", "events", "template", "params", "why", "caption", "camera", "transition", "sound", "groundTracks", "hold", "probes"]);
+/** a scene id may not shadow a film property */
+const FILM_PROPS = new Set(["title", "fps", "design", "defaults", "easings", "rules", "formats", "audio", "sounds", "scenes"]);
+
 const LAYER_PROPS = new Set(["id", "type", "at", "anchor", "offset", "opacity", "scale", "rotate", "in", "out", "tracks", "span", "probe", "formats", "why", "layers", "w", "h", "d", "thickness", "radius", "fill", "stroke", "progress", "text", "role", "size", "weight", "color", "accent", "align", "lineHeight", "letterSpacing", "maxWidth", "uppercase", "lines", "src", "fit", "shadow", "from", "to", "format", "prefix", "suffix", "dur", "ease", "values", "max", "direction", "gap", "labelColor", "labelSize", "showValues", "items", "marker", "markerColor"]);
 
 /** what an address points at: the object that holds the value and the remaining path inside it */
@@ -65,12 +71,14 @@ export const resolveAddress = (film: MgFilm, addr: string): Target => {
   const parts = addr.split(".").filter(Boolean);
   if (!parts.length) throw new Error("empty address");
   const head = parts[0];
-  if (head === "design" || head === "defaults" || head === "easings" || head === "rules" || head === "formats") {
+  // a scene named like a film property (a "title" card) is the scene; the film's own fields are reached when no scene has that id
+  const named = film.scenes.find((sc) => sc.id === head);
+  if (!named && (head === "design" || head === "defaults" || head === "easings" || head === "rules" || head === "formats")) {
     (film as unknown as Record<string, unknown>)[head] ??= {};
     return { kind: head === "design" ? "design" : head === "defaults" ? "defaults" : head === "easings" ? "easings" : "film", object: (film as unknown as Record<string, Record<string, unknown>>)[head], path: parts.slice(1), label: addr };
   }
-  if (head === "title" || head === "fps") return { kind: "film", object: film as unknown as Record<string, unknown>, path: parts, label: addr };
-  if (head === "audio") {
+  if (!named && (head === "title" || head === "fps")) return { kind: "film", object: film as unknown as Record<string, unknown>, path: parts, label: addr };
+  if (!named && head === "audio") {
     const cue = (film.audio ?? []).find((a) => a.id === parts[1]);
     if (!cue) throw new Error(`no audio cue "${parts[1]}" (have: ${(film.audio ?? []).map((a) => a.id).join(", ") || "none"})`);
     return { kind: "audio", object: cue as unknown as Record<string, unknown>, path: parts.slice(2), label: addr };
@@ -95,14 +103,19 @@ export const resolveAddress = (film: MgFilm, addr: string): Target => {
     list = childrenOf(next);
   }
   if (layer) return { kind: "layer", object: layer as unknown as Record<string, unknown>, path: parts.slice(i), scene, layer, list: holder, group, address: parts.slice(1, i).join("."), label: addr };
+  // a second segment that is neither a layer nor a scene property is a typo, not a new property
+  if (!SCENE_PROPS.has(parts[1])) throw new Error(`"${parts[1]}" is neither a layer of ${scene.id} (${scene.layers.map((l) => l.id).join(", ") || "none"}) nor a scene property (${[...SCENE_PROPS].join(", ")})`);
   return { kind: "scene", object: scene as unknown as Record<string, unknown>, path: parts.slice(1), scene, label: addr };
 };
 
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 const dig = (o: Record<string, unknown>, path: string[], create: boolean): { parent: Record<string, unknown>; key: string } | null => {
+  for (const k of path) if (FORBIDDEN_KEYS.has(k)) throw new Error(`"${k}" is not a property a film has`);
   let cur: Record<string, unknown> = o;
   for (let i = 0; i < path.length - 1; i++) {
     const k = path[i];
-    if (cur[k] === undefined || cur[k] === null) {
+    if (!Object.hasOwn(cur, k) || cur[k] === undefined || cur[k] === null) {
       if (!create) return null;
       cur[k] = /^\d+$/.test(path[i + 1]) ? [] : {};
     }
@@ -237,7 +250,7 @@ export const move = (film: MgFilm, addr: string, opts: { after?: string; before?
 export const duplicate = (film: MgFilm, addr: string, as?: string): string => {
   const t = resolveAddress(film, addr);
   if (t.kind === "layer" && !t.path.length) {
-    const id = as ?? `${t.layer!.id}-2`;
+    const id = as ?? `${t.layer!.id}-copy`;
     const list = t.list!;
     if (list.some((l) => l.id === id)) throw new Error(`layer "${id}" exists`);
     const copy = JSON.parse(JSON.stringify(t.layer)) as Layer;
@@ -247,7 +260,7 @@ export const duplicate = (film: MgFilm, addr: string, as?: string): string => {
     return [t.scene!.id, ...parent, id].join(".");
   }
   if (t.kind === "scene" && !t.path.length) {
-    const id = as ?? `${t.scene!.id}-2`;
+    const id = as ?? `${t.scene!.id}-copy`;
     if (film.scenes.some((s) => s.id === id)) throw new Error(`scene "${id}" exists`);
     const copy = JSON.parse(JSON.stringify(t.scene)) as MgScene;
     copy.id = id;
@@ -319,7 +332,7 @@ const lintTransition = (film: MgFilm, s: MgScene, out: MgFinding[]) => {
 export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
   const out: MgFinding[] = [];
   const colors = new Set<string>([...BUILTIN_COLORS, ...Object.keys(film.design?.colors ?? {})]);
-  const flatOk = (c: unknown) => typeof c !== "string" || colors.has(c) || /^#[0-9a-fA-F]{3,8}$/.test(c) || /^rgba?\(/.test(c);
+  const flatOk = (c: unknown) => typeof c !== "string" || colors.has(c) || /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(c) || /^rgba?\(/.test(c);
   // a gradient is a colour too: every stop of it must be a design colour or a hex
   const colorOk = (c: unknown): boolean => (isGradient(c) ? c.gradient.length >= 2 && c.gradient.every(flatOk) : flatOk(c));
   const colorWhy = (c: unknown): string => (isGradient(c) ? (c.gradient.length < 2 ? `a gradient needs at least two stops` : `gradient stop "${c.gradient.find((g) => !flatOk(g))}" is not a design colour or a hex`) : `"${String(c)}" is not a design colour or a hex`);
@@ -351,6 +364,36 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
       const l = node.layer;
       const lw = `${s.id}.${node.address}`;
       if (lids.has(l.id)) out.push({ level: "error", rule: "duplicate-id", where: lw, message: "layer id used twice in this scene; ids name events and probes, a group's children included" });
+      if (!l.id) out.push({ level: "error", rule: "id", where: `${s.id}.(no id)`, message: "a layer needs an id" });
+      if (l.id && SCENE_PROPS.has(l.id)) out.push({ level: "warn", rule: "id", where: lw, message: `"${l.id}" is also a scene property: the layer wins at this address, the scene's ${l.id} is not reachable by mh set` });
+      {
+        const L = l as unknown as Record<string, unknown>;
+        const num = (k: string) => (typeof L[k] === "number" ? (L[k] as number) : undefined);
+        for (const k of ["size", "w", "h", "d", "thickness", "labelSize"]) if (num(k) !== undefined && (num(k) as number) <= 0) out.push({ level: "error", rule: "size", where: `${lw}.${k}`, message: `${k} must be above 0` });
+        if (num("maxWidth") !== undefined && ((num("maxWidth") as number) <= 0 || (num("maxWidth") as number) > 1)) out.push({ level: "warn", rule: "max-width", where: `${lw}.maxWidth`, message: "maxWidth is a fraction of the frame width (0..1)" });
+        if (l.type === "list" && l.items?.length > 12) out.push({ level: "warn", rule: "long-list", where: lw, message: `${l.items.length} items: a viewer reads five, seven at most` });
+        if (l.type === "counter" && (l.to === undefined || !Number.isFinite(l.to))) out.push({ level: "error", rule: "counter", where: `${lw}.to`, message: "a counter needs a number to count to" });
+        if (l.type === "counter" && l.dur !== undefined && l.dur <= 0) out.push({ level: "error", rule: "counter", where: `${lw}.dur`, message: "dur must be above 0 (frames the count takes)" });
+        if (l.type === "bars" && l.max !== undefined && l.max <= 0) out.push({ level: "error", rule: "values", where: `${lw}.max`, message: "max must be above 0" });
+        if (l.type === "image" && typeof l.src === "string" && l.src.startsWith("public/")) out.push({ level: "warn", rule: "asset", where: `${lw}.src`, message: "src is relative to public/: drop the prefix" });
+        const st0 = l.in?.stagger;
+        if (st0) {
+          if (!["word", "char", "line", "item"].includes(st0.by)) out.push({ level: "error", rule: "stagger", where: `${lw}.in.stagger.by`, message: `"${st0.by}" is not a unit (word, char, line, item)` });
+          if (!(st0.each > 0)) out.push({ level: "error", rule: "stagger", where: `${lw}.in.stagger.each`, message: "each must be above 0 frames" });
+        }
+        if (l.in?.dur !== undefined && l.in.dur < 0) out.push({ level: "error", rule: "in", where: `${lw}.in.dur`, message: "dur cannot be negative" });
+        if ((l.in?.preset === "mask" || l.in?.preset === "line-wipe") && !st0) out.push({ level: "warn", rule: "preset", where: `${lw}.in`, message: `${l.in.preset} reads as a plain slide or wipe without a stagger (by line or word)` });
+        if (l.span && (l.span[0] >= l.span[1] || l.span[0] < 0)) out.push({ level: "error", rule: "span", where: `${lw}.span`, message: `span [${l.span[0]}, ${l.span[1]}] must run forward inside the scene` });
+        for (const [prop, keys] of Object.entries(l.tracks ?? {})) for (const k of keys ?? []) if (typeof k.v !== "number" || !Number.isFinite(k.v) || typeof k.at !== "number") out.push({ level: "error", rule: "track", where: `${lw}.tracks.${prop}`, message: "every key needs a numeric at and v" });
+        const springs = [l.in?.ease, l.out?.ease, ...Object.values(l.tracks ?? {}).flatMap((ks) => (ks ?? []).map((k) => k.ease))];
+        for (const e of springs) {
+          if (e && typeof e === "object" && e.spring) {
+            const sp = e.spring as Record<string, unknown>;
+            for (const k of Object.keys(sp)) if (!["damping", "stiffness", "mass", "overshootClamping"].includes(k)) out.push({ level: "error", rule: "ease", where: `${lw}`, message: `spring has no "${k}" (damping, stiffness, mass, overshootClamping)` });
+            for (const k of ["damping", "stiffness", "mass"]) if (sp[k] !== undefined && !((sp[k] as number) > 0)) out.push({ level: "error", rule: "ease", where: `${lw}`, message: `spring ${k} must be above 0` });
+          }
+        }
+      }
       lids.add(l.id);
       if (!l.type) {
         out.push({ level: "error", rule: "type", where: lw, message: "a layer needs a type" });
@@ -410,7 +453,7 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
       if (l.type === "text") {
         if (!l.text) out.push({ level: "warn", rule: "empty-text", where: lw, message: "no text" });
         const words = l.text.replace(/\*/g, "").split(/\s+/).filter(Boolean).length;
-        const settledAt = inAt + t.inDur + (st ? staggerDelay(st, unitsOf(l, st) - 1, 99) : 0);
+        const settledAt = inAt + t.inDur + (st ? staggerDelay(st, unitsOf(l, st) - 1, unitsOf(l, st)) : 0);
         const gone = t.outAt ?? s.dur;
         const secs = (gone - settledAt) / film.fps;
         if (secs < readSeconds(words)) out.push({ level: "warn", rule: "reading-time", where: lw, message: `${words} words hold ${secs.toFixed(2)} s once settled, ${readSeconds(words).toFixed(2)} s reads comfortably` });
@@ -443,6 +486,7 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
       if (l.type === "counter" && l.roll && /\./.test(l.format ?? "")) out.push({ level: "warn", rule: "counter", where: `${lw}.roll`, message: "an odometer rolls whole numbers; a decimal format counts the plain way" });
     }
   }
+  for (const u of unknownSounds(film)) out.push({ level: "error", rule: "sound", where: u.where, message: `"${u.name}" is neither in the sound bank (mh sounds) nor in the film's sounds map` });
   for (const a of film.audio ?? []) if (projectDir && !existsSync(join(projectDir, a.file.startsWith("public/") ? a.file : `public/${a.file}`))) out.push({ level: "warn", rule: "asset", where: `audio.${a.id}.file`, message: `${a.file} does not exist under public/ (mh voice writes voice cues)` });
   return out;
 };

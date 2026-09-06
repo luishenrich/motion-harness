@@ -98,6 +98,16 @@ export const resolve = (c: Compiled, ref: string | number): Location => {
     throw new Error(`cannot read "${rest}" after part "${part.id}" (use f120 or 4.2s)`);
   }
 
+  // a literal scene id or scene.event wins over the offset reading ("line-2" is the scene named line-2, not line minus two frames)
+  const literal = r.match(/^([\w-]+)(?:\.([\w-]+))?$/);
+  if (literal) {
+    const sc = c.scenes.find((s) => s.id === literal[1]);
+    if (sc && (!literal[2] || sc.events.some((e) => e.name === literal[2]) || ["mid", "end", "settled"].includes(literal[2]))) {
+      const ev = literal[2];
+      const local = !ev ? 0 : ev === "mid" ? Math.floor(sc.dur / 2) : ev === "end" ? sc.dur - 1 : ev === "settled" ? sc.settled - sc.start : sc.events.find((e) => e.name === ev)!.local;
+      return locate(c, sc.filmStart + local);
+    }
+  }
   // scene ids may contain hyphens followed by a letter ("tv-off"); a hyphen followed by digits is an offset
   const sceneRef = r.match(/^(\w+(?:-[A-Za-z_]\w*)*)(?:\.(\w+(?:-[A-Za-z_]\w*)*))?(?:([+-])(\d+))?$/);
   if (!sceneRef) throw new Error(`cannot resolve "${r}"`);

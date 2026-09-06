@@ -10,6 +10,7 @@ import type { Scene, Timeline, Transition } from "../timeline/schema.ts";
 import type { Layer, MgFilm, MgScene } from "./schema.ts";
 import { childrenOf, colorOf, isDark, layerTiming } from "./schema.ts";
 import { cameraSettle, settleOf, walkLayers } from "./pose.ts";
+import { soundCues } from "./sound.ts";
 
 const clamp = (v: number, dur: number) => Math.max(0, Math.min(dur - 1, Math.round(v)));
 
@@ -77,7 +78,7 @@ export const toScene = (film: MgFilm, s: MgScene, index = film.scenes.indexOf(s)
       .filter((n) => n.layer.probe !== false && n.layer.type !== "shape" && n.layer.type !== "particles")
       .map((n) => {
         const t = layerTiming(film, s, n.layer);
-        const from = Math.min(s.dur - 1, n.delay + t.inAt + t.inDur);
+        const from = Math.min(t.to - 1, s.dur - 1, n.delay + t.inAt + t.inDur);
         const to = t.outAt !== null ? Math.max(from, t.outAt - 1) : t.to - 1;
         return `${n.layer.id}@${from}-${to}`;
       }),
@@ -92,6 +93,6 @@ export const mographTimeline = (film: MgFilm, opts: { film?: string; formats?: s
     rules: { minSceneDur: 20, maxEnterFrames: 30, holdFrames: [10, 240], ...(film.rules ?? {}) },
     // the compositions carry no sound of their own: every cue is mixed by the harness from the timeline
     parts: [{ id: "film", composition: Object.fromEntries(formats.map((f) => [f, `${name}-${f}`])), enterFrames: film.defaults?.enterFrames ?? 10, audio: false, scenes: film.scenes.map((s, i) => toScene(film, s, i)) }],
-    audio: (film.audio ?? []).map((a) => ({ id: a.id, kind: a.kind, file: a.file.startsWith("public/") ? a.file : `public/${a.file}`, at: a.at, gain: a.gain, fadeOut: a.fadeOut, loop: a.loop, trim: a.trim, text: a.text, license: a.license, ramps: a.ramps })),
+    audio: [...soundCues(film), ...(film.audio ?? []).map((a) => ({ id: a.id, kind: a.kind, file: a.file.startsWith("public/") ? a.file : `public/${a.file}`, at: a.at, gain: a.gain, fadeOut: a.fadeOut, loop: a.loop, trim: a.trim, text: a.text, license: a.license, ramps: a.ramps }))],
   };
 };

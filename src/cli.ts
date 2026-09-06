@@ -1836,7 +1836,7 @@ const cmdAdd = async (args: Args) => {
     if (typeof layer !== "object") die("usage: mh add layer <scene> '{\"id\":\"x\",\"type\":\"text\",\"text\":\"...\"}' [--after id|--before id]");
     addLayer(film, a, layer, pos);
     log(`layer ${a}.${layer.id} added (${layer.type})`);
-    mgSave(args, film, path, x.cfg.projectDir, `mh frame ${a}.${layer.id}Settled --format all`);
+    mgSave(args, film, path, x.cfg.projectDir, `mh frame ${a.split(".")[0]}.${layer.id}Settled --format all`);
   } else die("usage: mh add scene <json> [--after id] | mh add layer <scene> <json> [--after id|--before id]");
 };
 
