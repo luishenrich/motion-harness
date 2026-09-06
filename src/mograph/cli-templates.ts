@@ -127,7 +127,8 @@ const sceneLine = (s: MgScene) => `${s.id} (${s.template}): ${s.dur}f on ${s.gro
 
 const cmdList = (a: Args) => {
   if (flag(a, "json")) return out(JSON.stringify(Object.values(TEMPLATES).map((t) => ({ name: t.name, description: t.description, params: t.params })), null, 2));
-  log(table(Object.values(TEMPLATES).map((t) => [t.name, t.description, Object.entries(t.params).map(([k, s]) => `${k}=${JSON.stringify(s.default)}`).join(" ")]), ["template", "what it is", "params (default)"]));
+  // the defaults are wide copy: the names here, the values and their help in `mh template show`
+  log(table(Object.values(TEMPLATES).map((t) => [t.name, t.description, Object.keys(t.params).join(", ")]), ["template", "what it is", "params"]));
   log(`mh template show <name>   mh template add <name> --param k=v ...   mh template apply <scene> [name]`);
 };
 
@@ -195,7 +196,7 @@ export const commands: Record<string, (a: Args) => Promise<void>> = {
 };
 
 export const HELP = `templates (a scene from a handful of parameters, see docs/mograph.md):
-  template list [--json]            every template with its parameters and their defaults
+  template list [--json]            every template and the parameters it takes (--json adds the defaults and the help)
   template show <name> [--param k=v ...] [--json]
                                     what the template writes: the parameters, then the scene as JSON
   template add <name> [--param k=v ...] [--id x] [--after id|--before id] [--no-groups]

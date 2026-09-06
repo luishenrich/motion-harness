@@ -739,12 +739,12 @@ const countdown: MgTemplate = {
         id: "ring", type: "shape", shape: "ring", d: 380, thickness: 14, fill: c.accent, stroke: c.dim, progress: 1, probe: false,
         at: at(0.5, 0.45), in: { preset: "fade", at: 0, dur: 8, ease: "out" },
         tracks: { progress: [{ at: 8, v: 0 }, { at: end, v: 1, ease: "linear" }] },
-        ...V({ d: 330, at: at(0.5, 0.45) }),
+        ...V({ d: 430, thickness: 16, at: at(0.5, 0.45) }),
       },
       {
         id: "number", type: "counter", from: N(p, "from"), to: N(p, "to"), format: "0", size: 190, weight: 800, color: c.fg, dur: count,
         at: at(0.5, 0.45), in: { preset: "pop", at: 8, dur: 12, ease: "back" },
-        ...V({ size: 165, at: at(0.5, 0.45) }),
+        ...V({ size: 215, at: at(0.5, 0.45) }),
       },
       S(p, "label") && {
         id: "label", type: "text", text: S(p, "label"), role: "body", size: 36, weight: 500, uppercase: true, letterSpacing: 0.14, color: c.dim, accent: c.accentText,
