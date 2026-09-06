@@ -28,7 +28,11 @@ export const fontsUrl = (film: MgFilm): string => {
   return `https://fonts.googleapis.com/css2?${[...new Set(fams)].map((f) => `family=${encodeURIComponent(f).replace(/%20/g, "+")}:wght@400;500;600;700;800`).join("&")}&display=swap`;
 };
 
-/** css transform and filter for a pose */
+/**
+ * css transform and filter for a pose. The order is place, move, scale, then
+ * (in Box) the effects, then rotate: a shadow or a glow is drawn in the
+ * layer's upright frame, so turning a layer does not turn its light.
+ */
 const poseStyle = (p: Pose, fr: Frame): React.CSSProperties => {
   const parts: string[] = [];
   if (p.x || p.y) parts.push(`translate(${p.x * fr.u}px, ${p.y * fr.u}px)`);
@@ -52,8 +56,10 @@ const Box: React.FC<{ ctx: Ctx; layer: Layer; pose: Pose; children: React.ReactN
   const base: React.CSSProperties = { position: "absolute", left: pl.left, top: pl.top, transform: pl.translate, textAlign: pl.textAlign, ...extra };
   return (
     <div data-probe={layer.probe === false ? undefined : layer.id} data-mg={`${ctx.scene.id}.${layer.id}`} data-lines={lines} data-lint={lintFlags(layer)} style={{ ...base, visibility: pose.visible ? "visible" : "hidden" }}>
-      <div style={{ ...poseStyle(pose, ctx.fr), transformOrigin: "50% 50%" }}>
-        <Fx ctx={ctx} layer={layer}>{children}</Fx>
+      <div style={{ ...poseStyle({ ...pose, rotate: 0 }, ctx.fr), transformOrigin: "50% 50%" }}>
+        <Fx ctx={ctx} layer={layer}>
+          {pose.rotate ? <div style={{ transform: `rotate(${pose.rotate}deg)`, transformOrigin: "50% 50%" }}>{children}</div> : children}
+        </Fx>
       </div>
     </div>
   );

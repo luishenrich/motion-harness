@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { MgFilm } from "./schema.ts";
 import { colorOf } from "./schema.ts";
 import { colorTrackAt, flatOf, gradientCss, groundFlat, groundPaint, layerPaint, mixHex, oklabToRgb, paintOf, rgbToOklab, toHex, toRgb } from "./colour.ts";
+import { effectStyle, filterOf, gradientTextOf, highlightAt, lintFlags, strokeStyle } from "./effects.ts";
 import { lintFilm } from "./edit.ts";
 
 const film = (): MgFilm => ({
@@ -103,5 +104,57 @@ describe("colour tracks", () => {
     expect(rules).toContain("color:one.box.fill");
     expect(rules).toContain("color:one.line.colorTracks.color@20");
     expect(rules).toContain("color:one.groundTracks@0");
+  });
+});
+
+describe("effects", () => {
+  const fx = (): MgFilm => {
+    const f = film();
+    f.scenes[0].layers[0].effects = { shadow: { y: 20, blur: 50, alpha: 0.3 }, glow: { color: "accent", blur: 30, alpha: 0.5 }, blend: "screen" };
+    return f;
+  };
+  test("shadow and glow become drop-shadows, a stroke knows text from a box", () => {
+    const f = fx();
+    const l = f.scenes[0].layers[0];
+    const filter = filterOf(f, l.effects, 2);
+    expect(filter).toBe("drop-shadow(0px 40px 100px rgba(0, 0, 0, 0.3)) drop-shadow(0 0 20px rgba(242, 180, 65, 0.5)) drop-shadow(0 0 60px rgba(242, 180, 65, 0.5))");
+    expect(effectStyle(f, l, 1)).toMatchObject({ mixBlendMode: "screen" });
+    expect(strokeStyle(f, { stroke: { color: "ink", width: 3 } }, 2, true)).toMatchObject({ WebkitTextStrokeWidth: "6px", WebkitTextStrokeColor: "#12151A" });
+    expect(strokeStyle(f, { stroke: { color: "ink", width: 3 } }, 2, false)).toMatchObject({ boxShadow: "0 0 0 6px #12151A" });
+    expect(gradientTextOf({ gradientText: ["accent", "rose"] })).toMatchObject({ gradient: ["accent", "rose"], angle: 90 });
+  });
+  test("the highlight sweeps after the layer has settled", () => {
+    const f = film();
+    const s = f.scenes[0];
+    const l = s.layers[0];
+    l.effects = { highlight: { color: "accent", pad: 8, only: "marks" } };
+    // in at 0 for 10 frames, so the marker starts at 14
+    expect(highlightAt(f, s, l, 12, 1)!.progress).toBe(0);
+    expect(highlightAt(f, s, l, 26, 1)!.progress).toBe(1);
+    const mid = highlightAt(f, s, l, 20, 1)!;
+    expect(mid.progress).toBeGreaterThan(0);
+    expect(mid.progress).toBeLessThan(1);
+    expect(mid.style.backgroundSize).toBe(`${mid.progress * 100}% 100%`);
+    expect(mid.only).toBe("marks");
+    l.effects = { highlight: { in: { at: 40, dur: 10 }, only: "all" } };
+    expect(highlightAt(f, s, l, 39, 1)!.progress).toBe(0);
+    expect(highlightAt(f, s, l, 50, 1)!.progress).toBe(1);
+  });
+  test("what a layer tells the lints about itself", () => {
+    const f = film();
+    expect(lintFlags(f.scenes[0].layers[0])).toBe("color-track");
+    expect(lintFlags({ id: "p", type: "particles", probe: false, count: 40 })).toBe("none no-collision");
+    expect(lintFlags(f.scenes[0].layers[1])).toBeUndefined();
+  });
+  test("the lint reads the effects", () => {
+    const f = film();
+    f.scenes[0].layers[0].effects = { glow: { color: "nope" }, blend: "sideways", gradientText: ["accent"], shine: 1 } as never;
+    const rules = lintFilm(f).map((x) => `${x.rule}:${x.where}`);
+    expect(rules).toContain("effect:one.line.effects.shine");
+    expect(rules).toContain("effect:one.line.effects.blend");
+    expect(rules).toContain("color:one.line.effects.glow");
+    expect(rules).toContain("effect:one.line.effects.gradientText");
+    f.scenes[0].layers[1].effects = { highlight: { color: "accent" } };
+    expect(lintFilm(f).map((x) => `${x.rule}:${x.where}`)).toContain("effect:one.box.effects.highlight");
   });
 });
