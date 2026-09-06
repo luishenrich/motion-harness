@@ -1,6 +1,9 @@
 # motion-harness
 
-Eyes and hands for coding agents that make videos with [Remotion](https://remotion.dev).
+Eyes and hands for AI agents that make videos. A CLI next to a React video project (the
+Remotion API, rendered by its own engine or by Remotion), with skills for Claude Code, Codex,
+Cursor and every agentskills.io client, and an MCP server for the hosts that do not have a
+shell.
 
 Remotion renders real React components pixel-perfect into video, which is why a product team
 can build a launch film from the same code as the product. But an agent working on that film
@@ -37,24 +40,45 @@ motion-harness sits next to a Remotion project and gives the agent:
   targets instead of hand-typed coordinates (recipe in the skill)
 - **an agent skill** (`skill/SKILL.md`) that teaches the loop
 
-Nothing here replaces Remotion. It is the harness Remotion does not ship.
+- **a native engine**: Vite serves the film through a shim of the Remotion API, Playwright drives
+  Chrome one frame at a time, frames stream into ffmpeg. No Remotion install, no company license,
+  no version pin. A frame in about 40 ms, a 60 second film in about a minute, the same pixels
+  as Remotion (the film's `interpolate`, `spring`, `Easing` and `random` are ports, pinned by tests
+  against the real package). `--engine remotion` keeps the project's Remotion when you want it
+- **stills, subtitles, voice, loudness, deliveries**: every `<Still>` linted like a frame, an SRT
+  and burned captions from the timeline, voice lines synthesised and measured, loudness per
+  platform, a delivery folder with per-platform copies, a manifest with sha1 and chapters, upload
+- **a second opinion**: `mh judge` hands a clip to a model that watches video and returns
+  findings with film times; `mh motion --reference` compares a scene's motion curve with a clip
+- **receipts**: every command records what it produced, from which sources, with sha1
+
+Nothing here replaces the React video model. It is the harness around it that agents need.
 
 ## Install
 
 ```bash
-git clone <this repo> motion-harness && cd motion-harness && bun install
-bash examples/basic/make-assets.sh            # two generated audio files for the example
-bun run src/cli.ts doctor --project examples/basic
+npx motion-harness help                        # or: bun add -g motion-harness; then mh help
+mh init --project my-film                      # writes harness.config.ts
+mh doctor --project my-film
 ```
 
-Requirements: Bun 1.3+, ffmpeg on the PATH, and a Remotion project on the same Remotion
-version as this repo's devDependencies (the renderer refuses to open bundles of a different
-version). Chrome Headless Shell is downloaded by Remotion on first use.
+Requirements: Bun 1.2+, ffmpeg on the PATH, a Chrome (the Remotion headless shell of the
+project or the harness is found and reused; else `bunx playwright install chromium`, or set
+`MH_CHROME`). Remotion is optional: with `engine: "native"` (or `--engine native`) the project
+needs only `react`, `react-dom` and its own components; the `remotion` import resolves to the
+shim. With the remotion engine the project's Remotion is used as is.
 
-For your own project, add a `harness.config.ts` next to its `package.json`
-(`mh init` writes a template) and run `mh doctor --project <dir>`. The harness bundles your
-Root through a generated wrapper inside `<cacheDir>/entry`, so `remotion` and `react` resolve
-to your project's copies and no project file is modified.
+From source:
+
+```bash
+git clone https://github.com/luishenrich/motion-harness && cd motion-harness && bun install
+bash examples/basic/make-assets.sh            # two generated audio files for the example
+bun run src/cli.ts check --project examples/basic --engine native
+```
+
+Skills for agents: `npx skills add luishenrich/motion-harness` installs the loop, the feedback,
+sound and delivery skills into Claude Code, Codex, Cursor or Gemini CLI. `mh mcp` serves the
+same commands as MCP tools (`claude mcp add motion-harness -- mh mcp`).
 
 ## The loop
 
@@ -164,6 +188,21 @@ examples/basic  a two-part film whose compositions read the timeline
 skill/SKILL.md  the agent skill
 ```
 
+## Two engines
+
+| | native | remotion |
+|---|---|---|
+| bundling | Vite dev server, one module transform per edit | webpack bundle, cached by source hash |
+| browser | Playwright over the Remotion headless shell or any Chrome | @remotion/renderer's Chrome |
+| a still | about 40 ms after the page is up | 150 to 700 ms |
+| a 60 s film, 1760 frames | about 60 s | several minutes |
+| composition sound (`<Audio>`) | not rendered; sound is timeline cues (`part.audio: false`) | rendered |
+| license | MIT | Remotion's, company license above three people |
+| pixels | identical on static frames; moving text edges differ under 0.1 % of pixels | reference |
+
+Both sit behind one `Engine` interface; segment caches, frames runs and receipts are keyed by
+engine, so switching never reuses the other engine's pixels.
+
 ## Why not a JSON video editor, a video-understanding model, or an MCP
 
 JSON render APIs (Shotstack, Creatomate) have addressable timelines but cannot render your React
@@ -174,10 +213,14 @@ the agent needs tools, not a chat. This repo is those tools.
 
 ## Status
 
-Built in one day against a 59 second launch film with 35 scenes and two formats. Everything in
-the loop above has run end to end on that film and on the example. Known gaps: the review player
-has no auth (run it locally), `mh motion` on more than six scenes needs `--yes`, and Windows is
-untested.
+Built against a 59 second launch film with 23 scenes and two formats, and the film about the
+tool itself (`examples/mh-film`, 21 seconds, native engine, no Remotion, rendered in 35 s for
+both formats). Everything in the loop above has run end to end on both. Known gaps: `<Audio>`
+inside a composition is not rendered by the native engine (sound is timeline cues), string
+output ranges in `interpolate` are not ported, the review page's shared comments are only
+verified against the type definitions, `mh voice` has not run against a live ElevenLabs key,
+and Windows is untested. The market research behind the product direction and the release
+order live in `docs/product.md`.
 
 ## License
 

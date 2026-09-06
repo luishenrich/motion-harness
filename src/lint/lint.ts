@@ -254,11 +254,14 @@ export const lintProbe = (cfg: LoadedConfig, c: Compiled, format: string, frames
       }
     }
     const scene = c.scenes.find((s) => s.id === f.sceneId);
+    const localHere = f.local ?? (Number(f.label.split("+")[1]) || 0);
     if (scene?.probes.length) {
+      // inside a declared exit transition the scene is leaving: an element fading out there is not missing
+      const leaving = scene.exit?.dur ? localHere >= scene.dur - scene.exit.dur : false;
       for (const key of scene.probes) {
         const it = f.probe.items.find((i) => i.key === key);
         if (!it) out.push({ level: "error", rule: "probe-present", where: `${f.label} ${key}`, message: "expected data-probe element not in the DOM" });
-        else if (!it.visible) out.push({ level: "warn", rule: "probe-visible", where: `${f.label} ${key}`, message: `present but not visible (opacity ${it.opacity}, ${it.w}x${it.h} at ${it.x},${it.y})` });
+        else if (!it.visible && !leaving) out.push({ level: "warn", rule: "probe-visible", where: `${f.label} ${key}`, message: `present but not visible (opacity ${it.opacity}, ${it.w}x${it.h} at ${it.x},${it.y})` });
       }
     }
     // during a part's overlap the previous scene is still rendered under this one: its elements are not this scene's

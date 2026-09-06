@@ -679,7 +679,9 @@ const cmdDeliver = async (args: Args) => {
   const films = [];
   for (const format of formats) {
     const x = await ctx({ ...args, format });
-    const master = join(x.cfg.cachePath, "out", `${x.filmName}-${x.format}.mp4`);
+    // masters from the cache, or from the folder mh render --out-dir wrote them to
+    const dirs = [str(args, "films") ? resolvePath(str(args, "films")!) : null, join(x.cfg.cachePath, "out")].filter((d): d is string => !!d);
+    const master = dirs.map((d) => join(d, `${x.filmName}-${x.format}.mp4`)).find(existsSync) ?? join(dirs[dirs.length - 1], `${x.filmName}-${x.format}.mp4`);
     films.push({ format, master, web: master.replace(/\.mp4$/, "-web.mp4"), size: x.size });
   }
   const wantStills = list(args, "stills");
@@ -1589,7 +1591,7 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
                                     generated clips registry (clips.json): what each cost and looks like; lint clip-colour-drift between consecutive clips
   judge --scene a[,b] [--model m] [--checklist "a;b"] [--file clip.mp4]
                                     a model watches the clip (Gemini, GEMINI_API_KEY): findings with film times, leads to confirm with mh frame
-  deliver --out dir [--format all] [--stills a,b|all] [--lang en] [--platforms youtube,tiktok] [--captions] [--upload prefix]
+  deliver --out dir [--format all] [--films dir] [--stills a,b|all] [--lang en] [--platforms youtube,tiktok] [--captions] [--upload prefix]
                                     films per format, stills as jpg, the srt, per-platform loudness copies, burned captions, a manifest (sizes, sha1, loudness, chapters, urls) and a .gitignore for the mp4;
                                     --upload puts every file on S3/R2 (MH_S3_* or CLOUDFLARE_* env) and records the urls
   init [--force]                    write a harness.config.ts template into the project
