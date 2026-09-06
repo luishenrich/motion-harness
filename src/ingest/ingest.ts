@@ -29,6 +29,8 @@ export type Asset = {
   loudness?: { lufs: number; truePeak: number };
   /** seconds where the picture cuts (shot changes) */
   shots?: number[];
+  /** one entry per shot: where it starts and how bright it is, so a scene that starts mid-clip knows the ground it blends into */
+  segments?: { start: number; luma: number }[];
   /** spans without speech or sound */
   silences?: { start: number; end: number }[];
   colour?: { first: { luma: number }; mid: { luma: number }; last: { luma: number } };
@@ -80,6 +82,25 @@ export const darkEdges = async (png: string): Promise<{ left: number; right: num
   while (top < H / 2 && rowDark(top)) top++;
   while (bottom < H / 2 && rowDark(H - 1 - bottom)) bottom++;
   return { left, right, top, bottom };
+};
+
+/** mean luma of a frame at `t` seconds, from a 32x18 downscale */
+const lumaAt = async (file: string, t: number, png: string): Promise<number | null> => {
+  await run(["ffmpeg", "-y", "-v", "error", "-ss", t.toFixed(3), "-i", file, "-frames:v", "1", "-vf", "scale=32:18", png]).catch(() => null);
+  if (!existsSync(png)) return null;
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  let l = 0;
+  for (let i = 0; i < info.width * info.height; i++) l += 0.2126 * data[i * 3] + 0.7152 * data[i * 3 + 1] + 0.0722 * data[i * 3 + 2];
+  return Math.round(l / (info.width * info.height));
+};
+
+/** the luma of the shot that contains `t`; the mid frame when the clip has no per-shot readings */
+export const lumaAtTime = (a: Asset, t: number): number | null => {
+  if (a.segments?.length) {
+    const seg = [...a.segments].reverse().find((x) => x.start <= t) ?? a.segments[0];
+    return seg.luma;
+  }
+  return a.colour?.mid.luma ?? null;
 };
 
 const streams = async (file: string) => {
@@ -143,7 +164,17 @@ export const ingestFile = async (cfg: LoadedConfig, file: string, opts: { id?: s
     asset.height = p.height;
     asset.fps = p.fps;
     asset.colour = { first: { luma: p.colour.first.luma }, mid: { luma: p.colour.mid.luma }, last: { luma: p.colour.last.luma } };
-    if (opts.shots !== false) asset.shots = await detectShots(abs);
+    if (opts.shots !== false) {
+      asset.shots = await detectShots(abs);
+      const starts = [0, ...asset.shots].slice(0, 24);
+      const segs: { start: number; luma: number }[] = [];
+      for (let i = 0; i < starts.length; i++) {
+        const end = starts[i + 1] ?? asset.seconds ?? starts[i] + 1;
+        const luma = await lumaAt(abs, Math.min(starts[i] + 0.15, (starts[i] + end) / 2), join(work, `seg-${i}.png`));
+        if (luma !== null) segs.push({ start: Math.round(starts[i] * 100) / 100, luma });
+      }
+      asset.segments = segs;
+    }
     // a bar is dark on every sampled frame and narrow; a dark ground with centred content is neither
     const frames = ["first", "mid", "last"].map((n) => join(work, `${basename(abs)}-${n}.png`));
     const es = await Promise.all(frames.map((f) => darkEdges(f)));

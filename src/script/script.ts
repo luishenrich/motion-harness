@@ -9,7 +9,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chatJson } from "../ai/azure.ts";
-import type { Asset } from "../ingest/ingest.ts";
+import { lumaAtTime, type Asset } from "../ingest/ingest.ts";
 
 export type SceneKind = "text" | "clip" | "image";
 export type ScriptScene = {
@@ -88,7 +88,10 @@ export const normalizeScript = (s: Script, assets?: Asset[]): Script => {
     if (a && a.kind === "video") kind = "clip";
     let ground: "dark" | "light" = (sc.ground as string) === "light" || (sc.ground as string) === "cream" ? "light" : "dark";
     // footage sits on the ground its own edges blend into: a dark clip on ink, a bright one on paper
-    if (a && kind !== "text" && a.colour) ground = a.colour.mid.luma < 110 ? "dark" : "light";
+    if (a && kind !== "text") {
+      const luma = lumaAtTime(a, Number(sc.in) || 0);
+      if (luma !== null) ground = luma < 110 ? "dark" : "light";
+    }
     let focus = Array.isArray(sc.focus) && sc.focus.length === 2 ? ([Math.min(1, Math.max(0, Number(sc.focus[0]) || 0.5)), Math.min(1, Math.max(0, Number(sc.focus[1]) || 0.5))] as [number, number]) : undefined;
     // the centre is no opinion: the measured subject frames the crop instead
     if (focus && focus[0] === 0.5 && focus[1] === 0.5) focus = undefined;
@@ -343,7 +346,10 @@ const mediaFit = (s: SceneSpec, a: AssetSpec | undefined, width: number, height:
   const zoom = Math.min(cap, Math.max(s.zoom || 1, edgeZoom));
   // objectPosition and transformOrigin share one point p: the picture's p sits at the frame's p, so p = (c - v/2) / (1 - v) centres c in a visible span v
   const centred = (c: number, v: number) => (v >= 1 ? 0.5 : Math.min(1, Math.max(0, (c - v / 2) / (1 - v))));
-  const pos: [number, number] = s.focus ? s.focus : box ? [centred(box[0] + box[2] / 2, vis[0] / zoom), centred(box[1] + box[3] / 2, vis[1] / zoom)] : [0.5, 0.5];
+  // a subject taller than the visible span keeps its top (heads sit there) with a little headroom; a wider one is centred
+  const vy = vis[1] / zoom;
+  const cy = box ? (box[3] > vy ? Math.max(0, box[1] - 0.03) + vy / 2 : box[1] + box[3] / 2) : 0.5;
+  const pos: [number, number] = s.focus ? s.focus : box ? [centred(box[0] + box[2] / 2, vis[0] / zoom), centred(cy, vy)] : [0.5, 0.5];
   return { fit, zoom, cap, pos };
 };
 
