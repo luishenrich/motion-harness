@@ -43,6 +43,7 @@ import type { Layer as MgLayer, MgScene } from "./mograph/schema.ts";
 import { writeFilm, scaffoldMgFiles, normalizeFilm } from "./mograph/script.ts";
 import { editMiddleware } from "./mograph/serve.ts";
 import { soundsCommand, HELP as SOUNDS_HELP } from "./mograph/cli-sound.ts";
+import { commands as templateCommands, HELP as TEMPLATES_HELP } from "./mograph/cli-templates.ts";
 import { startVite } from "./engine/vite.ts";
 import { transcribeFile, saveTranscript, transcriptSrt } from "./transcribe/transcribe.ts";
 import { makeImage, loadImages } from "./image/image.ts";
@@ -2063,6 +2064,8 @@ motion graphics as data (film.mograph.json, see docs/mograph.md):
   layout [scene]                    stacked blocks pushed apart and kept in the safe band, per format
   edit [--port 4850] [--no-open]    the editor in the browser: stage, scrubber, layers, inspector, keyboard; every change lands in the file
 ${SOUNDS_HELP}
+
+${TEMPLATES_HELP}
                                     every edit lints the film and names the frame to look at
                                     words with times (Gemini listens, silences sharpen the edges); --spans lists the spoken spans a silence cut would keep
   image "<prompt>" [--width --height] [--provider azure-mai|azure-flux|openai] [--out file]
@@ -2133,6 +2136,7 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   layout: cmdLayout,
   edit: cmdEdit,
   sounds: cmdSounds,
+  template: templateCommands.template,
   image: cmdImage,
   otio: cmdOtio,
 };
