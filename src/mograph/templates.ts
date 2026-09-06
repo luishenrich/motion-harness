@@ -351,7 +351,7 @@ const compare: MgTemplate = {
     right: { type: "string", default: "After", help: "the right headline" },
     rightItems: { type: "list", default: "measuring | one frame | knowing", help: "the right items, separated by |" },
     marker: { type: "string", default: "dash", help: "dot, number, check, dash or none" },
-    size: { type: "number", default: 40, help: "item size in u pixels" },
+    size: { type: "number", default: 46, help: "item size in u pixels" },
     ground: pGround("ink"),
     accent: pAccent,
     dur: pDur(150),
@@ -363,7 +363,7 @@ const compare: MgTemplate = {
     const marker = (S(p, "marker") || "dash") as "dot" | "number" | "check" | "dash" | "none";
     const col = (side: "left" | "right", head: string, items: string[], x: number, delay: number, vy: [number, number]): Layer[] => [
       {
-        id: `${side}-head`, type: "text", text: head, size: 46, weight: 700, color: side === "right" ? c.accentText : c.fg, accent: c.accentText, uppercase: true, letterSpacing: 0.08, align: "center",
+        id: `${side}-head`, type: "text", text: head, size: 52, weight: 700, color: side === "right" ? c.accentText : c.fg, accent: c.accentText, uppercase: true, letterSpacing: 0.08, align: "center",
         at: at(x, 0.3), maxWidth: 0.34, in: { preset: "rise", at: delay, dur: 12, ease: "out" },
         ...V({ size: 50, maxWidth: 0.8, at: at(0.5, vy[0]) }),
       },
