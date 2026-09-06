@@ -35,6 +35,8 @@ export const openRemotion = async (cfg: LoadedConfig, opts: { force?: boolean; l
         logLevel: "error",
         overwrite: true,
         pixelFormat: "yuv420p",
+        // limited range, bt709 tagged, like the native engine; without it Remotion writes yuvj420p (full range) and players disagree on the greys
+        colorSpace: "bt709",
         muted: true,
         port: nextPort(),
       });

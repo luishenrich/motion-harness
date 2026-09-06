@@ -118,6 +118,8 @@ const __measure = (mode, settleMs) => {
     const r = el.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return;
     if (__effectiveOpacity(el) < 0.02) return;
+    // a colour between two keys of a colour track is a mix, not a token: the film's lint checks the stops instead
+    if (el.closest('[data-lint~="color-track"]')) return;
     const cs = getComputedStyle(el);
     for (const [prop, val] of [["color", cs.color], ["bg", cs.backgroundColor], ["border", cs.borderTopColor]]) {
       if (!val || val === "rgba(0, 0, 0, 0)" || val === "transparent") continue;

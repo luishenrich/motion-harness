@@ -1,0 +1,366 @@
+{
+  "title": "Colour and effects",
+  "fps": 30,
+  "design": {
+    "ink": "#0E1116",
+    "paper": "#F4F1EA",
+    "accent": "#F2B441",
+    "muted": "#6A7280",
+    "colors": {
+      "teal": "#3FB9A8",
+      "rose": "#E86F7A",
+      "deep": "#123246",
+      "plum": "#2A1B33"
+    },
+    "fontDisplay": "Sora",
+    "fontBody": "Inter Tight",
+    "fontMono": "JetBrains Mono"
+  },
+  "formats": {
+    "wide": { "width": 1920, "height": 1080 },
+    "vertical": { "width": 1080, "height": 1920 }
+  },
+  "easings": {
+    "settle": "cubic-bezier(0.2, 0.9, 0.1, 1)"
+  },
+  "defaults": {
+    "enterFrames": 0,
+    "layerIn": { "preset": "rise", "dur": 14, "ease": "out" }
+  },
+  "scenes": [
+    {
+      "id": "hook",
+      "dur": 110,
+      "ground": { "gradient": ["ink", "deep"], "angle": 155 },
+      "groundTracks": [
+        { "at": 0, "v": { "gradient": ["ink", "deep"], "angle": 155 } },
+        { "at": 80, "v": { "gradient": ["ink", "plum"], "angle": 155 }, "ease": "inOut" }
+      ],
+      "exit": { "type": "fade", "dur": 8 },
+      "why": "the ground is a gradient that travels, the title turns over letter by letter",
+      "layers": [
+        {
+          "id": "dust",
+          "type": "particles",
+          "probe": false,
+          "count": 70,
+          "color": "accent",
+          "size": 7,
+          "speed": 0.9,
+          "spread": 40,
+          "seed": 7,
+          "shape": "dot",
+          "effects": { "blend": "screen" },
+          "in": { "preset": "fade", "at": 0, "dur": 20 }
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "MOTION AS DATA",
+          "size": 132,
+          "color": "paper",
+          "at": { "x": 0.5, "y": 0.44 },
+          "maxWidth": 0.86,
+          "lines": 1,
+          "effects": { "glow": { "color": "accent", "blur": 30, "alpha": 0.45 } },
+          "in": { "preset": "flip", "at": 4, "dur": 12, "ease": "out", "stagger": { "by": "char", "each": 2 } },
+          "formats": { "vertical": { "size": 96 } }
+        },
+        {
+          "id": "kicker",
+          "type": "text",
+          "text": "colour, effects, shapes",
+          "role": "body",
+          "size": 44,
+          "weight": 500,
+          "color": "accent",
+          "at": { "x": 0.5, "y": 0.57 },
+          "lines": 1,
+          "in": { "preset": "track", "at": 46, "dur": 18, "distance": 45 },
+          "formats": { "vertical": { "size": 38, "at": { "x": 0.5, "y": 0.54 } } }
+        }
+      ]
+    },
+    {
+      "id": "sweep",
+      "dur": 100,
+      "ground": "paper",
+      "exit": { "type": "fade", "dur": 8 },
+      "why": "a marker sweeps behind the words that matter",
+      "layers": [
+        {
+          "id": "head",
+          "type": "text",
+          "text": "A marker sweeps\nbehind *the words*",
+          "size": 84,
+          "color": "ink",
+          "accent": "ink",
+          "at": { "x": 0.5, "y": 0.4 },
+          "maxWidth": 0.74,
+          "lines": 2,
+          "lineHeight": 1.15,
+          "effects": { "highlight": { "color": "accent", "pad": 12, "radius": 6, "only": "marks", "in": { "at": 26, "dur": 16, "ease": "out" } } },
+          "in": { "preset": "rise", "at": 4, "dur": 14 },
+          "formats": { "vertical": { "size": 74, "maxWidth": 0.84, "at": { "x": 0.5, "y": 0.42 } } }
+        },
+        {
+          "id": "sub",
+          "type": "text",
+          "text": "one line\nat a time",
+          "role": "body",
+          "size": 46,
+          "weight": 500,
+          "color": "muted",
+          "at": { "x": 0.5, "y": 0.66 },
+          "lines": 2,
+          "lineHeight": 1.25,
+          "in": { "preset": "line-wipe", "at": 30, "dur": 14, "from": "left", "stagger": { "by": "line", "each": 8 } },
+          "formats": { "vertical": { "at": { "x": 0.5, "y": 0.62 } } }
+        }
+      ]
+    },
+    {
+      "id": "draw",
+      "dur": 100,
+      "ground": "ink",
+      "exit": { "type": "fade", "dur": 8 },
+      "why": "three shapes that draw themselves: a path, an arrow, a star",
+      "layers": [
+        {
+          "id": "path",
+          "type": "shape",
+          "shape": "path",
+          "d": "M8 54 L44 90 L112 12",
+          "viewBox": [120, 100],
+          "w": 240,
+          "h": 200,
+          "thickness": 10,
+          "stroke": "accent",
+          "at": { "x": 0.28, "y": 0.44 },
+          "effects": { "roundCaps": true },
+          "in": { "preset": "fade", "at": 6, "dur": 26 },
+          "formats": { "vertical": { "at": { "x": 0.28, "y": 0.42 } } }
+        },
+        {
+          "id": "arrow",
+          "type": "shape",
+          "shape": "arrow",
+          "w": 230,
+          "head": 38,
+          "thickness": 8,
+          "fill": "teal",
+          "at": { "x": 0.53, "y": 0.44 },
+          "in": { "preset": "fade", "at": 26, "dur": 22 },
+          "formats": { "vertical": { "w": 190, "at": { "x": 0.53, "y": 0.42 } } }
+        },
+        {
+          "id": "star",
+          "type": "shape",
+          "shape": "star",
+          "d": 170,
+          "sides": 5,
+          "inner": 0.46,
+          "rotate": -8,
+          "fill": { "gradient": ["accent", "rose"], "angle": 120 },
+          "at": { "x": 0.78, "y": 0.44 },
+          "in": { "preset": "pop", "at": 44, "dur": 16, "ease": "back" },
+          "formats": { "vertical": { "at": { "x": 0.79, "y": 0.42 } } }
+        },
+        {
+          "id": "caption",
+          "type": "text",
+          "text": "drawn by a progress track",
+          "role": "body",
+          "size": 44,
+          "weight": 500,
+          "color": "paper",
+          "at": { "x": 0.5, "y": 0.72 },
+          "lines": 1,
+          "in": { "preset": "rise", "at": 42, "dur": 14 },
+          "formats": { "vertical": { "size": 40, "at": { "x": 0.5, "y": 0.62 } } }
+        }
+      ]
+    },
+    {
+      "id": "count",
+      "dur": 100,
+      "ground": { "gradient": ["deep", "ink"], "radial": true, "at": { "x": 0.5, "y": 0.42 } },
+      "exit": { "type": "fade", "dur": 8 },
+      "why": "an odometer: every place rolls to its number",
+      "layers": [
+        {
+          "id": "big",
+          "type": "counter",
+          "to": 1240,
+          "format": "0,0",
+          "roll": true,
+          "dur": 52,
+          "size": 210,
+          "color": "paper",
+          "at": { "x": 0.5, "y": 0.42 },
+          "effects": { "shadow": { "y": 26, "blur": 60, "alpha": 0.4 } },
+          "in": { "preset": "pop", "at": 2, "dur": 14, "ease": "back" },
+          "formats": { "vertical": { "size": 170, "at": { "x": 0.5, "y": 0.45 } } }
+        },
+        {
+          "id": "label",
+          "type": "text",
+          "text": "frames checked this week",
+          "role": "body",
+          "size": 44,
+          "weight": 500,
+          "color": "accent",
+          "at": { "x": 0.5, "y": 0.62 },
+          "lines": 1,
+          "in": { "preset": "rise", "at": 26, "dur": 14 },
+          "formats": { "vertical": { "size": 40, "at": { "x": 0.5, "y": 0.6 } } }
+        }
+      ]
+    },
+    {
+      "id": "rings",
+      "dur": 100,
+      "ground": "paper",
+      "exit": { "type": "fade", "dur": 8 },
+      "why": "three rings, one per number, and a headline that resolves out of noise",
+      "layers": [
+        {
+          "id": "head",
+          "type": "text",
+          "text": "THREE RINGS, THREE NUMBERS",
+          "size": 62,
+          "color": "ink",
+          "at": { "x": 0.5, "y": 0.22 },
+          "maxWidth": 0.8,
+          "lines": 1,
+          "in": { "preset": "scramble", "at": 2, "dur": 30 },
+          "formats": { "vertical": { "size": 46, "maxWidth": 0.9, "at": { "x": 0.5, "y": 0.34 } } }
+        },
+        {
+          "id": "dials",
+          "type": "rings",
+          "values": [
+            { "label": "colour", "value": 82, "color": "accent" },
+            { "label": "effects", "value": 64, "color": "teal" },
+            { "label": "shapes", "value": 47, "color": "rose" }
+          ],
+          "max": 100,
+          "d": 330,
+          "thickness": 30,
+          "gap": 12,
+          "format": "0",
+          "labelSize": 34,
+          "labelColor": "ink",
+          "trackColor": "muted",
+          "at": { "x": 0.5, "y": 0.58 },
+          "in": { "preset": "fade", "at": 14, "dur": 22, "stagger": { "by": "item", "each": 6 } },
+          "formats": { "vertical": { "d": 300, "labelSize": 32, "at": { "x": 0.5, "y": 0.57 } } }
+        }
+      ]
+    },
+    {
+      "id": "chart",
+      "dur": 110,
+      "ground": "ink",
+      "exit": { "type": "fade", "dur": 8 },
+      "why": "a line chart drawn by its own progress, under a headline painted with a gradient",
+      "layers": [
+        {
+          "id": "head",
+          "type": "text",
+          "text": "GROWTH, DRAWN",
+          "size": 76,
+          "at": { "x": 0.5, "y": 0.16 },
+          "lines": 1,
+          "color": "paper",
+          "effects": { "gradientText": ["accent", "rose"] },
+          "in": { "preset": "rise", "at": 2, "dur": 14 },
+          "formats": { "vertical": { "size": 62, "at": { "x": 0.5, "y": 0.24 } } }
+        },
+        {
+          "id": "week",
+          "type": "line",
+          "points": [12, 18, 15, 26, 34, 48, 62],
+          "labels": ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
+          "w": 900,
+          "h": 330,
+          "thickness": 8,
+          "stroke": { "gradient": ["teal", "accent"], "angle": 90 },
+          "area": true,
+          "dots": true,
+          "min": 0,
+          "axis": "muted",
+          "labelColor": "muted",
+          "labelSize": 28,
+          "at": { "x": 0.5, "y": 0.55 },
+          "in": { "preset": "fade", "at": 10, "dur": 46 },
+          "formats": { "vertical": { "w": 840, "h": 300, "at": { "x": 0.5, "y": 0.52 } } }
+        },
+        {
+          "id": "note",
+          "type": "text",
+          "text": "one path, one progress track",
+          "role": "body",
+          "size": 42,
+          "weight": 500,
+          "color": "muted",
+          "at": { "x": 0.5, "y": 0.85 },
+          "lines": 1,
+          "in": { "preset": "rise", "at": 50, "dur": 14 },
+          "formats": { "vertical": { "at": { "x": 0.5, "y": 0.74 } } }
+        }
+      ]
+    },
+    {
+      "id": "end",
+      "dur": 110,
+      "ground": { "gradient": ["plum", "ink"], "angle": 200 },
+      "groundTracks": [
+        { "at": 0, "v": { "gradient": ["plum", "ink"], "angle": 200 } },
+        { "at": 70, "v": { "gradient": ["deep", "ink"], "angle": 200 }, "ease": "inOut" }
+      ],
+      "why": "confetti, a title that falls in word by word, a rule that changes colour",
+      "layers": [
+        {
+          "id": "confetti",
+          "type": "particles",
+          "probe": false,
+          "count": 90,
+          "color": "rose",
+          "size": 22,
+          "speed": 2.4,
+          "spread": 70,
+          "seed": 3,
+          "shape": "confetti",
+          "in": { "preset": "fade", "at": 0, "dur": 16 }
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "*Everything* is data",
+          "size": 108,
+          "color": "paper",
+          "at": { "x": 0.5, "y": 0.44 },
+          "maxWidth": 0.8,
+          "lines": 1,
+          "effects": { "stroke": { "color": "plum", "width": 2 } },
+          "in": { "preset": "fall", "at": 6, "dur": 16, "stagger": { "by": "word", "each": 5 } },
+          "formats": { "vertical": { "size": 82, "maxWidth": 0.88 } }
+        },
+        {
+          "id": "rule",
+          "type": "shape",
+          "shape": "line",
+          "w": 520,
+          "thickness": 10,
+          "fill": "accent",
+          "radius": 5,
+          "at": { "x": 0.5, "y": 0.58 },
+          "colorTracks": { "fill": [{ "at": 44, "v": "accent" }, { "at": 96, "v": "teal", "ease": "inOut" }] },
+          "in": { "preset": "grow", "at": 34, "dur": 30, "ease": "inOut" },
+          "formats": { "vertical": { "w": 420, "at": { "x": 0.5, "y": 0.6 } } }
+        }
+      ]
+    }
+  ]
+}

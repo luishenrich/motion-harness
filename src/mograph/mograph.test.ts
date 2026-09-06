@@ -382,3 +382,27 @@ describe("scene transitions", () => {
     expect(rules).toContain("transition:card.transition");
   });
 });
+
+describe("groups hold the newer layer kinds", () => {
+  test("a chart, a ring set and a particle field inside a group inherit its delay", () => {
+    const f = grouped();
+    const box = f.scenes[0].layers[0] as GroupLayer;
+    box.layers.push(
+      { id: "trend", type: "line", points: [3, 7, 5, 9], w: 300, h: 140, stroke: "accent", at: { x: 0.3, y: 0.6 }, in: { preset: "fade", at: 2, dur: 8 } },
+      { id: "wheels", type: "rings", values: [{ label: "a", value: 0.8 }], d: 160, at: { x: 0.7, y: 0.6 }, in: { preset: "fade", at: 4, dur: 8 } },
+      { id: "dust", type: "particles", count: 20, seed: 3, probe: false, at: { x: 0.5, y: 0.5 }, in: { preset: "fade", at: 0, dur: 8 } },
+    );
+    // four children after the three it had: the stagger keeps counting
+    expect(childDelays(f, f.scenes[0], box)).toEqual([10, 14, 18, 22, 26, 30]);
+    const ev = sceneEvents(f, f.scenes[0]);
+    expect(ev.trendIn).toBe(24);
+    expect(ev.wheelsIn).toBe(30);
+    expect(ev.dustIn).toBe(30);
+    const c = compile(mographTimeline(f, { film: "g" }));
+    // a field of particles is decoration, a chart and a ring set are not
+    expect(c.scenes[0].probes).toContain("trend@32-119");
+    expect(c.scenes[0].probes).toContain("wheels@38-119");
+    expect(c.scenes[0].probes.some((p) => p.startsWith("dust@"))).toBe(false);
+    expect(lintFilm(f)).toEqual([]);
+  });
+});

@@ -64,6 +64,17 @@ export const inTracks = (m: Motion<InPreset>): Tracks => {
       return { progress: [{ at: 0, v: 0 }, { at: dur, v: 1, ease: "linear" }] };
     case "mask":
       return { y: k(dist * 3, 0), opacity: [{ at: 0, v: 0 }, { at: 1, v: 1 }] };
+    // the character flip lives per character in the renderer: the layer itself arrives whole
+    case "flip":
+      return {};
+    case "track":
+      return { opacity: k(0, 1) };
+    case "scramble":
+      return { opacity: [{ at: 0, v: 0 }, { at: Math.min(dur, 4), v: 1, ease: "out" }] };
+    case "fall":
+      return { opacity: [{ at: 0, v: 0 }, { at: Math.min(dur, 5), v: 1, ease: "out" }], y: [{ at: 0, v: -dist * 1.6 }, { at: dur, v: 0, ease: m.ease ?? "bouncy" }] };
+    case "line-wipe":
+      return { wipe: k(0, 1) };
   }
 };
 
@@ -131,7 +142,7 @@ export const poseAt = (film: MgFilm, scene: MgScene, layer: Layer, frame: number
   const outM: Motion<OutPreset> = { ...(film.defaults?.layerOut ?? {}), ...(layer.out ?? {}) };
   const inT = inTracks({ ...inM, dur: t.inDur });
   const outT = t.outAt !== null ? outTracks({ ...outM, dur: t.outDur }) : {};
-  if (inM.preset === "wipe" || outM.preset === "wipe") pose.wipeFrom = (inM.preset === "wipe" ? inM.from : outM.from) ?? "left";
+  if (inM.preset === "wipe" || inM.preset === "line-wipe" || outM.preset === "wipe") pose.wipeFrom = (inM.preset === "wipe" || inM.preset === "line-wipe" ? inM.from : outM.from) ?? "left";
   const explicit = layer.tracks ?? {};
   for (const p of PROPS) {
     const base = p === "opacity" ? pose.opacity : p === "scale" ? pose.scale : p === "rotate" ? pose.rotate : p === "x" || p === "y" || p === "blur" ? 0 : 1;

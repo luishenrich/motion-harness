@@ -42,6 +42,8 @@ import { loadFilm, saveFilm, parseValue, getValue, setValue, unsetValue, setKey,
 import type { Layer as MgLayer, MgScene } from "./mograph/schema.ts";
 import { writeFilm, scaffoldMgFiles, normalizeFilm } from "./mograph/script.ts";
 import { editMiddleware } from "./mograph/serve.ts";
+import { soundsCommand, HELP as SOUNDS_HELP } from "./mograph/cli-sound.ts";
+import { commands as templateCommands, HELP as TEMPLATES_HELP } from "./mograph/cli-templates.ts";
 import { startVite } from "./engine/vite.ts";
 import { transcribeFile, saveTranscript, transcriptSrt } from "./transcribe/transcribe.ts";
 import { makeImage, loadImages } from "./image/image.ts";
@@ -825,6 +827,18 @@ const lintRun = async (x: Ctx, args: Args): Promise<Finding[]> => {
   if (none || which.timeline) findings.push(...lintTimeline(x.cfg, x.c));
   if (none || which.timeline || flag(args, "clips")) findings.push(...lintClips(x.cfg, x.c));
   if (none || which.static) findings.push(...(await lintStaticColors(x.cfg)));
+  // a motion graphics film: its own data lint (colours, easings, presets, timing, reading time) is part of the static step
+  if (none || which.static) {
+    const mg = (film as { mograph?: string }).mograph ?? "film.mograph.json";
+    const mgPath = join(x.cfg.projectDir, mg);
+    if (existsSync(mgPath)) {
+      try {
+        findings.push(...lintFilm(loadFilm(mgPath), x.cfg.projectDir).map((f) => ({ level: f.level, rule: `film-${f.rule}`, where: f.where, message: f.message })));
+      } catch (e) {
+        findings.push({ level: "error", rule: "film-json", where: mg, message: String((e as Error).message ?? e) });
+      }
+    }
+  }
   if (which.rendered) {
     const legs = cursorLegFrames(x.c, film);
     const runs: Record<string, ProbeFrame[]> = {};
@@ -1879,6 +1893,12 @@ const cmdEdit = async (args: Args) => {
   await v.close();
 };
 
+const cmdSounds = async (args: Args) => {
+  const { film, x } = await mgCtx(args);
+  const files = await soundsCommand({ film, projectDir: x.cfg.projectDir, make: flag(args, "make"), all: flag(args, "all"), force: flag(args, "force"), log, table });
+  for (const f of files) produced(f);
+};
+
 const cmdTranscribe = async (args: Args) => {
   const x = await ctx(args);
   const file = args._[0];
@@ -2043,6 +2063,9 @@ motion graphics as data (film.mograph.json, see docs/mograph.md):
   remove <scene>|<scene.layer>      move <addr> --after id|--before id    dup <addr> [--as id]    rename <addr> <id>
   layout [scene]                    stacked blocks pushed apart and kept in the safe band, per format
   edit [--port 4850] [--no-open]    the editor in the browser: stage, scrubber, layers, inspector, keyboard; every change lands in the file
+${SOUNDS_HELP}
+
+${TEMPLATES_HELP}
                                     every edit lints the film and names the frame to look at
                                     words with times (Gemini listens, silences sharpen the edges); --spans lists the spoken spans a silence cut would keep
   image "<prompt>" [--width --height] [--provider azure-mai|azure-flux|openai] [--out file]
@@ -2112,6 +2135,8 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   rename: cmdRename,
   layout: cmdLayout,
   edit: cmdEdit,
+  sounds: cmdSounds,
+  template: templateCommands.template,
   image: cmdImage,
   otio: cmdOtio,
 };

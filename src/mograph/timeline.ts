@@ -72,8 +72,9 @@ export const toScene = (film: MgFilm, s: MgScene, index = film.scenes.indexOf(s)
     why: s.why,
     events: sceneEvents(film, s),
     // a layer is expected on screen from the end of its in to the start of its out
+    // a shape and a field of particles are decoration: what must be on screen is the text, the numbers and the pictures
     probes: walkLayers(film, s)
-      .filter((n) => n.layer.probe !== false && n.layer.type !== "shape")
+      .filter((n) => n.layer.probe !== false && n.layer.type !== "shape" && n.layer.type !== "particles")
       .map((n) => {
         const t = layerTiming(film, s, n.layer);
         const from = Math.min(s.dur - 1, n.delay + t.inAt + t.inDur);

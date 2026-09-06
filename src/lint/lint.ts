@@ -142,9 +142,12 @@ const isText = (it: LayoutItem) => it.kind === "text" || (it.kind === "probe" &&
  * everything inside it: decoration a film marks as not-checked, and the copy of
  * the previous scene a transition draws under the incoming one.
  */
+/** `data-lint` carries a space separated list of flags: "none", "no-collision", "color-track" */
+export const lintFlag = (it: LayoutItem, flag: string) => (it.lint ?? "").split(" ").includes(flag);
+
 const quietSet = (items: LayoutItem[]): Set<number | undefined> => {
-  const off = new Set(items.filter((i) => i.lint === "none").map((i) => i.id));
-  return new Set(items.filter((i) => i.lint === "none" || (i.ancestors ?? []).some((a) => off.has(a))).map((i) => i.id));
+  const off = new Set(items.filter((i) => lintFlag(i, "none")).map((i) => i.id));
+  return new Set(items.filter((i) => lintFlag(i, "none") || (i.ancestors ?? []).some((a) => off.has(a))).map((i) => i.id));
 };
 
 export const lintOverflow = (label: string, probe: ProbeResult): Finding[] => {
@@ -245,7 +248,7 @@ const COLLISION_OPACITY = 0.6;
 export const lintCollision = (label: string, probe: ProbeResult): Finding[] => {
   const out: Finding[] = [];
   const off = quietSet(probe.items as LayoutItem[]);
-  const items = (probe.items as LayoutItem[]).filter((it) => it.visible && it.opacity >= COLLISION_OPACITY && it.w > 0 && it.h > 0 && (it.kind === "probe" || it.kind === "text") && it.lint !== "no-collision" && !off.has(it.id));
+  const items = (probe.items as LayoutItem[]).filter((it) => it.visible && it.opacity >= COLLISION_OPACITY && it.w > 0 && it.h > 0 && (it.kind === "probe" || it.kind === "text") && !lintFlag(it, "no-collision") && !off.has(it.id));
   for (let i = 0; i < items.length; i++) {
     for (let j = i + 1; j < items.length; j++) {
       const a = items[i], b = items[j];
