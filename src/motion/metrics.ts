@@ -93,3 +93,71 @@ export const sparkline = (v: number[], max?: number): string => {
   const m = max ?? Math.max(...v, 1e-9);
   return v.map((x) => bars[Math.min(7, Math.floor((x / m) * 7.999))]).join("");
 };
+
+/* ---------- a reference clip's curve, and how a scene compares to it ---------- */
+
+import { readdirSync as _readdirSync } from "node:fs";
+import { join as _join } from "node:path";
+import { run as _run } from "../util.ts";
+
+export type ReferenceCurve = { file: string; fps: number; frames: number; diff: number[]; settled: number | null; holdShare: number; peak: number };
+
+/** decode a reference clip (optionally a span) to small jpegs at `fps` and measure its frame-to-frame motion the same way */
+export const measureReference = async (file: string, fps: number, outDir: string, opts: { width?: number; from?: number; to?: number; still?: number; stillRun?: number } = {}): Promise<ReferenceCurve> => {
+  rmSync(outDir, { recursive: true, force: true });
+  ensureDir(outDir);
+  const args = ["-y", "-v", "error"];
+  if (opts.from !== undefined) args.push("-ss", String(opts.from));
+  args.push("-i", file);
+  if (opts.to !== undefined) args.push("-t", String(opts.to - (opts.from ?? 0)));
+  args.push("-vf", `fps=${fps},scale=${opts.width ?? 320}:-2`, "-q:v", "4", _join(outDir, "element-%04d.jpeg"));
+  await _run(["ffmpeg", ...args]);
+  const files = _readdirSync(outDir).filter((f) => /^element-\d+\.jpe?g$/.test(f)).sort().map((f) => _join(outDir, f));
+  const bufs: Buffer[] = [];
+  for (const f of files) bufs.push(await sharp(f).removeAlpha().raw().toBuffer());
+  const diff: number[] = [0];
+  for (let i = 1; i < bufs.length; i++) {
+    const a = bufs[i - 1], b = bufs[i];
+    let s = 0;
+    for (let j = 0; j < a.length; j++) s += Math.abs(a[j] - b[j]);
+    diff.push(s / (a.length * 255));
+  }
+  const still = opts.still ?? 0.002, stillRun = opts.stillRun ?? 4;
+  let settled: number | null = null;
+  for (let i = 1; i + stillRun <= diff.length; i++) {
+    if (diff.slice(i, i + stillRun).every((d) => d < still)) {
+      settled = i;
+      break;
+    }
+  }
+  const holdShare = diff.filter((d) => d < still).length / Math.max(1, diff.length);
+  return { file, fps, frames: files.length, diff, settled, holdShare, peak: Math.max(0, ...diff) };
+};
+
+export type CurveComparison = { correlation: number; settleDelta: number | null; holdDelta: number; peakRatio: number; verdict: string[] };
+
+/** two curves side by side: does the scene move like the reference (shape), settle when it settles, hold as much */
+export const compareCurves = (scene: { diff: number[]; settled: number | null; holds: [number, number][]; frames: number }, ref: ReferenceCurve): CurveComparison => {
+  // resample both to 100 points and correlate the shapes
+  const resample = (d: number[], n: number) => Array.from({ length: n }, (_, i) => d[Math.min(d.length - 1, Math.floor((i / n) * d.length))] ?? 0);
+  const a = resample(scene.diff, 100), b = resample(ref.diff, 100);
+  const mean = (x: number[]) => x.reduce((p, q) => p + q, 0) / x.length;
+  const ma = mean(a), mb = mean(b);
+  let num = 0, da = 0, db = 0;
+  for (let i = 0; i < 100; i++) {
+    num += (a[i] - ma) * (b[i] - mb);
+    da += (a[i] - ma) ** 2;
+    db += (b[i] - mb) ** 2;
+  }
+  const correlation = da > 0 && db > 0 ? num / Math.sqrt(da * db) : 0;
+  const sceneHold = scene.holds.reduce((s, [x, y]) => s + (y - x), 0) / Math.max(1, scene.frames);
+  const settleDelta = scene.settled !== null && ref.settled !== null ? scene.settled - ref.settled : null;
+  const holdDelta = sceneHold - ref.holdShare;
+  const peakRatio = ref.peak > 0 ? Math.max(0, ...scene.diff) / ref.peak : 0;
+  const verdict: string[] = [];
+  if (correlation < 0.5) verdict.push(`shape differs (correlation ${correlation.toFixed(2)}): the scene does not move when the reference moves`);
+  if (settleDelta !== null && Math.abs(settleDelta) > 6) verdict.push(`settles ${settleDelta > 0 ? `${settleDelta}f later` : `${-settleDelta}f earlier`} than the reference`);
+  if (Math.abs(holdDelta) > 0.25) verdict.push(`holds ${holdDelta > 0 ? "more" : "less"} than the reference (${(sceneHold * 100).toFixed(0)}% vs ${(ref.holdShare * 100).toFixed(0)}% of frames still)`);
+  if (peakRatio > 2.5 || (peakRatio > 0 && peakRatio < 0.4)) verdict.push(`motion amplitude is ${peakRatio.toFixed(1)}x the reference's`);
+  return { correlation, settleDelta, holdDelta, peakRatio, verdict };
+};

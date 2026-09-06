@@ -167,7 +167,7 @@ describe("7. deliver manifest", () => {
       new Date("2026-09-06T10:00:00Z"),
     );
     expect(md).toContain("# launch delivery (2026-09-06)");
-    expect(md).toContain("| film | wide | `launch-wide-1920x1080.mp4` | 9.1 MB | 12.00 s | 6333 kbit/s | abc |");
+    expect(md).toContain("| film | wide | `launch-wide-1920x1080.mp4` | 9.1 MB | 12.00 s | 6333 kbit/s |  | abc |");
     expect(md).toContain("- 0:00 forgets what you know.");
     expect(md).toContain("| 4 | product | probe | 9.00s | 4.00 s |  |");
     expect(md).toContain("- key (sfx): `key.mp3` at turn+10");

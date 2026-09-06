@@ -9,10 +9,13 @@ export type SrtEntry = { index: number; start: number; end: number; text: string
 
 const GAP = 0.04; // seconds between two entries so players never show both
 
-export const srtEntries = (c: Compiled, opts: { useCaption?: boolean; fromSettled?: boolean } = {}): SrtEntry[] => {
+export const srtEntries = (c: Compiled, opts: { useCaption?: boolean; fromSettled?: boolean; lang?: string } = {}): SrtEntry[] => {
   const out: SrtEntry[] = [];
+  const table = opts.lang ? c.timeline.i18n?.[opts.lang] : undefined;
+  if (opts.lang && !table) throw new Error(`no i18n table for "${opts.lang}" in the timeline (have: ${Object.keys(c.timeline.i18n ?? {}).join(", ") || "none"})`);
   for (const s of c.scenes) {
-    const text = s.text?.length ? s.text.join("\n") : opts.useCaption === false ? undefined : s.caption;
+    const alt = table?.[s.id];
+    const text = alt !== undefined ? (Array.isArray(alt) ? alt.join("\n") : alt) : s.text?.length ? s.text.join("\n") : opts.useCaption === false ? undefined : s.caption;
     if (!text) continue;
     const start = (s.filmStart + (opts.fromSettled === false ? 0 : Math.min(s.enter.dur ?? 0, s.dur - 1))) / c.fps;
     const end = s.filmEnd / c.fps - GAP;

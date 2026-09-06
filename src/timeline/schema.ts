@@ -42,6 +42,8 @@ export type Scene = {
   probes?: string[];
   /** extra local frames worth a look */
   checkFrames?: number[];
+  /** generated clip this scene plays (id in clips.json, mh clips): colour drift and cost are tracked per clip */
+  clip?: string;
 };
 
 export type Part = {
@@ -67,8 +69,15 @@ export type GainPoint = { at: AudioRef; to: number; over?: number };
 
 export type AudioCue = {
   id: string;
-  kind: "music" | "sfx";
+  /** voice: a spoken line; `text` is synthesised into `file` by `mh voice` when the file is missing or the text changed */
+  kind: "music" | "sfx" | "voice";
   file: string;
+  /** voice cues: the line to speak */
+  text?: string;
+  /** voice cues: provider voice id or name (ElevenLabs voice id), default from config.voice */
+  voice?: string;
+  /** voice cues: which language the line is in, for the synthesis model */
+  lang?: string;
   /** where it starts in film time: "9s", "product:0", "probe.pick1", a frame "f120" or a number (seconds) */
   at: AudioRef;
   gain?: number;
@@ -102,6 +111,8 @@ export type Timeline = {
   parts: Part[];
   audio?: AudioCue[];
   rules?: Rules;
+  /** per language: scene id -> text (or caption) that replaces the scene's own for subtitles and deliveries in that language */
+  i18n?: Record<string, Record<string, string | string[]>>;
 };
 
 export const defineTimeline = (t: Timeline): Timeline => t;
@@ -137,6 +148,7 @@ export type CompiledScene = {
   states: { id: string; local: number; partFrame: number; filmFrame: number }[];
   probes: string[];
   checkFrames: number[];
+  clip?: string;
   scene: Scene;
 };
 
@@ -223,6 +235,7 @@ export const compile = (t: Timeline): Compiled => {
         states,
         probes: s.probes ?? [],
         checkFrames: s.checkFrames ?? [],
+        clip: s.clip,
         scene: s,
       };
       cs.push(c);

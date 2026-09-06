@@ -67,6 +67,10 @@ export type HarnessConfig = {
   engine?: "remotion" | "native";
   /** native engine: run tailwind as a postcss plugin. Default: when the project has a tailwind.config.* */
   tailwind?: boolean;
+  /** burned-in captions (mh captions, mh deliver --captions): font, size, colours, bottom inset per format */
+  captions?: { font?: string; size?: number; color?: string; bg?: string; weight?: number; bottom?: Record<string, number> };
+  /** voice cues: default provider voice and model (ElevenLabs), key from ELEVENLABS_API_KEY */
+  voice?: { provider?: "elevenlabs"; voice?: string; model?: string; dir?: string };
 };
 
 export const defineConfig = (c: HarnessConfig): HarnessConfig => c;

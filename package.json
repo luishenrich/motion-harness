@@ -24,6 +24,7 @@
     "remotion": "4.0.475"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1127.0",
     "@vitejs/plugin-react": "^6.1.1",
     "playwright-core": "1.57.0",
     "sharp": "^0.34.3",

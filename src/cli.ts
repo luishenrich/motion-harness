@@ -27,7 +27,14 @@ import { audioProfile, rmsAt, db, loudSpan } from "./audio/probe.ts";
 import { cueAudibility, highpass, headProfile, audibleFrom, AUDIBILITY_SR } from "./audio/audibility.ts";
 import { srtEntries, srtText, chapterLines } from "./srt/srt.ts";
 import { listStills, pickStills, renderStills, stillSheet } from "./still/still.ts";
-import { deliver } from "./deliver/deliver.ts";
+import { deliver, uploadTargetFromEnv } from "./deliver/deliver.ts";
+import { startReceipt, endReceipt, receiptDir, produced } from "./receipts/receipts.ts";
+import { measureLoudness, PLATFORM_TARGETS, loudnessVerdict } from "./audio/loudness.ts";
+import { burnCaptions } from "./srt/burn.ts";
+import { runVoice } from "./voice/voice.ts";
+import { addClip, loadClips, lintClips, clipCost } from "./clips/clips.ts";
+import { judgeClip, judgePrompt, DEFAULT_CHECKLIST } from "./judge/judge.ts";
+import { measureReference, compareCurves } from "./motion/metrics.ts";
 import { decodeMono, onsetStrength, pickOnsets, beatGrid, nearest } from "./audio/beats.ts";
 import { spanOf, cuePlacement } from "./audio/coverage.ts";
 import { analyzeFile, looksLikeHit, hitWarnings, type SfxAnalysis } from "./audio/sfx.ts";
@@ -87,6 +94,7 @@ const projectDirOf = (args: Args): string => {
 
 const ctx = async (args: Args): Promise<Ctx> => {
   const cfg = await loadConfig(projectDirOf(args));
+  receiptDir(cfg.cachePath, cfg.projectDir, currentBundleHash(cfg), engineKindOf(cfg, str(args, "engine")));
   const { name: filmName, film } = pickFilm(cfg, str(args, "film"));
   const format = pickFormat(film, str(args, "format"));
   return { cfg, filmName, c: compile(film.timeline), format, size: film.formats[format], args };
@@ -598,6 +606,7 @@ const cmdFrame = async (args: Args) => {
   await eachFormat(args, async (a) => {
     const x = await ctx(a);
     for (const f of await frameRun(x, args._)) {
+      produced(f.file);
       rows.push([x.format, f.ref, `${f.L.scene.id}+${f.L.local}`, `f${f.L.partFrame}`, fmtTime(f.L.filmFrame, x.c.fps), f.L.inTransition ? "in transition" : "", `${f.ms}ms`, f.file]);
       all.push({ format: x.format, ref: f.ref, scene: f.L.scene.id, local: f.L.local, partFrame: f.L.partFrame, filmFrame: f.L.filmFrame, filmSeconds: f.L.filmSeconds, inTransition: f.L.inTransition, file: f.file, probeFile: f.probeFile });
     }
@@ -623,6 +632,10 @@ const cmdStill = async (args: Args) => {
     return renderStills(x.cfg, e, wanted, { outDir, jpg, width: num(args, "width", 0) || undefined, quality: num(args, "quality", 90), settleMs: num(args, "settle", 150), concurrency: num(args, "concurrency", 2), log });
   });
   if (!results) return log(`mh still <id,...|all> renders them`);
+  for (const r of results) {
+    produced(r.png);
+    if (r.jpg) produced(r.jpg);
+  }
   const findings = results.flatMap((s) => s.findings);
   log("");
   log(table(results.map((s) => [s.id, `${s.width}x${s.height}`, s.findings.filter((f) => f.level === "error").length || "", s.findings.filter((f) => f.level === "warn").length || "", s.jpg ?? s.png]), ["still", "size", "errors", "warns", "file"]));
@@ -643,13 +656,14 @@ const cmdStill = async (args: Args) => {
 /** subtitles from the timeline: scenes with text, or a caption for the ones without; chapter lines for the description */
 const cmdSrt = async (args: Args) => {
   const x = await ctx(args);
-  const entries = srtEntries(x.c, { useCaption: args["captions"] !== "false" });
+  const entries = srtEntries(x.c, { useCaption: args["captions"] !== "false", lang: str(args, "lang") });
   if (!entries.length) die("no scene carries text or caption, nothing to subtitle");
   const text = srtText(entries);
   const outFile = str(args, "out");
   if (flag(args, "chapters")) return log(chapterLines(entries).join("\n"));
   if (outFile) {
     writeFileSync(resolvePath(outFile), text);
+    produced(resolvePath(outFile));
     log(`${entries.length} entries -> ${outFile}`);
     log(table(entries.map((e) => [e.index, e.scene, `${e.start.toFixed(2)}s`, `${e.end.toFixed(2)}s`, e.text.replace(/\n/g, " / ")]), ["#", "scene", "from", "to", "text"]));
   } else out(text);
@@ -679,10 +693,100 @@ const cmdDeliver = async (args: Args) => {
     }
   }
   log(`delivering ${first.filmName} to ${dir}`);
-  const d = await deliver({ film: first.filmName, c: first.c, films, stills, lang: str(args, "lang", "en") }, resolvePath(dir!), { log });
+  const platforms = list(args, "platforms");
+  const captions = flag(args, "captions") ? { ...(first.cfg.captions ?? {}) } : undefined;
+  const uploadPrefix = str(args, "upload");
+  const upload = uploadPrefix ? uploadTargetFromEnv(uploadPrefix) : undefined;
+  if (upload) log(`upload -> ${upload.endpoint} ${upload.bucket}/${upload.prefix}${upload.publicUrl ? ` (public ${upload.publicUrl})` : " (set MH_S3_PUBLIC_URL for public links)"}`);
+  const d = await deliver({ film: first.filmName, c: first.c, films, stills, lang: str(args, "lang", "en"), platforms, captions, upload }, resolvePath(dir!), { log });
+  for (const f of d.files) produced(f.file);
+  produced(d.manifest);
   const delivered = d.files.filter((f) => f.kind === "film").length;
   if (!delivered) log(`warning: no rendered film found in the cache (mh render --format all first)`);
   log(`manifest -> ${d.manifest}${d.manifest.endsWith("MANIFEST.md") ? " (README.md in that folder is hand-written and was left alone)" : ""}`);
+};
+
+/** the subtitles burned into the rendered film (or any file): a copy next to it */
+const cmdCaptions = async (args: Args) => {
+  const x = await ctx(args);
+  const input = args._[0] ?? join(x.cfg.cachePath, "out", `${x.filmName}-${x.format}.mp4`);
+  if (!existsSync(input)) die(`no film at ${input} (mh render first, or pass a file)`);
+  const lang = str(args, "lang");
+  const entries = srtEntries(x.c, { lang });
+  if (!entries.length) die("no scene carries text or caption");
+  const { bottom, ...style } = x.cfg.captions ?? {};
+  const safe = ({ ...(x.c.timeline.rules ?? {}), ...(x.cfg.rules ?? {}) }).safeZone?.[x.format];
+  const out = str(args, "out") ?? input.replace(/\.mp4$/, `-captions${lang ? `-${lang}` : ""}.mp4`);
+  const t0 = performance.now();
+  await burnCaptions(input, entries, x.size, { ...style, bottom: bottom?.[x.format] ?? (safe ? safe.bottom + 24 : undefined) }, out, join(x.cfg.cachePath, "captions"));
+  produced(out);
+  log(`${entries.length} captions burned -> ${out} (${ms(t0)})`);
+};
+
+/** voice cues: synthesise what is missing or changed, measure every line against its scene */
+const cmdVoice = async (args: Args) => {
+  const x = await ctx(args);
+  const res = await runVoice(x.cfg, x.c, { force: flag(args, "force"), dryRun: flag(args, "dry-run"), log });
+  if (!res.length) return log('no voice cues in the timeline (audio: [{ id, kind: "voice", text, file, at }])');
+  for (const r of res) if (r.reason !== "current" && !r.reason.startsWith("would")) produced(r.file);
+  log(table(res.map((r) => [r.id, r.reason, Number.isFinite(r.seconds) ? `${r.seconds.toFixed(2)}s` : "no file", r.sceneId, `${r.sceneLeft.toFixed(2)}s`, r.fits ? "fits" : "RUNS PAST THE SCENE"]), ["cue", "state", "length", "starts in", "scene left", ""]));
+  if (res.some((r) => !r.fits)) log("a line longer than the scene it starts in is heard over the next scene; lengthen the scene or shorten the line");
+};
+
+/** generated clips: what they cost and what they look like; the colour lint reads this */
+const cmdClips = async (args: Args) => {
+  const x = await ctx(args);
+  const sub = args._[0];
+  if (sub === "add") {
+    const file = args._[1];
+    if (!file) die("usage: mh clips add <file> [--id x] [--prompt ...] [--model ...] [--seed ...] [--credits N] [--cost N --currency USD] [--attempts N] [--tags a,b]");
+    const clip = await addClip(x.cfg, resolvePath(file), { id: str(args, "id"), prompt: str(args, "prompt"), model: str(args, "model"), seed: str(args, "seed"), credits: str(args, "credits") ? num(args, "credits", 0) : undefined, cost: str(args, "cost") ? num(args, "cost", 0) : undefined, currency: str(args, "currency"), attempts: str(args, "attempts") ? num(args, "attempts", 1) : undefined, tags: list(args, "tags") }, join(x.cfg.cachePath, "clips"));
+    log(`added ${clip.id}: ${clip.width}x${clip.height} ${clip.fps} fps ${clip.seconds.toFixed(2)}s, luma first ${clip.colour.first.luma} mid ${clip.colour.mid.luma} last ${clip.colour.last.luma}`);
+    return;
+  }
+  const clips = loadClips(x.cfg);
+  if (!clips.length) return log("no clips registered (mh clips add <file> ...)");
+  log(table(clips.map((c) => [c.id, c.file, `${c.width}x${c.height}`, `${c.seconds.toFixed(2)}s`, c.model ?? "", c.attempts ?? "", c.credits ?? "", c.cost !== undefined ? `${c.cost}${c.currency ? " " + c.currency : ""}` : "", `${c.colour.first.luma}/${c.colour.mid.luma}/${c.colour.last.luma}`, x.c.scenes.filter((s) => s.clip === c.id).map((s) => s.id).join(",")]), ["clip", "file", "size", "length", "model", "tries", "credits", "cost", "luma f/m/l", "scenes"]));
+  const cost = clipCost(clips);
+  log(`${clips.length} clips, ${cost.attempts} attempts, ${cost.credits} credits${cost.cost ? `, ${cost.cost} ${cost.currency}` : ""}`);
+  const f = lintClips(x.cfg, x.c);
+  if (f.length) log(formatFindings(f));
+};
+
+/** a model watches the clip: findings with film times, to be located with mh resolve before anyone acts on them */
+const cmdJudge = async (args: Args) => {
+  const x = await ctx(args);
+  const scenes = scenesOf(x.c, args);
+  if (!list(args, "scene") && !str(args, "part")) die("usage: mh judge --scene a[,b] [--model gemini-2.5-flash] [--checklist \"...;...\"] [--file clip.mp4]");
+  const ids = scenes.map((s) => s.id);
+  const span = { start: scenes[0].filmStart / x.c.fps, end: scenes[scenes.length - 1].filmEnd / x.c.fps };
+  let file = str(args, "file");
+  if (!file) {
+    file = await withEngine(x, async (e) => {
+      const q = flag(args, "full") ? FULL : DRAFT;
+      const segs = await renderSegments(x.cfg, e, x.c, x.filmName, x.format, { subset: ids, quality: q, log, concurrency: num(args, "concurrency", 4) });
+      const parts = [...new Set(scenes.map((s) => s.part))];
+      const audio = await renderPartAudio(x.cfg, e, x.c, x.filmName, x.format, { log, parts });
+      const { picture } = await concatScenes(x.cfg, x.c, scenes, segs, audio, x.filmName, x.format, x.size, { log, name: `${x.filmName}-${x.format}-judge-${ids.join("+")}` });
+      const out = join(ensureDir(join(x.cfg.cachePath, "judge")), `${x.filmName}-${x.format}-${ids.join("+")}.mp4`);
+      const res = await mixFilm(x.cfg, x.c, picture, x.filmName, x.format, { out, span, log, audioRoot: str(args, "audio-root") });
+      return res.master;
+    });
+  }
+  const checklist = str(args, "checklist") ? str(args, "checklist")!.split(";").map((k) => k.trim()).filter(Boolean) : DEFAULT_CHECKLIST;
+  const prompt = judgePrompt(x.c, scenes, span, checklist);
+  log(`asking ${str(args, "model", "gemini-2.5-flash")} to watch ${file} (${(span.end - span.start).toFixed(2)}s, ${scenes.length} scene${scenes.length === 1 ? "" : "s"})`);
+  const t0 = performance.now();
+  const r = await judgeClip(file!, prompt, { model: str(args, "model") });
+  log(`${r.model} in ${ms(t0)}: ${r.summary}`);
+  const rows = r.findings.map((f) => {
+    const filmSec = f.seconds !== undefined ? span.start + f.seconds : undefined;
+    const L = filmSec !== undefined ? locate(x.c, Math.round(filmSec * x.c.fps)) : null;
+    return [f.severity, L ? `${L.scene.id}+${L.local}` : "", filmSec !== undefined ? fmtTime(Math.round(filmSec * x.c.fps), x.c.fps) : "", f.what];
+  });
+  log(rows.length ? table(rows, ["", "scene", "film", "finding"]) : "no findings");
+  log("a model's findings are leads: confirm each with mh frame <scene+N> before changing anything");
+  if (flag(args, "json")) out(JSON.stringify({ file, span, ...r, findings: r.findings.map((f, i) => ({ ...f, at: rows[i][1] })) }));
 };
 
 const lintRun = async (x: Ctx, args: Args): Promise<Finding[]> => {
@@ -694,6 +798,7 @@ const lintRun = async (x: Ctx, args: Args): Promise<Finding[]> => {
   const which = { static: flag(args, "static"), timeline: flag(args, "timeline"), rendered: flag(args, "rendered") };
   const none = !which.static && !which.timeline && !which.rendered;
   if (none || which.timeline) findings.push(...lintTimeline(x.cfg, x.c));
+  if (none || which.timeline || flag(args, "clips")) findings.push(...lintClips(x.cfg, x.c));
   if (none || which.static) findings.push(...(await lintStaticColors(x.cfg)));
   if (which.rendered) {
     const legs = cursorLegFrames(x.c, film);
@@ -829,6 +934,17 @@ const cmdMotion = async (args: Args) => {
       log(`  holds   ${m.holds.map(([a, b]) => `${a}-${b} (${Math.round(((b - a) / x.c.fps) * 1000)}ms)`).join(", ") || "none"}`);
       log(`  jumps   ${m.jumps.map((j) => `+${j.frame} (${(j.diff * 100).toFixed(0)}%)`).join(", ") || "none"}`);
       const verdict: string[] = [];
+      const refSpec = str(args, "reference");
+      if (refSpec) {
+        // file[:from-to] in seconds of the reference clip
+        const mm = refSpec.match(/^(.+?)(?::([\d.]+)-([\d.]+))?$/)!;
+        const ref = await measureReference(resolvePath(mm[1]), x.c.fps, join(dir, "reference"), { width: num(args, "width", 320), from: mm[2] ? parseFloat(mm[2]) : undefined, to: mm[3] ? parseFloat(mm[3]) : undefined });
+        const cmp = compareCurves(m, ref);
+        log(`  reference ${basename(ref.file)}${mm[2] ? ` ${mm[2]}-${mm[3]}s` : ""}: ${ref.frames}f, settles ${ref.settled === null ? "never" : `${ref.settled}f`}, ${(ref.holdShare * 100).toFixed(0)}% still, peak ${(ref.peak * 100).toFixed(1)}%`);
+        log(`  ref     ${sparkline(ref.diff, Math.max(0.05, ...ref.diff))}`);
+        log(`  vs ref  correlation ${cmp.correlation.toFixed(2)}${cmp.settleDelta !== null ? `, settle ${cmp.settleDelta > 0 ? "+" : ""}${cmp.settleDelta}f` : ""}, hold ${cmp.holdDelta > 0 ? "+" : ""}${(cmp.holdDelta * 100).toFixed(0)}pp, amplitude ${cmp.peakRatio.toFixed(2)}x`);
+        verdict.push(...cmp.verdict);
+      }
       if (rules.maxEnterFrames && m.settled !== null && m.settled > rules.maxEnterFrames) verdict.push(`settles after ${m.settled}f, rule says ${rules.maxEnterFrames}f`);
       if (m.settled !== null && m.enterDur && Math.abs(m.settled - m.enterDur) > 6) verdict.push(`declared enter ${m.enterDur}f but settles at ${m.settled}f`);
       if (rules.holdFrames) {
@@ -955,6 +1071,15 @@ const cmdAudio = async (args: Args) => {
     const t = s.filmStart / x.c.fps;
     const v = rmsAt(p, t + 0.1);
     if (v < 0.002) log(`  silent at scene ${s.id} (${t.toFixed(2)}s): rms ${v.toFixed(4)}`);
+  }
+  // what the platforms measure: integrated loudness and true peak against each target
+  try {
+    const L = await measureLoudness(file);
+    log(`  loudness ${L.lufs.toFixed(1)} LUFS integrated, true peak ${L.truePeak.toFixed(1)} dBTP, range ${L.lra.toFixed(1)} LU`);
+    for (const [name, t] of Object.entries(PLATFORM_TARGETS)) if (["youtube", "tiktok", "instagram", "linkedin"].includes(name)) log(`    ${name.padEnd(9)} target ${t.lufs} LUFS / ${t.truePeak} dBTP: ${loudnessVerdict(L, t)}`);
+    log(`    mh deliver --platforms youtube,tiktok writes copies normalised to each target`);
+  } catch (e) {
+    log(`  loudness: ${(e as Error).message.split("\n")[0]}`);
   }
   // short cues under a bed: the rms window is too wide to see a 150 ms key, the high-passed peak is not
   const mixHp = highpass(await decodeMono(file, AUDIBILITY_SR), AUDIBILITY_SR, 2000);
@@ -1180,6 +1305,8 @@ const renderOne = async (args: Args) => {
       return mixFilm(x.cfg, x.c, picture, x.filmName, x.format, mixOpts);
     });
   }, log);
+  produced(res.master);
+  if (res.web) produced(res.web);
   const st = await mediaStats(res.master);
   log(`film -> ${res.master}  ${statsLine(st, Math.round(st.seconds * x.c.fps))}${res.web ? `\nweb  -> ${res.web}  ${statsLine(await mediaStats(res.web))}` : ""}  (${ms(t0)})`);
 };
@@ -1396,15 +1523,15 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
   locate <image.png> [--from tag]   which frame is this? perceptual hash of a pasted still against a frames run
   probe <ref> [--mode text|probe|all] [--find text] [--key k] [--json]   --key prints one element's centre (cursor targets)
                                     where is what: element boxes, colors, fonts at a frame, straight from the DOM
-  lint [--static] [--timeline] [--rendered] [--format all] [--no-fail]
+  lint [--static] [--timeline] [--rendered] [--clips] [--format all] [--no-fail]
                                     colors vs tokens (source and painted), text durations, events, safe zone,
                                     overflow, wrap, collision, same-top, format-parity (--rendered runs every format by default)
   diff [tagA] [tagB] [--min 0.002]  which check frames changed between two runs (default approved vs latest), touched scenes first
   compare <a.png> <b.png> [--out diff.png]   two pictures: changed pixels, mean, box, diff image (same frame on both engines?)
-  motion --scene a[,b] [--width 320]
-                                    frame-to-frame motion curve: when it settles, how long it holds, where it jumps
+  motion --scene a[,b] [--width 320] [--reference clip.mp4[:from-to]]
+                                    frame-to-frame motion curve: when it settles, how long it holds, where it jumps; --reference compares shape, settle and hold with a clip
   audio [file] [--window 0.25] [--scene id]
-                                    music coverage (bed end, loop seams, loud span for trim), then the rms profile of the film and every cue checked
+                                    music coverage (bed end, loop seams, loud span for trim), loudness vs platform targets, then the rms profile of the film and every cue checked
                                     --scene id: every cue that starts in or sounds during that scene, in scene-local time
   sfx [--all] [--json]              every cue file once: length, attack, tail, peak; warns when a "hit" is a riser or a bed is too short
   beats [file] [--tolerance 60] [--suggest]
@@ -1421,16 +1548,25 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
   feedback [--all] [--json] [--clear]
                                     the comments as an agent-readable list, grouped by scene
   feedback --from <file|->          free text ("bei 1:09", "Sekunde 19-21", "beim Klicken") turned into scene addresses
-  srt [--out file] [--chapters] [--captions=false]
-                                    subtitles from the timeline: one entry per scene with text (or caption), times from the compile; --chapters prints the YouTube list
-  deliver --out dir [--format all] [--stills a,b|all] [--lang en]
-                                    films per format, stills as jpg, the srt, a manifest (sizes, durations, bitrates, sha1, chapters, scenes) and a .gitignore for the mp4
+  srt [--out file] [--chapters] [--captions=false] [--lang de]
+                                    subtitles from the timeline: one entry per scene with text (or caption), times from the compile; --chapters prints the YouTube list; --lang reads timeline.i18n
+  captions [file] [--lang de] [--out file]
+                                    the subtitles burned into the rendered film (config.captions for the style, bottom inset from the safe zone)
+  voice [--force] [--dry-run]       voice cues (kind "voice" with text): synthesise missing or changed lines (ElevenLabs, ELEVENLABS_API_KEY), measure each against its scene
+  clips [add <file> --id --prompt --model --seed --credits --cost --attempts]
+                                    generated clips registry (clips.json): what each cost and looks like; lint clip-colour-drift between consecutive clips
+  judge --scene a[,b] [--model m] [--checklist "a;b"] [--file clip.mp4]
+                                    a model watches the clip (Gemini, GEMINI_API_KEY): findings with film times, leads to confirm with mh frame
+  deliver --out dir [--format all] [--stills a,b|all] [--lang en] [--platforms youtube,tiktok] [--captions] [--upload prefix]
+                                    films per format, stills as jpg, the srt, per-platform loudness copies, burned captions, a manifest (sizes, sha1, loudness, chapters, urls) and a .gitignore for the mp4;
+                                    --upload puts every file on S3/R2 (MH_S3_* or CLOUDFLARE_* env) and records the urls
   init [--force]                    write a harness.config.ts template into the project
 
   engine: --engine remotion|native (or config.engine): remotion uses the project's Remotion install, native runs Vite + shim + Playwright without it
   project: --project dir, else $MH_PROJECT, else the cwd when it holds harness.config.ts, else the project used last (~/.mh/last)
   --format all fans check, frames, frame, lint, cursor, render and deliver out over every format of the film
   lint --rendered refuses a run whose bundle is older than the sources (--allow-stale reads it anyway); sheet warns
+  every command writes a receipt (<cache>/receipts/<stamp>-<cmd>.json: args, source hash, engine, outputs with sha1, status); --receipt prints its path
 `;
 
 const commands: Record<string, (a: Args) => Promise<void>> = {
@@ -1445,6 +1581,10 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   frame: cmdFrame,
   still: cmdStill,
   srt: cmdSrt,
+  captions: cmdCaptions,
+  voice: cmdVoice,
+  clips: cmdClips,
+  judge: cmdJudge,
   deliver: cmdDeliver,
   sheet: cmdSheet,
   approve: cmdApprove,
@@ -1471,12 +1611,17 @@ const main = async () => {
   if (!cmd || cmd === "help" || flag(args, "help")) return log(help);
   const fn = commands[cmd];
   if (!fn) die(`unknown command "${cmd}"\n${help}`);
+  const { _: positional, ...rest } = args;
+  startReceipt(cmd, positional, rest);
   try {
     await fn(args);
   } catch (e) {
+    endReceipt("failed", (e as Error).message ?? String(e));
     await closeEngines();
     die((e as Error).stack ?? String(e));
   }
+  const receipt = endReceipt("ok");
+  if (receipt && flag(args, "receipt")) log(`receipt -> ${receipt}`);
   await closeEngines();
 };
 
