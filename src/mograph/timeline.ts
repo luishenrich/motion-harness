@@ -50,7 +50,8 @@ export const toScene = (film: MgFilm, s: MgScene): Scene => {
     why: s.why,
     events: sceneEvents(film, s),
     // a layer is expected on screen from the end of its in to the start of its out
-    probes: s.layers.filter((l) => l.probe !== false && l.type !== "shape").map((l) => {
+    // a shape and a field of particles are decoration: what must be on screen is the text, the numbers and the pictures
+    probes: s.layers.filter((l) => l.probe !== false && l.type !== "shape" && l.type !== "particles").map((l) => {
       const t = layerTiming(film, s, l);
       const from = Math.min(s.dur - 1, t.inAt + t.inDur);
       const to = t.outAt !== null ? Math.max(from, t.outAt - 1) : t.to - 1;

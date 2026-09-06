@@ -13,6 +13,9 @@ import type { EaseRef, Keyframe, Layer, MgFilm, MgScene, TrackProp } from "./sch
 import { BUILTIN_COLORS, layerTiming, layerFor } from "./schema.ts";
 import { isKnownEase } from "./easing.ts";
 import { staggerDelay } from "./pose.ts";
+import { COLOR_TRACKS, isGradient, type ColorKey, type ColorTrackProp, type ColorValue } from "./colour.ts";
+import { BLEND_MODES, EFFECT_KEYS } from "./effects.ts";
+import { MAX_PARTICLES } from "./particles.ts";
 
 export type MgFinding = { level: "error" | "warn"; rule: string; where: string; message: string };
 
@@ -223,13 +226,28 @@ export const rename = (film: MgFilm, addr: string, id: string) => {
 /** frames a text needs on screen: 1.2 s plus a quarter second per word over four (the timeline's default rule) */
 const readSeconds = (words: number) => 1.2 + Math.max(0, words - 4) * 0.25;
 
-const KNOWN_IN = ["cut", "fade", "rise", "drop", "pop", "slide", "wipe", "grow", "blur", "typewriter", "mask"];
+const KNOWN_IN = ["cut", "fade", "rise", "drop", "pop", "slide", "wipe", "grow", "blur", "typewriter", "mask", "flip", "track", "scramble", "fall", "line-wipe"];
+const KNOWN_SHAPES = ["rect", "circle", "line", "ring", "path", "polygon", "star", "arrow"];
+const PARTICLE_SHAPES = ["dot", "line", "confetti"];
+/** the presets that draw their units one after another: without a stagger the timeline and the picture disagree */
+const NEEDS_STAGGER = ["flip", "fall", "line-wipe", "mask"];
 const KNOWN_OUT = ["cut", "fade", "sink", "lift", "shrink", "slide", "wipe", "blur"];
 
 export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
   const out: MgFinding[] = [];
   const colors = new Set<string>([...BUILTIN_COLORS, ...Object.keys(film.design?.colors ?? {})]);
-  const colorOk = (c: unknown) => typeof c !== "string" || colors.has(c) || /^#[0-9a-fA-F]{3,8}$/.test(c) || /^rgba?\(/.test(c);
+  const flatOk = (c: unknown) => typeof c !== "string" || colors.has(c) || /^#[0-9a-fA-F]{3,8}$/.test(c) || /^rgba?\(/.test(c);
+  // a gradient is a colour too: every stop of it must be a design colour or a hex
+  const colorOk = (c: unknown): boolean => (isGradient(c) ? c.gradient.length >= 2 && c.gradient.every(flatOk) : flatOk(c));
+  const colorWhy = (c: unknown): string => (isGradient(c) ? (c.gradient.length < 2 ? `a gradient needs at least two stops` : `gradient stop "${c.gradient.find((g) => !flatOk(g))}" is not a design colour or a hex`) : `"${String(c)}" is not a design colour or a hex`);
+  /** every key of a colour track: a colour or a gradient, an easing the film knows, inside the scene */
+  const lintColorKeys = (keys: ColorKey[] | undefined, where: string, dur: number) => {
+    for (const k of keys ?? []) {
+      if (!colorOk(k.v)) out.push({ level: "error", rule: "color", where: `${where}@${k.at}`, message: colorWhy(k.v) });
+      if (!isKnownEase(k.ease, film.easings ?? {})) out.push({ level: "error", rule: "ease", where: `${where}@${k.at}`, message: `"${String(k.ease)}" is not an easing` });
+      if (k.at > dur) out.push({ level: "warn", rule: "key-late", where: `${where}@${k.at}`, message: `colour keyframe past the scene's ${dur} frames` });
+    }
+  };
   if (!film.design?.ink || !film.design?.paper || !film.design?.accent) out.push({ level: "error", rule: "design", where: "design", message: "ink, paper and accent are required" });
   if (!film.scenes?.length) out.push({ level: "error", rule: "scenes", where: "film", message: "no scenes" });
   const ids = new Set<string>();
@@ -240,7 +258,8 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
     if (!/^[a-z][a-z0-9-]*$/.test(s.id)) out.push({ level: "warn", rule: "id", where: w, message: "ids are kebab-case; addresses read better" });
     if (!(s.dur > 0)) out.push({ level: "error", rule: "dur", where: w, message: "a scene needs a duration in frames" });
     if (s.dur < 20) out.push({ level: "warn", rule: "short-scene", where: w, message: `${s.dur} frames is under 20: a viewer cannot read it` });
-    if (!colorOk(s.ground)) out.push({ level: "error", rule: "color", where: `${w}.ground`, message: `"${s.ground}" is not a design colour or a hex` });
+    if (!colorOk(s.ground)) out.push({ level: "error", rule: "color", where: `${w}.ground`, message: colorWhy(s.ground) });
+    lintColorKeys(s.groundTracks, `${w}.groundTracks`, s.dur);
     if (!s.layers?.length) out.push({ level: "warn", rule: "empty-scene", where: w, message: "no layers: a plain ground" });
     const lids = new Set<string>();
     for (const l of s.layers ?? []) {
@@ -273,7 +292,23 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
         if (last > s.dur) out.push({ level: "warn", rule: "stagger-long", where: `${lw}.in.stagger`, message: `the last of ${n} units arrives at ${last}, after the scene's ${s.dur} frames` });
       }
       if (l.at && (l.at.x < 0 || l.at.x > 1 || l.at.y < 0 || l.at.y > 1)) out.push({ level: "warn", rule: "off-frame", where: `${lw}.at`, message: `position ${l.at.x},${l.at.y} is outside the frame (0..1)` });
-      for (const [k, c] of Object.entries(l)) if (/color|fill|stroke|accent/i.test(k) && !colorOk(c)) out.push({ level: "error", rule: "color", where: `${lw}.${k}`, message: `"${String(c)}" is not a design colour or a hex` });
+      for (const [k, c] of Object.entries(l)) if (/^(color|fill|stroke|accent|markerColor|labelColor|trackColor|areaColor|axis)$/.test(k) && !colorOk(c)) out.push({ level: "error", rule: "color", where: `${lw}.${k}`, message: colorWhy(c) });
+      for (const [prop, keys] of Object.entries(l.colorTracks ?? {})) {
+        if (!(COLOR_TRACKS as readonly string[]).includes(prop)) out.push({ level: "error", rule: "color-track", where: `${lw}.colorTracks.${prop}`, message: `"${prop}" is not a colour field (${COLOR_TRACKS.join(", ")})` });
+        lintColorKeys(keys as ColorKey[], `${lw}.colorTracks.${prop}`, s.dur);
+      }
+      if (l.effects) {
+        for (const k of Object.keys(l.effects)) if (!(EFFECT_KEYS as readonly string[]).includes(k)) out.push({ level: "error", rule: "effect", where: `${lw}.effects.${k}`, message: `"${k}" is not an effect (${EFFECT_KEYS.join(", ")})` });
+        const fx = l.effects;
+        if (fx.blend && !(BLEND_MODES as readonly string[]).includes(fx.blend)) out.push({ level: "error", rule: "effect", where: `${lw}.effects.blend`, message: `"${fx.blend}" is not a blend mode` });
+        for (const [k, c] of [["shadow", fx.shadow?.color], ["glow", fx.glow?.color], ["stroke", fx.stroke?.color], ["highlight", fx.highlight?.color], ["gradientText", Array.isArray(fx.gradientText) ? { gradient: fx.gradientText } : fx.gradientText]] as [string, ColorValue | undefined][]) {
+          if (c !== undefined && !colorOk(c)) out.push({ level: "error", rule: "color", where: `${lw}.effects.${k}`, message: colorWhy(c) });
+        }
+        if (fx.highlight && l.type !== "text") out.push({ level: "warn", rule: "effect", where: `${lw}.effects.highlight`, message: "a highlight sweeps behind words; this layer has none" });
+        if (fx.highlight?.in && !isKnownEase(fx.highlight.in.ease, film.easings ?? {})) out.push({ level: "error", rule: "ease", where: `${lw}.effects.highlight.in.ease`, message: `"${String(fx.highlight.in.ease)}" is not an easing` });
+        if (fx.gradientText && (Array.isArray(fx.gradientText) ? fx.gradientText.length : fx.gradientText.gradient.length) < 2) out.push({ level: "error", rule: "effect", where: `${lw}.effects.gradientText`, message: "gradient text needs at least two stops" });
+      }
+      if (l.in?.preset && NEEDS_STAGGER.includes(l.in.preset) && !l.in.stagger && !film.defaults?.layerIn?.stagger) out.push({ level: "warn", rule: "stagger-missing", where: `${lw}.in`, message: `the ${l.in.preset} preset arrives unit by unit; without a stagger everything moves at once` });
       if (l.type === "text") {
         if (!l.text) out.push({ level: "warn", rule: "empty-text", where: lw, message: "no text" });
         const words = l.text.replace(/\*/g, "").split(/\s+/).filter(Boolean).length;
@@ -286,6 +321,27 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
       if (l.type === "image" && projectDir && !existsSync(join(projectDir, "public", l.src))) out.push({ level: "error", rule: "asset", where: `${lw}.src`, message: `public/${l.src} does not exist` });
       if (l.type === "bars" && !l.values?.length) out.push({ level: "error", rule: "values", where: lw, message: "bars need values" });
       if (l.type === "list" && !l.items?.length) out.push({ level: "error", rule: "items", where: lw, message: "a list needs items" });
+      if (l.type === "shape") {
+        if (!KNOWN_SHAPES.includes(l.shape)) out.push({ level: "error", rule: "shape", where: `${lw}.shape`, message: `"${l.shape}" is not a shape (${KNOWN_SHAPES.join(", ")})` });
+        if (l.shape === "path" && typeof l.d !== "string") out.push({ level: "error", rule: "shape", where: `${lw}.d`, message: "a path needs its data in d (\"M12 4 L40 30 ...\")" });
+        if (l.shape === "path" && !l.viewBox) out.push({ level: "warn", rule: "shape", where: `${lw}.viewBox`, message: "a path without a viewBox is drawn in a 100x100 box" });
+        if (l.shape !== "path" && typeof l.d === "string") out.push({ level: "error", rule: "shape", where: `${lw}.d`, message: `d is the diameter of a ${l.shape}, a number` });
+        if ((l.shape === "polygon" || l.shape === "star") && (l.sides ?? 0) < 3 && l.sides !== undefined) out.push({ level: "error", rule: "shape", where: `${lw}.sides`, message: "three sides at least" });
+      }
+      if (l.type === "line") {
+        if (!l.points?.length) out.push({ level: "error", rule: "values", where: lw, message: "a line chart needs points" });
+        else if (l.points.length < 2) out.push({ level: "warn", rule: "values", where: lw, message: "one point draws no line" });
+        if (l.labels?.length && l.points?.length && l.labels.length !== l.points.length) out.push({ level: "warn", rule: "values", where: `${lw}.labels`, message: `${l.labels.length} labels for ${l.points.length} points` });
+      }
+      if (l.type === "rings" && !l.values?.length) out.push({ level: "error", rule: "values", where: lw, message: "rings need values" });
+      if (l.type === "particles") {
+        const count = l.count ?? 60;
+        if (count > MAX_PARTICLES) out.push({ level: "error", rule: "particles", where: `${lw}.count`, message: `${count} particles is over the ${MAX_PARTICLES} a frame may cost` });
+        if (count <= 0) out.push({ level: "warn", rule: "particles", where: `${lw}.count`, message: "no particles" });
+        if (l.shape && !PARTICLE_SHAPES.includes(l.shape)) out.push({ level: "error", rule: "particles", where: `${lw}.shape`, message: `"${l.shape}" is not a particle shape (${PARTICLE_SHAPES.join(", ")})` });
+        if (l.probe !== false) out.push({ level: "warn", rule: "particles", where: lw, message: "particles decorate; set probe: false so the layout lints leave them alone" });
+      }
+      if (l.type === "counter" && l.roll && /\./.test(l.format ?? "")) out.push({ level: "warn", rule: "counter", where: `${lw}.roll`, message: "an odometer rolls whole numbers; a decimal format counts the plain way" });
     }
   }
   for (const a of film.audio ?? []) if (projectDir && !existsSync(join(projectDir, a.file.startsWith("public/") ? a.file : `public/${a.file}`))) out.push({ level: "warn", rule: "asset", where: `audio.${a.id}.file`, message: `${a.file} does not exist under public/ (mh voice writes voice cues)` });
@@ -298,7 +354,17 @@ export const describe = (film: MgFilm): { scene: string; dur: number; layer: str
     s.layers.map((l) => {
       const t = layerTiming(film, s, l);
       const inM = { ...(film.defaults?.layerIn ?? {}), ...(l.in ?? {}) };
-      const text = l.type === "text" ? l.text : l.type === "list" ? l.items.join(" | ") : l.type === "counter" ? `${l.prefix ?? ""}${l.from ?? 0}->${l.to}${l.suffix ?? ""}` : l.type === "bars" ? l.values.map((v) => `${v.label} ${v.value}`).join(", ") : l.type === "image" ? l.src : l.type === "shape" ? l.shape : "";
+      const text =
+        l.type === "text" ? l.text
+        : l.type === "list" ? l.items.join(" | ")
+        : l.type === "counter" ? `${l.prefix ?? ""}${l.from ?? 0}->${l.to}${l.suffix ?? ""}${l.roll ? " (roll)" : ""}`
+        : l.type === "bars" ? l.values.map((v) => `${v.label} ${v.value}`).join(", ")
+        : l.type === "image" ? l.src
+        : l.type === "shape" ? `${l.shape}${l.shape === "polygon" || l.shape === "star" ? ` ${l.sides ?? (l.shape === "star" ? 5 : 6)}` : ""}`
+        : l.type === "line" ? `${l.points.length} points ${l.points.map((p) => (typeof p === "number" ? p : p.y)).join(" ")}`
+        : l.type === "rings" ? l.values.map((v) => `${v.label} ${v.value}`).join(", ")
+        : l.type === "particles" ? `${l.count ?? 60} ${l.shape ?? "dot"}`
+        : "";
       return { scene: s.id, dur: s.dur, layer: l.id, type: l.type, at: l.at ? `${l.at.x},${l.at.y}` : "0.5,0.5", in: `${inM.preset ?? "rise"} @${t.inAt} ${t.inDur}f${inM.stagger ? ` +${inM.stagger.each}/${inM.stagger.by}` : ""}`, out: t.outAt !== null ? `${l.out?.preset ?? "fade"} @${t.outAt} ${t.outDur}f` : "", text: text.replace(/\n/g, " / ").slice(0, 60) };
     }),
   );
@@ -319,7 +385,18 @@ export const estimateHeight = (l: Layer, frameW: number, u: number): number => {
   if (l.type === "list") return l.items.length * (l.size ?? 48) * 1.2 + (l.items.length - 1) * (l.gap ?? 18);
   if (l.type === "bars") return l.h ?? ((l.direction ?? "horizontal") === "horizontal" ? 60 * l.values.length : 420);
   if (l.type === "image") return l.h ?? (l.w ?? 480) * 0.75;
-  if (l.type === "shape") return l.shape === "circle" || l.shape === "ring" ? (l.d ?? 120) : l.shape === "line" ? (l.thickness ?? 4) : (l.h ?? 200);
+  if (l.type === "shape") {
+    const dia = typeof l.d === "number" ? l.d : undefined;
+    if (l.shape === "circle" || l.shape === "ring" || l.shape === "polygon" || l.shape === "star") return dia ?? 160;
+    if (l.shape === "line") return l.thickness ?? 4;
+    if (l.shape === "arrow") return (l.head ?? 34) + (l.thickness ?? 6);
+    if (l.shape === "path") return l.h ?? l.viewBox?.[1] ?? 100;
+    return l.h ?? 200;
+  }
+  if (l.type === "line") return (l.h ?? 380) + (l.labels?.length ? (l.labelSize ?? 26) * 1.6 : 0);
+  if (l.type === "rings") return l.d ?? 360;
+  // a field of particles is decoration over the whole frame: it stacks with nothing
+  if (l.type === "particles") return 0;
   return 0;
 };
 

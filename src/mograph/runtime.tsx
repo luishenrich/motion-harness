@@ -8,10 +8,13 @@
  */
 import React from "react";
 import { AbsoluteFill, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
-import type { BarsLayer, CounterLayer, ImageLayer, Layer, ListLayer, MgFilm, MgScene, ShapeLayer, TextLayer } from "./schema.ts";
+import type { BarsLayer, CounterLayer, ImageLayer, Layer, LineChartLayer, ListLayer, MgFilm, MgScene, ParticlesLayer, RingsLayer, ShapeLayer, TextLayer } from "./schema.ts";
 import { colorOf, layerFor, layerTiming } from "./schema.ts";
 import { poseAt, staggerDelay, type Pose } from "./pose.ts";
 import { defaultMaxWidth, frameFor, placement, type Frame } from "./layout.ts";
+import { backgroundStyle, groundFlat, groundPaint, layerPaint, paintOf, textStyle } from "./colour.ts";
+import { highlightAt, lintFlags } from "./effects.ts";
+import { Fx, LineChartView, Odometer, ParticlesView, RingsView, ShapeSvg, TextFx, isDrawnShape, isTextFx } from "./views.tsx";
 
 const fontStack = (family: string | undefined, fallback: string) => (family ? `'${family}', ${fallback}` : fallback);
 const SANS = "-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif";
@@ -48,8 +51,10 @@ const Box: React.FC<{ ctx: Ctx; layer: Layer; pose: Pose; children: React.ReactN
   const pl = placement(layer, ctx.fr);
   const base: React.CSSProperties = { position: "absolute", left: pl.left, top: pl.top, transform: pl.translate, textAlign: pl.textAlign, ...extra };
   return (
-    <div data-probe={layer.probe === false ? undefined : layer.id} data-mg={`${ctx.scene.id}.${layer.id}`} data-lines={lines} data-lint={layer.probe === false ? "none" : undefined} style={{ ...base, visibility: pose.visible ? "visible" : "hidden" }}>
-      <div style={{ ...poseStyle(pose, ctx.fr), transformOrigin: "50% 50%" }}>{children}</div>
+    <div data-probe={layer.probe === false ? undefined : layer.id} data-mg={`${ctx.scene.id}.${layer.id}`} data-lines={lines} data-lint={lintFlags(layer)} style={{ ...base, visibility: pose.visible ? "visible" : "hidden" }}>
+      <div style={{ ...poseStyle(pose, ctx.fr), transformOrigin: "50% 50%" }}>
+        <Fx ctx={ctx} layer={layer}>{children}</Fx>
+      </div>
     </div>
   );
 };
@@ -62,21 +67,34 @@ const splitUnits = (text: string, by: "word" | "char" | "line" | "item" | undefi
 };
 
 /** *word* spans in the accent colour */
-const marked = (text: string, accent: string, key: string): React.ReactNode[] =>
-  text.split(/(\*[^*]+\*)/).filter((s) => s.length).map((s, i) => (s.startsWith("*") && s.endsWith("*") ? <span key={`${key}-${i}`} style={{ color: accent }}>{s.slice(1, -1)}</span> : <React.Fragment key={`${key}-${i}`}>{s}</React.Fragment>));
+const marked = (text: string, accent: string, key: string, markStyle?: React.CSSProperties): React.ReactNode[] =>
+  text.split(/(\*[^*]+\*)/).filter((s) => s.length).map((s, i) => (s.startsWith("*") && s.endsWith("*") ? <span key={`${key}-${i}`} style={{ color: accent, ...markStyle }}>{s.slice(1, -1)}</span> : <React.Fragment key={`${key}-${i}`}>{s}</React.Fragment>));
 
 const TextView: React.FC<{ ctx: Ctx; layer: TextLayer }> = ({ ctx, layer }) => {
   const { film, fr, frame } = ctx;
   const size = (layer.size ?? 72) * fr.u;
-  const color = colorOf(film.design, layer.color, film.design.ink);
-  const accent = colorOf(film.design, layer.accent ?? "accent", film.design.accent);
+  const paint = layerPaint(film, ctx.scene, layer, "color", frame, film.design.ink);
+  const accentPaint = layerPaint(film, ctx.scene, layer, "accent", frame, film.design.accent);
+  const accent = accentPaint.gradient ? colorOf(film.design, layer.accent ?? "accent", film.design.accent) : accentPaint.css;
   const st = layer.in?.stagger ?? film.defaults?.layerIn?.stagger;
   const whole = poseAt(film, ctx.scene, layer, frame);
   const width = (layer.maxWidth ?? defaultMaxWidth(fr)) * fr.width;
-  const style: React.CSSProperties = { fontFamily: fontFor(film, layer.role), fontSize: size, fontWeight: layer.weight ?? (layer.role === "body" ? 400 : 700), lineHeight: layer.lineHeight ?? 1.1, letterSpacing: layer.letterSpacing !== undefined ? `${layer.letterSpacing}em` : layer.role === "display" || !layer.role ? "-0.01em" : undefined, color, width, whiteSpace: "pre-wrap", textTransform: layer.uppercase ? "uppercase" : undefined, textAlign: layer.align ?? placement(layer, fr).textAlign, margin: 0 };
-  const typewriter = (layer.in?.preset ?? film.defaults?.layerIn?.preset) === "typewriter";
+  const style: React.CSSProperties = { fontFamily: fontFor(film, layer.role), fontSize: size, fontWeight: layer.weight ?? (layer.role === "body" ? 400 : 700), lineHeight: layer.lineHeight ?? 1.1, letterSpacing: layer.letterSpacing !== undefined ? `${layer.letterSpacing}em` : layer.role === "display" || !layer.role ? "-0.01em" : undefined, ...textStyle(paint), width, whiteSpace: "pre-wrap", textTransform: layer.uppercase ? "uppercase" : undefined, textAlign: layer.align ?? placement(layer, fr).textAlign, margin: 0 };
+  const preset = layer.in?.preset ?? film.defaults?.layerIn?.preset;
+  const typewriter = preset === "typewriter";
   // the wrap lint expects this many lines: the layer's own count, else the explicit line breaks
   const expectLines = layer.lines ?? layer.text.split("\n").length;
+  // a marker sweeps behind the words (or only behind the *marked* ones)
+  const hl = highlightAt(film, ctx.scene, layer, frame, fr.u);
+  const markStyle = hl && hl.only === "marks" ? (hl.style as React.CSSProperties) : undefined;
+  const lineStyle = hl && hl.only === "all" ? (hl.style as React.CSSProperties) : undefined;
+  if (isTextFx(preset)) {
+    return (
+      <Box ctx={ctx} layer={layer} pose={whole} lines={expectLines}>
+        <TextFx ctx={ctx} layer={layer} style={style} accent={accent} preset={preset!} markStyle={markStyle} />
+      </Box>
+    );
+  }
   if (typewriter) {
     const chars = [...layer.text.replace(/\*/g, "")];
     const n = Math.round(whole.progress * chars.length);
@@ -89,19 +107,20 @@ const TextView: React.FC<{ ctx: Ctx; layer: TextLayer }> = ({ ctx, layer }) => {
   if (!st) {
     return (
       <Box ctx={ctx} layer={layer} pose={whole} lines={expectLines}>
-        <div style={style}>{layer.text.split("\n").map((line, i) => <React.Fragment key={i}>{i > 0 ? <br /> : null}{marked(line, accent, `l${i}`)}</React.Fragment>)}</div>
+        <div style={style}>{layer.text.split("\n").map((line, i) => <React.Fragment key={i}>{i > 0 ? <br /> : null}{lineStyle ? <span style={lineStyle}>{marked(line, accent, `l${i}`, markStyle)}</span> : marked(line, accent, `l${i}`, markStyle)}</React.Fragment>)}</div>
       </Box>
     );
   }
   const { units, lines } = splitUnits(layer.text, st.by);
   const mask = (layer.in?.preset ?? film.defaults?.layerIn?.preset) === "mask";
   return (
-    <Box ctx={ctx} layer={layer} pose={{ ...whole, opacity: whole.visible ? 1 : 0, x: 0, y: 0, scale: 1, blur: 0 }} lines={expectLines}>
+    <Box ctx={ctx} layer={layer} pose={{ ...whole, opacity: whole.visible ? 1 : 0, x: 0, y: 0, scale: 1, blur: 0, wipe: 1 }} lines={expectLines}>
       <div style={style}>
         {units.map((u, i) => {
           const p = poseAt(film, ctx.scene, layer, frame, staggerDelay(st, i, units.length));
           // a line unit wraps inside its own row; a word or a character never wraps
-          const inner = <span style={{ display: lines ? "block" : "inline-block", ...poseStyle(p, fr), whiteSpace: lines ? "pre-wrap" : "pre" }}>{marked(u, accent, `u${i}`)}</span>;
+          const body = lineStyle ? <span style={lineStyle}>{marked(u, accent, `u${i}`, markStyle)}</span> : marked(u, accent, `u${i}`, markStyle);
+          const inner = <span style={{ display: lines ? "block" : "inline-block", ...poseStyle(p, fr), whiteSpace: lines ? "pre-wrap" : "pre" }}>{body}</span>;
           if (lines) return <div key={i} style={{ overflow: mask ? "hidden" : undefined }}>{inner}</div>;
           if (/^\s+$/.test(u)) return <span key={i}>{u}</span>;
           return mask ? <span key={i} style={{ display: "inline-block", overflow: "hidden", verticalAlign: "bottom" }}>{inner}</span> : <React.Fragment key={i}>{inner}</React.Fragment>;
@@ -114,20 +133,28 @@ const TextView: React.FC<{ ctx: Ctx; layer: TextLayer }> = ({ ctx, layer }) => {
 const ShapeView: React.FC<{ ctx: Ctx; layer: ShapeLayer }> = ({ ctx, layer }) => {
   const { film, fr, frame } = ctx;
   const p = poseAt(film, ctx.scene, layer, frame);
-  const fill = colorOf(film.design, layer.fill, film.design.accent);
+  const fill = layerPaint(film, ctx.scene, layer, "fill", frame, film.design.accent).css;
+  const strokePaint = layer.stroke ? layerPaint(film, ctx.scene, layer, "stroke", frame, film.design.ink).css : fill;
   const u = fr.u;
+  if (isDrawnShape(layer.shape)) {
+    return (
+      <Box ctx={ctx} layer={layer} pose={p}>
+        <ShapeSvg ctx={ctx} layer={layer} pose={p} fill={fill} stroke={strokePaint} />
+      </Box>
+    );
+  }
   if (layer.shape === "circle") {
-    const d = (layer.d ?? 120) * u;
+    const d = (typeof layer.d === "number" ? layer.d : 120) * u;
     return <Box ctx={ctx} layer={layer} pose={p}><div style={{ width: d, height: d, borderRadius: "50%", background: fill, transform: `scale(${p.w}, ${p.h})` }} /></Box>;
   }
   if (layer.shape === "ring") {
-    const d = (layer.d ?? 160) * u, th = (layer.thickness ?? 12) * u;
+    const d = (typeof layer.d === "number" ? layer.d : 160) * u, th = (layer.thickness ?? 12) * u;
     const prog = Math.max(0, Math.min(1, (layer.progress ?? 1) * p.progress));
     const r = (d - th) / 2, c = 2 * Math.PI * r;
     return (
       <Box ctx={ctx} layer={layer} pose={p}>
         <svg width={d} height={d} viewBox={`0 0 ${d} ${d}`} style={{ display: "block", transform: "rotate(-90deg)" }}>
-          {layer.stroke ? <circle cx={d / 2} cy={d / 2} r={r} fill="none" stroke={colorOf(film.design, layer.stroke)} strokeWidth={th} /> : null}
+          {layer.stroke ? <circle cx={d / 2} cy={d / 2} r={r} fill="none" stroke={colorOf(film.design, layer.stroke)} strokeWidth={th} opacity={0.25} /> : null}
           <circle cx={d / 2} cy={d / 2} r={r} fill="none" stroke={fill} strokeWidth={th} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - prog)} />
         </svg>
       </Box>
@@ -172,9 +199,23 @@ const CounterView: React.FC<{ ctx: Ctx; layer: CounterLayer }> = ({ ctx, layer }
   // an explicit progress track wins; otherwise the count eases out over `dur`
   const prog = layer.tracks?.progress ? p.progress : 1 - Math.pow(1 - raw, 3);
   const v = (layer.from ?? 0) + ((layer.to ?? 0) - (layer.from ?? 0)) * prog;
+  const paint = layerPaint(film, ctx.scene, layer, "color", frame, film.design.ink);
+  const size = (layer.size ?? 160) * fr.u;
+  const box: React.CSSProperties = { fontFamily: fontFor(film, layer.role), fontSize: size, fontWeight: layer.weight ?? 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", whiteSpace: "nowrap" };
+  // an odometer rolls its digits: only whole numbers, the decimals stay with the plain counter
+  if (layer.roll && !/\./.test(layer.format ?? "")) {
+    const scale = layer.format === "0%" ? 100 : 1;
+    return (
+      <Box ctx={ctx} layer={layer} pose={p}>
+        <div style={box}>
+          <Odometer ctx={ctx} layer={layer} value={v * scale} text={`${layer.prefix ?? ""}${formatNumber(layer.to ?? 0, layer.format)}${layer.suffix ?? ""}`} size={size} paint={paint} />
+        </div>
+      </Box>
+    );
+  }
   return (
     <Box ctx={ctx} layer={layer} pose={p}>
-      <div style={{ fontFamily: fontFor(film, layer.role), fontSize: (layer.size ?? 160) * fr.u, fontWeight: layer.weight ?? 800, color: colorOf(film.design, layer.color, film.design.ink), lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
+      <div style={{ ...box, ...textStyle(paint) }}>
         {layer.prefix ?? ""}{formatNumber(v, layer.format)}{layer.suffix ?? ""}
       </div>
     </Box>
@@ -199,7 +240,7 @@ const BarsView: React.FC<{ ctx: Ctx; layer: BarsLayer }> = ({ ctx, layer }) => {
         {layer.values.map((v, i) => {
           const p = poseAt(film, ctx.scene, layer, frame, staggerDelay(st, i, layer.values.length));
           const frac = Math.max(0, Math.min(1, v.value / max)) * (layer.tracks?.progress ? p.progress : p.w);
-          const fill = colorOf(film.design, v.color ?? layer.color ?? "accent", film.design.accent);
+          const fill = paintOf(film.design, v.color ?? layer.color ?? "accent", film.design.accent);
           const label = layer.showValues === false ? v.label : `${v.label}  ${formatNumber(v.value, layer.format)}`;
           return horizontal ? (
             <div key={i} style={{ display: "flex", alignItems: "center", gap: 18 * u, opacity: p.opacity }}>
@@ -249,6 +290,21 @@ const ListView: React.FC<{ ctx: Ctx; layer: ListLayer }> = ({ ctx, layer }) => {
   );
 };
 
+const ChartLineView: React.FC<{ ctx: Ctx; layer: LineChartLayer }> = ({ ctx, layer }) => {
+  const p = poseAt(ctx.film, ctx.scene, layer, ctx.frame);
+  return <Box ctx={ctx} layer={layer} pose={{ ...p, w: 1, h: 1 }}><LineChartView ctx={ctx} layer={layer} pose={p} /></Box>;
+};
+
+const ChartRingsView: React.FC<{ ctx: Ctx; layer: RingsLayer }> = ({ ctx, layer }) => {
+  const p = poseAt(ctx.film, ctx.scene, layer, ctx.frame);
+  return <Box ctx={ctx} layer={layer} pose={{ ...p, opacity: p.visible ? 1 : 0, w: 1, h: 1 }}><RingsView ctx={ctx} layer={layer} pose={p} /></Box>;
+};
+
+const ParticleLayerView: React.FC<{ ctx: Ctx; layer: ParticlesLayer }> = ({ ctx, layer }) => {
+  const p = poseAt(ctx.film, ctx.scene, layer, ctx.frame);
+  return <Box ctx={ctx} layer={layer} pose={{ ...p, w: 1, h: 1 }}><ParticlesView ctx={ctx} layer={layer} /></Box>;
+};
+
 const LayerView: React.FC<{ ctx: Ctx; layer: Layer }> = ({ ctx, layer }) => {
   switch (layer.type) {
     case "text":
@@ -263,6 +319,12 @@ const LayerView: React.FC<{ ctx: Ctx; layer: Layer }> = ({ ctx, layer }) => {
       return <BarsView ctx={ctx} layer={layer} />;
     case "list":
       return <ListView ctx={ctx} layer={layer} />;
+    case "line":
+      return <ChartLineView ctx={ctx} layer={layer} />;
+    case "rings":
+      return <ChartRingsView ctx={ctx} layer={layer} />;
+    case "particles":
+      return <ParticleLayerView ctx={ctx} layer={layer} />;
   }
 };
 
@@ -279,13 +341,14 @@ const transitionDur = (t: MgScene["enter"] | undefined, fallback: number) => (t 
 export const MgSceneView: React.FC<{ film: MgFilm; scene: MgScene; format: string }> = ({ film, scene, format }) => {
   const frame = useCurrentFrame();
   const fr = frameFor(film, format);
-  const ground = colorOf(film.design, scene.ground ?? "ink", film.design.ink);
+  const ground = groundPaint(film, scene, frame);
   const enter = transitionDur(scene.enter, film.defaults?.enterFrames ?? 0);
   const exit = transitionDur(scene.exit, 0);
   const o = fadeOpacity(frame, scene.dur, enter, exit);
   const ctx: Ctx = { film, scene, fr, frame };
   return (
-    <AbsoluteFill style={{ backgroundColor: ground, overflow: "hidden" }} data-mg-scene={scene.id}>
+    <AbsoluteFill style={{ backgroundColor: groundFlat(film, scene, frame), overflow: "hidden" }} data-mg-scene={scene.id}>
+      {ground.gradient || ground.animated ? <AbsoluteFill style={backgroundStyle(ground)} data-lint={ground.animated ? "color-track" : undefined} /> : null}
       <AbsoluteFill style={{ opacity: o }}>
         {scene.layers.map((l) => <LayerView key={l.id} ctx={ctx} layer={layerFor(l, format)} />)}
       </AbsoluteFill>

@@ -230,7 +230,7 @@ const COLLISION_OPACITY = 0.6;
 
 export const lintCollision = (label: string, probe: ProbeResult): Finding[] => {
   const out: Finding[] = [];
-  const items = (probe.items as LayoutItem[]).filter((it) => it.visible && it.opacity >= COLLISION_OPACITY && it.w > 0 && it.h > 0 && (it.kind === "probe" || it.kind === "text") && it.lint !== "no-collision");
+  const items = (probe.items as LayoutItem[]).filter((it) => it.visible && it.opacity >= COLLISION_OPACITY && it.w > 0 && it.h > 0 && (it.kind === "probe" || it.kind === "text") && !(it.lint ?? "").split(" ").includes("no-collision"));
   for (let i = 0; i < items.length; i++) {
     for (let j = i + 1; j < items.length; j++) {
       const a = items[i], b = items[j];

@@ -11,6 +11,10 @@
  * a negative `at` counts from the scene's end.
  */
 
+import type { ColorKey, ColorTracks, ColorValue } from "./colour.ts";
+import type { Effects } from "./effects.ts";
+import type { ParticleField } from "./particles.ts";
+
 export type ColorRef = string; // a design token name ("ink", "accent", "brand") or a hex
 
 export type EaseRef =
@@ -25,7 +29,7 @@ export type Tracks = Partial<Record<TrackProp, Keyframe[]>>;
 
 export type Stagger = { by: "word" | "char" | "line" | "item"; each: number; from?: "start" | "end" | "center" };
 
-export type InPreset = "cut" | "fade" | "rise" | "drop" | "pop" | "slide" | "wipe" | "grow" | "blur" | "typewriter" | "mask";
+export type InPreset = "cut" | "fade" | "rise" | "drop" | "pop" | "slide" | "wipe" | "grow" | "blur" | "typewriter" | "mask" | "flip" | "track" | "scramble" | "fall" | "line-wipe";
 export type OutPreset = "cut" | "fade" | "sink" | "lift" | "shrink" | "slide" | "wipe" | "blur";
 export type Side = "left" | "right" | "top" | "bottom";
 
@@ -65,6 +69,10 @@ export type LayerBase = {
   /** per format overrides merged over the layer: { vertical: { at: { y: 0.4 }, size: 80 } } */
   formats?: Record<string, Record<string, unknown>>;
   why?: string;
+  /** colour fields animated over local frames, mixed in OKLab: { fill: [{ at: 0, v: "accent" }, { at: 30, v: "rose" }] } */
+  colorTracks?: ColorTracks;
+  /** shadow, glow, stroke, highlight, gradientText, blend, roundCaps */
+  effects?: Effects;
 };
 
 export type TextLayer = LayerBase & {
@@ -74,8 +82,8 @@ export type TextLayer = LayerBase & {
   role?: "display" | "body" | "mono";
   size?: number;
   weight?: number | string;
-  color?: ColorRef;
-  accent?: ColorRef;
+  color?: ColorValue;
+  accent?: ColorValue;
   align?: "left" | "center" | "right";
   lineHeight?: number;
   letterSpacing?: number;
@@ -88,18 +96,28 @@ export type TextLayer = LayerBase & {
 
 export type ShapeLayer = LayerBase & {
   type: "shape";
-  shape: "rect" | "circle" | "line" | "ring";
+  shape: "rect" | "circle" | "line" | "ring" | "path" | "polygon" | "star" | "arrow";
   w?: number;
   h?: number;
-  /** circle and ring: diameter */
-  d?: number;
-  /** line and ring */
+  /** circle, ring, polygon and star: diameter; path: the path data ("M12 4 L40 30 ...") */
+  d?: number | string;
+  /** line, ring, path, polygon, star and arrow */
   thickness?: number;
   radius?: number;
-  fill?: ColorRef;
-  stroke?: ColorRef;
-  /** ring: how much of the circle is drawn, 0..1 (animate with a progress track or the grow preset) */
+  fill?: ColorValue;
+  stroke?: ColorValue;
+  /** ring and path: how much of the outline is drawn, 0..1 (animate with a progress track or the grow preset) */
   progress?: number;
+  /** path: the coordinate box the path was written in */
+  viewBox?: [number, number];
+  /** polygon: sides; star: spikes */
+  sides?: number;
+  /** star: the inner radius as a fraction of the outer one (0.44) */
+  inner?: number;
+  /** arrow: how wide the head is */
+  head?: number;
+  /** path, polygon and star: draw the outline instead of filling the shape */
+  draw?: boolean;
 };
 
 export type ImageLayer = LayerBase & {
@@ -126,21 +144,25 @@ export type CounterLayer = LayerBase & {
   role?: "display" | "body" | "mono";
   size?: number;
   weight?: number | string;
-  color?: ColorRef;
+  color?: ColorValue;
   ease?: EaseRef;
+  /** odometer digits: every place rolls to its number instead of being redrawn */
+  roll?: boolean;
+  /** leading zeros up to this many digits */
+  pad?: number;
 };
 
 export type BarsLayer = LayerBase & {
   type: "bars";
-  values: { label: string; value: number; color?: ColorRef }[];
+  values: { label: string; value: number; color?: ColorValue }[];
   max?: number;
   direction?: "horizontal" | "vertical";
   w?: number;
   h?: number;
   gap?: number;
   thickness?: number;
-  color?: ColorRef;
-  labelColor?: ColorRef;
+  color?: ColorValue;
+  labelColor?: ColorValue;
   labelSize?: number;
   showValues?: boolean;
   format?: string;
@@ -152,15 +174,64 @@ export type ListLayer = LayerBase & {
   marker?: "dot" | "number" | "check" | "dash" | "none";
   size?: number;
   weight?: number | string;
-  color?: ColorRef;
-  markerColor?: ColorRef;
+  color?: ColorValue;
+  markerColor?: ColorValue;
   gap?: number;
   maxWidth?: number;
   role?: "display" | "body" | "mono";
   align?: "left" | "center";
 };
 
-export type Layer = TextLayer | ShapeLayer | ImageLayer | CounterLayer | BarsLayer | ListLayer;
+/** a line chart: the values, the box they are drawn in, the line drawn by a progress track */
+export type LineChartLayer = LayerBase & {
+  type: "line";
+  /** y values spread evenly over the box, or explicit points */
+  points: (number | { x: number; y: number })[];
+  w?: number;
+  h?: number;
+  stroke?: ColorValue;
+  thickness?: number;
+  /** fill the area under the line */
+  area?: boolean;
+  areaColor?: ColorValue;
+  /** a dot on every point */
+  dots?: boolean;
+  smooth?: boolean;
+  min?: number;
+  max?: number;
+  /** a baseline under the chart */
+  axis?: ColorValue;
+  labels?: string[];
+  labelSize?: number;
+  labelColor?: ColorValue;
+};
+
+/** concentric rings, one per value, each drawn to its share of `max` */
+export type RingsLayer = LayerBase & {
+  type: "rings";
+  values: { label: string; value: number; color?: ColorValue }[];
+  /** the outer diameter */
+  d?: number;
+  thickness?: number;
+  gap?: number;
+  max?: number;
+  /** the unfilled part of every ring */
+  trackColor?: ColorValue;
+  showValues?: boolean;
+  format?: string;
+  labelSize?: number;
+  labelColor?: ColorValue;
+  /** the labels next to the rings */
+  legend?: boolean;
+};
+
+/** a deterministic field of particles: the same frame draws the same picture */
+export type ParticlesLayer = LayerBase & ParticleField & {
+  type: "particles";
+  color?: ColorValue;
+};
+
+export type Layer = TextLayer | ShapeLayer | ImageLayer | CounterLayer | BarsLayer | ListLayer | LineChartLayer | RingsLayer | ParticlesLayer;
 export type LayerType = Layer["type"];
 
 export type SceneTransition = "cut" | "fade" | { type: string; dur?: number };
@@ -169,7 +240,9 @@ export type MgScene = {
   id: string;
   /** frames */
   dur: number;
-  ground?: ColorRef;
+  ground?: ColorValue;
+  /** the ground animated over the scene's local frames, mixed in OKLab */
+  groundTracks?: ColorKey[];
   enter?: SceneTransition;
   exit?: SceneTransition;
   layers: Layer[];
@@ -232,7 +305,9 @@ export const defineFilm = (f: MgFilm): MgFilm => f;
 export const BUILTIN_COLORS = ["ink", "paper", "accent", "muted", "white", "black", "transparent"] as const;
 
 /** a colour reference to a hex the browser paints */
-export const colorOf = (design: Design, ref: ColorRef | undefined, fallback = design.ink): string => {
+export const colorOf = (design: Design, value: ColorValue | undefined, fallback = design.ink): string => {
+  // a gradient stands for its first stop wherever one flat colour is needed (contrast, isDark, a css color)
+  const ref = value && typeof value === "object" && Array.isArray((value as { gradient?: unknown }).gradient) ? ((value as { gradient: ColorRef[] }).gradient[0] as ColorRef | undefined) : (value as ColorRef | undefined);
   if (!ref) return fallback;
   if (ref === "ink") return design.ink;
   if (ref === "paper") return design.paper;
