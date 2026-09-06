@@ -533,8 +533,8 @@ const logo: MgTemplate = {
     const src = S(p, "src");
     const size = N(p, "size");
     const mark: Layer = src
-      ? { id: "mark", type: "image", src, w: 220, at: at(0.5, 0.38), in: { preset: "pop", at: 0, dur: 16, ease: "back" }, ...V({ w: 190, at: at(0.5, 0.38) }) }
-      : { id: "mark", type: "shape", shape: "ring", d: 160, thickness: 16, fill: c.accent, progress: 1, at: at(0.5, 0.38), in: { preset: "pop", at: 0, dur: 16, ease: "back" }, ...V({ d: 140, at: at(0.5, 0.38) }) };
+      ? { id: "mark", type: "image", src, w: 260, at: at(0.5, 0.37), in: { preset: "pop", at: 0, dur: 16, ease: "back" }, ...V({ w: 230, at: at(0.5, 0.38) }) }
+      : { id: "mark", type: "shape", shape: "ring", d: 220, thickness: 20, fill: c.accent, progress: 1, at: at(0.5, 0.37), in: { preset: "pop", at: 0, dur: 16, ease: "back" }, ...V({ d: 200, at: at(0.5, 0.38) }) };
     return sceneOf("logo", p, "the mark and the name", keep(
       mark,
       {
