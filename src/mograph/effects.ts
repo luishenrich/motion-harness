@@ -129,6 +129,29 @@ export const highlightAt = (film: MgFilm, scene: MgScene, layer: Layer, frame: n
   return { progress, only: hl.only ?? "all", style };
 };
 
+/* ---------- scramble ---------- */
+
+export const SCRAMBLE_GLYPHS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#%&$@?/<>";
+
+/**
+ * The text mid-scramble: every character left of the progress is itself, the
+ * rest are noise. The noise comes from the character's place, the frame and a
+ * salt, never from a random number, so the same frame always draws the same
+ * letters and two renders of a film match.
+ */
+export const scrambleText = (text: string, progress: number, frame: number, salt = 0): string => {
+  const chars = [...text];
+  const tick = Math.floor(frame / 2);
+  return chars
+    .map((c, i) => {
+      if (!c.trim()) return c;
+      if ((i + 1) / chars.length <= progress) return c;
+      const n = (i * 2654435761 + tick * 40503 + (salt + 7) * 97) >>> 0;
+      return SCRAMBLE_GLYPHS[n % SCRAMBLE_GLYPHS.length];
+    })
+    .join("");
+};
+
 /* ---------- what the lints read off an element ---------- */
 
 /**

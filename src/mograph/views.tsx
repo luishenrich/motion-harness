@@ -12,15 +12,13 @@ import React from "react";
 import type { CounterLayer, LineChartLayer, MgFilm, MgScene, ParticlesLayer, ShapeLayer, TextLayer, Layer, RingsLayer } from "./schema.ts";
 import { colorOf, layerTiming } from "./schema.ts";
 import { backgroundStyle, layerPaint, paintOf, textStyle, type Paint } from "./colour.ts";
-import { effectStyle, gradientTextOf, inProgress } from "./effects.ts";
+import { effectStyle, gradientTextOf, inProgress, scrambleText } from "./effects.ts";
 import { arrowBox, arrowPath, chartGeometry, odometerCells, padDigits, polygonPath, ringGeometry, starPath } from "./shapes.ts";
 import { particlesAt, MAX_PARTICLES } from "./particles.ts";
 import { poseAt, staggerDelay, type Pose } from "./pose.ts";
 import type { Frame } from "./layout.ts";
 
 export type VCtx = { film: MgFilm; scene: MgScene; fr: Frame; frame: number };
-
-const SCRAMBLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#%&$@?/<>";
 
 /** *word* spans in the accent colour, with the marker style when the layer highlights its marks */
 const mark = (text: string, accent: string, key: string, markStyle?: React.CSSProperties): React.ReactNode[] =>
@@ -52,18 +50,8 @@ export const TextFx: React.FC<{ ctx: VCtx; layer: TextLayer; style: React.CSSPro
   const st = layer.in?.stagger ?? film.defaults?.layerIn?.stagger;
   const plain = layer.text.replace(/\*/g, "");
   if (preset === "scramble") {
-    const chars = [...plain];
     const p = inProgress(film, scene, layer, frame);
-    const tick = Math.floor(frame / 2);
-    const shown = chars.map((c, i) => {
-      if (!c.trim()) return c;
-      const done = (i + 1) / chars.length <= p;
-      if (done) return c;
-      // deterministic per character and per two frames: the same frame always draws the same letters
-      const n = (i * 2654435761 + tick * 40503 + (layer.id.length + 7) * 97) >>> 0;
-      return SCRAMBLE[n % SCRAMBLE.length];
-    });
-    return <div style={style}>{shown.join("")}</div>;
+    return <div style={style}>{scrambleText(plain, p, frame, layer.id.length)}</div>;
   }
   if (preset === "track") {
     const p = inProgress(film, scene, layer, frame);

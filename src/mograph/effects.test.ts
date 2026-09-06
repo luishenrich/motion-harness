@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { MgFilm } from "./schema.ts";
+import type { MgFilm, TextLayer } from "./schema.ts";
 import { colorOf } from "./schema.ts";
 import { colorTrackAt, flatOf, gradientCss, groundFlat, groundPaint, layerPaint, mixHex, oklabToRgb, paintOf, rgbToOklab, toHex, toRgb } from "./colour.ts";
-import { effectStyle, filterOf, gradientTextOf, highlightAt, lintFlags, strokeStyle } from "./effects.ts";
+import { effectStyle, filterOf, gradientTextOf, highlightAt, inProgress, lintFlags, scrambleText, strokeStyle } from "./effects.ts";
+import { inTracks, poseAt, staggerDelay } from "./pose.ts";
 import { lintFilm } from "./edit.ts";
 
 const film = (): MgFilm => ({
@@ -156,5 +157,52 @@ describe("effects", () => {
     expect(rules).toContain("effect:one.line.effects.gradientText");
     f.scenes[0].layers[1].effects = { highlight: { color: "accent" } };
     expect(lintFilm(f).map((x) => `${x.rule}:${x.where}`)).toContain("effect:one.box.effects.highlight");
+  });
+});
+
+describe("text presets", () => {
+  test("the new presets write the tracks they need", () => {
+    expect(inTracks({ preset: "flip", dur: 14 })).toEqual({});
+    expect(inTracks({ preset: "track", dur: 12 })).toEqual({ opacity: [{ at: 0, v: 0 }, { at: 12, v: 1, ease: "out" }] });
+    expect(inTracks({ preset: "line-wipe", dur: 12 })).toEqual({ wipe: [{ at: 0, v: 0 }, { at: 12, v: 1, ease: "out" }] });
+    const fall = inTracks({ preset: "fall", dur: 16, distance: 20 });
+    expect(fall.y![0].v).toBe(-32);
+    expect(fall.y![1]).toMatchObject({ at: 16, v: 0, ease: "bouncy" });
+  });
+  test("a line wipe reveals from its side and every line waits its turn", () => {
+    const f = film();
+    const s = f.scenes[0];
+    const l = s.layers[0] as TextLayer;
+    l.text = "one\ntwo\nthree";
+    l.in = { preset: "line-wipe", at: 0, dur: 10, from: "left", stagger: { by: "line", each: 6 } };
+    expect(poseAt(f, s, l, 5).wipeFrom).toBe("left");
+    expect(poseAt(f, s, l, 5).wipe).toBeGreaterThan(0);
+    expect(poseAt(f, s, l, 5).wipe).toBeLessThan(1);
+    // the third line starts twelve frames after the first
+    expect(poseAt(f, s, l, 5, staggerDelay(l.in.stagger, 2, 3)).wipe).toBe(0);
+    expect(poseAt(f, s, l, 24, staggerDelay(l.in.stagger, 2, 3)).wipe).toBe(1);
+  });
+  test("scramble resolves left to right and draws the same frame the same way", () => {
+    const text = "PLAN THE WEEK";
+    expect(scrambleText(text, 1, 40)).toBe(text);
+    expect(scrambleText(text, 0.5, 40).slice(0, 6)).toBe("PLAN T");
+    expect(scrambleText(text, 0.5, 40)).not.toBe(text);
+    expect(scrambleText(text, 0.5, 40)).toBe(scrambleText(text, 0.5, 40));
+    // two frames apart the noise moves, the resolved part does not
+    expect(scrambleText(text, 0.5, 44)).not.toBe(scrambleText(text, 0.5, 40));
+    expect(scrambleText(text, 0.5, 44).slice(0, 6)).toBe("PLAN T");
+    // spaces stay spaces, the length never changes
+    expect(scrambleText(text, 0, 7).length).toBe(text.length);
+    expect(scrambleText(text, 0, 7)[4]).toBe(" ");
+  });
+  test("a layer's own progress, per staggered unit", () => {
+    const f = film();
+    const s = f.scenes[0];
+    const l = s.layers[0] as TextLayer;
+    l.in = { preset: "flip", at: 0, dur: 10, ease: "linear", stagger: { by: "char", each: 2 } };
+    expect(inProgress(f, s, l, 0)).toBe(0);
+    expect(inProgress(f, s, l, 5)).toBeCloseTo(0.5, 5);
+    expect(inProgress(f, s, l, 20)).toBe(1);
+    expect(inProgress(f, s, l, 5, staggerDelay(l.in.stagger, 2, 6))).toBeCloseTo(0.1, 5);
   });
 });
