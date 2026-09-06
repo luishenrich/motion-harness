@@ -29,7 +29,7 @@ export const pickStills = (available: StillInfo[], wanted: string[]): StillInfo[
   return available.filter((s) => wanted.includes(s.id));
 };
 
-export type StillOut = { id: string; width: number; height: number; png: string; jpg?: string; probeFile?: string; findings: Finding[]; ms: number };
+export type StillOut = { id: string; variant?: string; width: number; height: number; png: string; jpg?: string; probeFile?: string; findings: Finding[]; ms: number };
 
 /** lint a still's probe the way a check frame is linted, minus the rules that need a timeline (safe zone, probes, same-top) */
 export const lintStill = (id: string, probe: ProbeResult | undefined): Finding[] => {
@@ -41,26 +41,32 @@ export const renderStills = async (
   cfg: LoadedConfig,
   e: Engine,
   stills: StillInfo[],
-  opts: { outDir?: string; jpg?: boolean; width?: number; quality?: number; settleMs?: number; concurrency?: number; log?: (s: string) => void } = {},
+  opts: { outDir?: string; jpg?: boolean; width?: number; quality?: number; settleMs?: number; concurrency?: number; log?: (s: string) => void; variants?: Record<string, Record<string, Record<string, unknown>>> } = {},
 ): Promise<StillOut[]> => {
   const log = opts.log ?? (() => {});
   const dir = ensureDir(opts.outDir ?? join(cfg.cachePath, "stills"));
   const out: StillOut[] = [];
-  for (const st of stills) {
-    const png = join(dir, `${st.id}.png`);
-    const [o] = await e.stills(st.id, [{ frame: 0, file: png }], { probe: "text", settleMs: opts.settleMs ?? 150, concurrency: opts.concurrency ?? 2 });
-    const res: StillOut = { ...st, png, findings: lintStill(st.id, o.probe), ms: o.ms };
+  // a still with declared variants renders once per variant (A/B thumbnails), else once
+  const jobs = stills.flatMap((st) => {
+    const v = opts.variants?.[st.id];
+    return v && Object.keys(v).length ? Object.entries(v).map(([variant, props]) => ({ st, variant, props })) : [{ st, variant: undefined as string | undefined, props: undefined as Record<string, unknown> | undefined }];
+  });
+  for (const { st, variant, props } of jobs) {
+    const name = variant ? `${st.id}--${variant}` : st.id;
+    const png = join(dir, `${name}.png`);
+    const [o] = await e.stills(st.id, [{ frame: 0, file: png }], { probe: "text", settleMs: opts.settleMs ?? 150, concurrency: opts.concurrency ?? 2, inputProps: props });
+    const res: StillOut = { ...st, variant, png, findings: lintStill(name, o.probe), ms: o.ms };
     if (o.probe) {
       res.probeFile = png.replace(/\.png$/, ".probe.json");
       writeJson(res.probeFile, o.probe);
     }
     if (opts.jpg) {
-      res.jpg = join(dir, `${st.id}${opts.width ? `-${opts.width}` : ""}.jpg`);
+      res.jpg = join(dir, `${name}${opts.width ? `-${opts.width}` : ""}.jpg`);
       let img = sharp(png).flatten({ background: "#000" });
       if (opts.width && opts.width < st.width) img = img.resize({ width: opts.width, withoutEnlargement: true });
       await img.jpeg({ quality: opts.quality ?? 90, mozjpeg: true }).toFile(res.jpg);
     }
-    log(`${st.id} ${st.width}x${st.height} in ${o.ms}ms${res.findings.length ? `, ${res.findings.length} finding${res.findings.length === 1 ? "" : "s"}` : ""}`);
+    log(`${name} ${st.width}x${st.height} in ${o.ms}ms${res.findings.length ? `, ${res.findings.length} finding${res.findings.length === 1 ? "" : "s"}` : ""}`);
     out.push(res);
   }
   return out;
@@ -68,7 +74,7 @@ export const renderStills = async (
 
 /** one sheet of every still, each tile at its own aspect fitted into a landscape cell */
 export const stillSheet = async (stills: StillOut[], file: string, header: string): Promise<string> => {
-  const cells: SheetCell[] = stills.map((s) => ({ file: s.png, title: s.id, sub: `${s.width}x${s.height}${s.findings.length ? ` · ${s.findings.length} finding${s.findings.length === 1 ? "" : "s"}` : ""}`, kind: "plain", ...(s.findings.some((f) => f.level === "error") ? { mark: "lint error" } : {}) }));
+  const cells: SheetCell[] = stills.map((s) => ({ file: s.png, title: s.variant ? `${s.id} (${s.variant})` : s.id, sub: `${s.width}x${s.height}${s.findings.length ? ` · ${s.findings.length} finding${s.findings.length === 1 ? "" : "s"}` : ""}`, kind: "plain", ...(s.findings.some((f) => f.level === "error") ? { mark: "lint error" } : {}) }));
   await makeSheet(cells, file, { columns: Math.min(4, Math.max(1, cells.length)), cellWidth: 480, aspect: 16 / 9, header, footer: "every registered <Still>, rendered through the probe; portrait stills sit inside the landscape tile" });
   return file;
 };

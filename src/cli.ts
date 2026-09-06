@@ -642,7 +642,9 @@ const cmdStill = async (args: Args) => {
       return null;
     }
     const wanted = pickStills(available, args._.flatMap((k) => k.split(",")).map((k) => k.trim()).filter(Boolean));
-    return renderStills(x.cfg, e, wanted, { outDir, jpg, width: num(args, "width", 0) || undefined, quality: num(args, "quality", 90), settleMs: num(args, "settle", 150), concurrency: num(args, "concurrency", 2), log });
+    const declared = x.cfg.films[x.filmName].stills;
+    if (flag(args, "variants") && !declared) die(`--variants: film "${x.filmName}" declares no stills variants (films.${x.filmName}.stills = { "<still id>": { a: { ...props }, b: { ...props } } })`);
+    return renderStills(x.cfg, e, wanted, { outDir, jpg, width: num(args, "width", 0) || undefined, quality: num(args, "quality", 90), settleMs: num(args, "settle", 150), concurrency: num(args, "concurrency", 2), log, variants: flag(args, "variants") ? declared : undefined });
   });
   if (!results) return log(`mh still <id,...|all> renders them`);
   for (const r of results) {
@@ -651,7 +653,7 @@ const cmdStill = async (args: Args) => {
   }
   const findings = results.flatMap((s) => s.findings);
   log("");
-  log(table(results.map((s) => [s.id, `${s.width}x${s.height}`, s.findings.filter((f) => f.level === "error").length || "", s.findings.filter((f) => f.level === "warn").length || "", s.jpg ?? s.png]), ["still", "size", "errors", "warns", "file"]));
+  log(table(results.map((s) => [s.variant ? `${s.id} (${s.variant})` : s.id, `${s.width}x${s.height}`, s.findings.filter((f) => f.level === "error").length || "", s.findings.filter((f) => f.level === "warn").length || "", s.jpg ?? s.png]), ["still", "size", "errors", "warns", "file"]));
   if (findings.length) {
     log("");
     log(formatFindings(findings));
@@ -660,7 +662,7 @@ const cmdStill = async (args: Args) => {
     const sheet = await stillSheet(results, join(outDir ?? join(x.cfg.cachePath, "stills"), "sheet.png"), `${x.filmName} stills (${results.length}) · ${new Date().toISOString().slice(0, 16)}`);
     log(`sheet -> ${sheet}`);
   }
-  if (flag(args, "json")) out(JSON.stringify(results.map((s) => ({ id: s.id, width: s.width, height: s.height, png: s.png, jpg: s.jpg, findings: s.findings }))));
+  if (flag(args, "json")) out(JSON.stringify(results.map((s) => ({ id: s.id, variant: s.variant, width: s.width, height: s.height, png: s.png, jpg: s.jpg, findings: s.findings }))));
   const errors = findings.filter((f) => f.level === "error").length;
   log(`${results.length} still${results.length === 1 ? "" : "s"} in ${ms(t0)}, ${errors} lint error${errors === 1 ? "" : "s"}`);
   if (errors && !flag(args, "no-fail")) process.exit(2);
@@ -1673,8 +1675,9 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
                                     render the check frames of each scene (enter, settled, events with their -6..+18 window, mid, last), plus any --at refs
   frame <ref...> [--format all] [--crop x,y,w,h] [--probe] [--json]
                                     exactly these frames, now, by any address resolve accepts (turn+40, 20.5s, probe.pick1+3, f616); prints the paths
-  still [<id,...>|all] [--jpg] [--width 1280] [--sheet] [--out dir] [--no-fail]
-                                    every <Still> the Root registers (no args lists them): rendered through the probe, linted (overflow, wrap, collision), jpg copies, one sheet
+  still [<id,...>|all] [--jpg] [--width 1280] [--sheet] [--variants] [--out dir] [--no-fail]
+                                    every <Still> the Root registers (no args lists them): rendered through the probe, linted (overflow, wrap, collision, contrast), jpg copies, one sheet;
+                                    --variants renders each still once per variant declared in films.<film>.stills (A/B thumbnails, <id>--<variant>.png)
   sheet [--scene a,b] [--from tag] [--all] [--columns 4] [--zoom key]
                                     contact sheets with frame numbers, scene addresses and transition marks; --zoom crops 480x320 at 1:1 around the probed element
   approve [--from tag]              copy a run (default latest) to "approved", the fixed side of every later diff

@@ -17,6 +17,8 @@ export type Film = {
   defaultFormat?: string;
   /** the one hand of the film: where it is at which moment, measured by the DOM probe (mh cursor) */
   cursor?: Cursor;
+  /** A/B variants of stills: still id -> variant name -> props merged over the still's defaultProps (mh still <id> --variants) */
+  stills?: Record<string, Record<string, Record<string, unknown>>>;
 };
 
 export type CursorLegOpts = {

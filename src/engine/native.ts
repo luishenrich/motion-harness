@@ -52,7 +52,7 @@ export const findChrome = (cfg: LoadedConfig): { executablePath?: string; channe
   return { channel: "chrome" };
 };
 
-type Slot = { page: Page; context: BrowserContext; cdp: CDPSession; comp: string; scale: number; busy: boolean };
+type Slot = { page: Page; context: BrowserContext; cdp: CDPSession; comp: string; scale: number; props: string; busy: boolean };
 
 class NativeEngine implements Engine {
   readonly kind = "native" as const;
@@ -85,16 +85,17 @@ class NativeEngine implements Engine {
     // screenshots go straight over the devtools protocol: Playwright's screenshot pipeline waits and re-checks per call
     const cdp = await context.newCDPSession(page);
     await cdp.send("Page.enable");
-    return { page, context, cdp, comp, scale, busy: false };
+    return { page, context, cdp, comp, scale, props: JSON.stringify(inputProps), busy: false };
   }
 
   /** up to `n` pages on one composition, reused across calls */
   private async acquire(comp: string, n: number, scale: number, inputProps: Record<string, unknown>): Promise<Slot[]> {
     const info = await this.composition(comp);
-    const have = this.slots.filter((s) => s.comp === comp && s.scale === scale && !s.busy);
+    const propsKey = JSON.stringify(inputProps);
+    const have = this.slots.filter((s) => s.comp === comp && s.scale === scale && s.props === propsKey && !s.busy);
     while (have.length < n) {
       // keep the browser at a sane size: drop idle pages of other compositions first
-      const idle = this.slots.filter((s) => !s.busy && (s.comp !== comp || s.scale !== scale));
+      const idle = this.slots.filter((s) => !s.busy && (s.comp !== comp || s.scale !== scale || s.props !== propsKey));
       if (this.slots.length >= 12 && idle.length) {
         const drop = idle[0];
         this.slots = this.slots.filter((s) => s !== drop);
