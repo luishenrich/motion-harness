@@ -5,10 +5,10 @@
  * before anyone opens the picture. Optional jpg copies at a width, and a sheet.
  */
 import { join } from "node:path";
-import { getCompositions } from "@remotion/renderer";
 import sharp from "sharp";
 import type { LoadedConfig } from "../config.ts";
-import { renderFrameSet, type Renderer, type ProbeResult } from "../render/frames.ts";
+import type { ProbeResult } from "../render/frames.ts";
+import type { Engine } from "../render/engine.ts";
 import { lintOverflow, lintWrap, lintCollision, type Finding } from "../lint/lint.ts";
 import { makeSheet, type SheetCell } from "../sheet/sheet.ts";
 import { ensureDir, writeJson } from "../util.ts";
@@ -16,8 +16,8 @@ import { ensureDir, writeJson } from "../util.ts";
 export type StillInfo = { id: string; width: number; height: number };
 
 /** every registered composition of exactly one frame: what <Still> registers */
-export const listStills = async (serveUrl: string): Promise<StillInfo[]> => {
-  const all = await getCompositions(serveUrl, { logLevel: "error" });
+export const listStills = async (e: Engine): Promise<StillInfo[]> => {
+  const all = await e.compositions();
   return all.filter((k) => k.durationInFrames === 1).map((k) => ({ id: k.id, width: k.width, height: k.height }));
 };
 
@@ -39,8 +39,7 @@ export const lintStill = (id: string, probe: ProbeResult | undefined): Finding[]
 
 export const renderStills = async (
   cfg: LoadedConfig,
-  r: Renderer,
-  serveUrl: string,
+  e: Engine,
   stills: StillInfo[],
   opts: { outDir?: string; jpg?: boolean; width?: number; quality?: number; settleMs?: number; concurrency?: number; log?: (s: string) => void } = {},
 ): Promise<StillOut[]> => {
@@ -49,7 +48,7 @@ export const renderStills = async (
   const out: StillOut[] = [];
   for (const st of stills) {
     const png = join(dir, `${st.id}.png`);
-    const [o] = await renderFrameSet(r, serveUrl, st.id, [{ frame: 0, file: png }], { probe: "text", settleMs: opts.settleMs ?? 150, concurrency: opts.concurrency ?? 2 });
+    const [o] = await e.stills(st.id, [{ frame: 0, file: png }], { probe: "text", settleMs: opts.settleMs ?? 150, concurrency: opts.concurrency ?? 2 });
     const res: StillOut = { ...st, png, findings: lintStill(st.id, o.probe), ms: o.ms };
     if (o.probe) {
       res.probeFile = png.replace(/\.png$/, ".probe.json");

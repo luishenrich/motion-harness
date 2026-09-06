@@ -3,14 +3,11 @@
  * frame-to-frame difference curve, and derive what a reviewer cannot see on a
  * contact sheet: when the scene settles, how long it holds still, where it jumps.
  */
-import { join } from "node:path";
-import { readdirSync, rmSync } from "node:fs";
-import { renderFrames } from "@remotion/renderer";
+import { rmSync } from "node:fs";
 import sharp from "sharp";
-import type { Renderer } from "../render/frames.ts";
-import { getComposition } from "../render/frames.ts";
+import type { Engine } from "../render/engine.ts";
 import type { CompiledScene } from "../timeline/schema.ts";
-import { ensureDir, nextPort } from "../util.ts";
+import { ensureDir } from "../util.ts";
 
 export type MotionCurve = {
   scene: string;
@@ -31,44 +28,24 @@ export type MotionCurve = {
 };
 
 export const measureScene = async (
-  r: Renderer,
-  serveUrl: string,
+  e: Engine,
   compositionId: string,
   scene: CompiledScene,
   fps: number,
   outDir: string,
   opts: { width?: number; still?: number; stillRun?: number; jump?: number; extra?: number; inputProps?: Record<string, unknown>; concurrency?: number } = {},
 ): Promise<MotionCurve> => {
-  const composition = await getComposition(serveUrl, compositionId, opts.inputProps ?? {});
+  const composition = await e.composition(compositionId, opts.inputProps ?? {});
   const extra = opts.extra ?? 0;
   const from = scene.start;
   const to = Math.min(composition.durationInFrames - 1, scene.end - 1 + extra);
   rmSync(outDir, { recursive: true, force: true });
   ensureDir(outDir);
-  await renderFrames({
-    composition,
-    serveUrl,
-    outputDir: outDir,
-    imageFormat: "jpeg",
-    jpegQuality: 70,
-    scale: (opts.width ?? 320) / composition.width,
-    frameRange: [from, to],
-    inputProps: opts.inputProps ?? {},
-    puppeteerInstance: r.browser,
-    concurrency: opts.concurrency ?? 4,
-    logLevel: "error",
-    port: nextPort(),
-    onStart: () => {},
-    onFrameUpdate: () => {},
-  });
-  // remotion names the files element-00.jpeg .. element-NN.jpeg, zero-padded, index relative to the range
-  const files = readdirSync(outDir)
-    .filter((f) => /^element-\d+\.jpe?g$/.test(f))
-    .sort((a, b) => parseInt(a.replace(/\D/g, ""), 10) - parseInt(b.replace(/\D/g, ""), 10));
+  const files = await e.frames(compositionId, [from, to], outDir, { width: opts.width ?? 320, jpegQuality: 70, concurrency: opts.concurrency ?? 4, inputProps: opts.inputProps });
   const n = files.length;
   if (n !== to - from + 1) throw new Error(`expected ${to - from + 1} frames in ${outDir}, found ${n}`);
   const bufs: Buffer[] = [];
-  for (const f of files) bufs.push(await sharp(join(outDir, f)).removeAlpha().raw().toBuffer());
+  for (const f of files) bufs.push(await sharp(f).removeAlpha().raw().toBuffer());
   const diff: number[] = [0];
   for (let i = 1; i < n; i++) {
     const a = bufs[i - 1], b = bufs[i];

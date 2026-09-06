@@ -8,20 +8,20 @@
  */
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, rmSync, cpSync } from "node:fs";
 import { join, resolve as resolvePath, basename, dirname } from "node:path";
-import { getCompositions } from "@remotion/renderer";
 import { loadConfig, pickFilm, pickFormat, resolveProjectDir, type LoadedConfig } from "./config.ts";
 import { compile, compositionFor, fmtTime, type Compiled, type CompiledScene } from "./timeline/schema.ts";
 import { resolve as resolveRef, checkFramesFor, type CheckFrame } from "./timeline/resolve.ts";
 import { timelineMarkdown, timelineJson } from "./timeline/docs.ts";
 import { bundleProject, staleBundleWarnings, projectSrcDir, currentBundleHash, isStale } from "./render/bundle.ts";
-import { openRenderer, renderFrameSet, getComposition, frameFile, type ProbeResult, type Renderer } from "./render/frames.ts";
+import { frameFile, type ProbeResult } from "./render/frames.ts";
+import { openEngine, engineKindOf, closeEngines, type Engine } from "./render/engine.ts";
 import { measureLegs, writeTargets } from "./cursor/cursor.ts";
 import { makeSheet, zoomWindow, type SheetCell } from "./sheet/sheet.ts";
 import { parseFeedback, feedbackReport } from "./review/parse.ts";
 import { hashFrames, queryViews, bestMatches, refineFit, type Fit } from "./locate/locate.ts";
 import sharp from "sharp";
 import { lintStaticColors, lintTimeline, lintProbe, lintFormatParity, cursorLegFrames, formatFindings, type Finding, type ProbeFrame } from "./lint/lint.ts";
-import { diffSets } from "./diff/diff.ts";
+import { diffSets, diffImages } from "./diff/diff.ts";
 import { measureScene, sparkline } from "./motion/metrics.ts";
 import { audioProfile, rmsAt, db, loudSpan } from "./audio/probe.ts";
 import { cueAudibility, highpass, headProfile, audibleFrom, AUDIBILITY_SR } from "./audio/audibility.ts";
@@ -65,7 +65,9 @@ const log = (s: string) => (JSON_MODE ? console.error(s) : console.log(s));
 const out = (s: string) => console.log(s);
 const die = (s: string): never => {
   console.error(`mh: ${s}`);
-  process.exit(1);
+  // engines hold a browser and a dev server: let them go before the process does
+  void closeEngines().finally(() => process.exit(1));
+  throw new Error(s);
 };
 
 /* ---------- context ---------- */
@@ -191,14 +193,16 @@ const cmdDocs = async (args: Args) => {
   } else log(md);
 };
 
-const withRenderer = async <T,>(x: Ctx, fn: (r: Renderer, serveUrl: string, bundleHash: string) => Promise<T>): Promise<T> => {
-  for (const w of staleBundleWarnings(x.cfg)) log(w);
-  const b = await bundleProject(x.cfg, { force: flag(x.args, "rebundle"), log });
-  const r = await openRenderer(x.cfg);
+/** the engine the config or --engine names, opened for one command and closed after */
+const engineOf = (x: Ctx) => engineKindOf(x.cfg, str(x.args, "engine"));
+const withEngine = async <T,>(x: Ctx, fn: (e: Engine) => Promise<T>): Promise<T> => {
+  const kind = engineOf(x);
+  if (kind === "remotion") for (const w of staleBundleWarnings(x.cfg)) log(w);
+  const e = await openEngine(x.cfg, { kind, force: flag(x.args, "rebundle"), log });
   try {
-    return await fn(r, b.serveUrl, b.hash);
+    return await fn(e);
   } finally {
-    await r.close();
+    await e.close();
   }
 };
 
@@ -293,8 +297,8 @@ const doctorRun = async (x: Ctx, args: Args): Promise<string[]> => {
   }
 
   const { film } = pickFilm(x.cfg, str(args, "film"));
-  await withRenderer(x, async (_r, serveUrl) => {
-    const registered = new Set((await getCompositions(serveUrl, { logLevel: "error" })).map((k) => k.id));
+  await withEngine(x, async (e) => {
+    const registered = new Set((await e.compositions()).map((k) => k.id));
     let missingHere = 0;
     for (const fmt of Object.keys(film.formats)) {
       for (const part of x.c.parts) {
@@ -305,7 +309,7 @@ const doctorRun = async (x: Ctx, args: Args): Promise<string[]> => {
       }
     }
     if (missingHere) return log(`drift check skipped: ${missingHere} composition${missingHere === 1 ? "" : "s"} of format ${x.format} missing`);
-    const checks = await partDurationCheck(serveUrl, x.c, x.format);
+    const checks = await partDurationCheck(e, x.c, x.format);
     for (const k of checks) {
       const ok = k.actual === k.expected;
       log(`${ok ? "ok  " : "DRIFT"} part ${k.part.id} -> ${k.composition}: composition ${k.actual}f, timeline ${k.expected}f${ok ? "" : ` (off by ${k.actual - k.expected})`}`);
@@ -334,9 +338,9 @@ const cmdFrames = async (args: Args) => {
     return { ref, sceneId: L.scene.id, partFrame: L.partFrame };
   });
   const t0 = performance.now();
-  const manifest = await withLock(x.cfg.cachePath, `frames ${x.filmName} ${x.format} ${tag}`, () => withRenderer(x, async (r, serveUrl, bundleHash) => {
+  const manifest = await withLock(x.cfg.cachePath, `frames ${x.filmName} ${x.format} ${tag}`, () => withEngine(x, async (e) => {
     const dir = ensureDir(join(runsDir(x), tag));
-    const m: Manifest = { film: x.filmName, format: x.format, tag, createdAt: new Date().toISOString(), bundleHash, probe, frames: [] };
+    const m: Manifest = { film: x.filmName, format: x.format, tag, createdAt: new Date().toISOString(), bundleHash: e.hash, probe, frames: [] };
     for (const part of x.c.parts) {
       const ps = scenes.filter((s) => s.part === part.id);
       if (!ps.length) continue;
@@ -353,7 +357,7 @@ const cmdFrames = async (args: Args) => {
       for (const j of jobs) if (!uniq.has(j.frame)) uniq.set(j.frame, j);
       const jl = [...uniq.values()];
       log(`${part.id} (${compId}): ${jl.length} frames${probe ? `, probe=${probe}` : ""}`);
-      const outs = await renderFrameSet(r, serveUrl, compId, jl, {
+      const outs = await e.stills(compId, jl, {
         probe,
         settleMs: num(args, "settle", 150),
         concurrency: num(args, "concurrency", 4),
@@ -523,13 +527,13 @@ const cmdProbe = async (args: Args) => {
   if (!args._.length) die("usage: mh probe <ref> [--mode probe|text|all] [--find text] [--key data-probe] [--json]");
   const key = str(args, "key");
   const mode = (str(args, "mode", key ? "probe" : "text") as "probe" | "text" | "all");
-  await withRenderer(x, async (r, serveUrl) => {
+  await withEngine(x, async (e) => {
     for (const ref of args._) {
       const L = resolveRef(x.c, ref);
       const part = x.c.parts.find((p) => p.id === L.part)!;
       const compId = compositionFor(part, x.format);
       const file = join(ensureDir(join(x.cfg.cachePath, "probe")), `${compId}-f${String(L.partFrame).padStart(5, "0")}.png`);
-      const [o] = await renderFrameSet(r, serveUrl, compId, [{ frame: L.partFrame, file }], { probe: mode, settleMs: num(args, "settle", 150) });
+      const [o] = await e.stills(compId, [{ frame: L.partFrame, file }], { probe: mode, settleMs: num(args, "settle", 150) });
       if (!o.probe) return log(`${ref}: no probe result (is the harness wrapper in use? run mh bundle --force)`);
       if (key) {
         // one element, its centre: what a cursor needs
@@ -562,12 +566,12 @@ const frameRun = async (x: Ctx, refs: string[]): Promise<{ ref: string; file: st
     return { ref, L, compId: compositionFor(part, x.format), file: join(dir, `${L.scene.id}+${L.local}${crop ? `-crop${crop.join("x")}` : ""}.png`) };
   });
   const out: { ref: string; file: string; L: ReturnType<typeof resolveRef>; ms: number; probeFile?: string }[] = [];
-  await withRenderer(x, async (r, serveUrl) => {
+  await withEngine(x, async (e) => {
     const byComp = new Map<string, typeof jobs>();
     for (const j of jobs) byComp.set(j.compId, [...(byComp.get(j.compId) ?? []), j]);
     for (const [compId, js] of byComp) {
       const uniq = [...new Map(js.map((j) => [j.L.partFrame, j])).values()];
-      const outs = await renderFrameSet(r, serveUrl, compId, uniq.map((j) => ({ frame: j.L.partFrame, file: j.file })), { probe, settleMs: num(args, "settle", 150), concurrency: num(args, "concurrency", 4), scale: num(args, "scale", 1) });
+      const outs = await e.stills(compId, uniq.map((j) => ({ frame: j.L.partFrame, file: j.file })), { probe, settleMs: num(args, "settle", 150), concurrency: num(args, "concurrency", 4), scale: num(args, "scale", 1) });
       for (const [i, o] of outs.entries()) {
         const j = uniq[i];
         if (crop) {
@@ -608,15 +612,15 @@ const cmdStill = async (args: Args) => {
   const jpg = flag(args, "jpg") || str(args, "width") !== undefined;
   const outDir = str(args, "out") ? resolvePath(str(args, "out")!) : undefined;
   const t0 = performance.now();
-  const results = await withRenderer(x, async (r, serveUrl) => {
-    const available = await listStills(serveUrl);
+  const results = await withEngine(x, async (e) => {
+    const available = await listStills(e);
     if (!available.length) die("the Root registers no <Still> (a composition of one frame)");
     if (!args._.length) {
       log(table(available.map((s) => [s.id, `${s.width}x${s.height}`]), ["still", "size"]));
       return null;
     }
     const wanted = pickStills(available, args._.flatMap((k) => k.split(",")).map((k) => k.trim()).filter(Boolean));
-    return renderStills(x.cfg, r, serveUrl, wanted, { outDir, jpg, width: num(args, "width", 0) || undefined, quality: num(args, "quality", 90), settleMs: num(args, "settle", 150), concurrency: num(args, "concurrency", 2), log });
+    return renderStills(x.cfg, e, wanted, { outDir, jpg, width: num(args, "width", 0) || undefined, quality: num(args, "quality", 90), settleMs: num(args, "settle", 150), concurrency: num(args, "concurrency", 2), log });
   });
   if (!results) return log(`mh still <id,...|all> renders them`);
   const findings = results.flatMap((s) => s.findings);
@@ -666,7 +670,7 @@ const cmdDeliver = async (args: Args) => {
   const wantStills = list(args, "stills");
   let stills: { id: string; file: string; width: number; height: number }[] = [];
   if (wantStills) {
-    const res = await withRenderer(first, async (r, serveUrl) => renderStills(first.cfg, r, serveUrl, pickStills(await listStills(serveUrl), wantStills), { jpg: true, width: num(args, "width", 0) || undefined, log }));
+    const res = await withEngine(first, async (e) => renderStills(first.cfg, e, pickStills(await listStills(e), wantStills), { jpg: true, width: num(args, "width", 0) || undefined, log }));
     stills = res.map((s) => ({ id: s.id, file: s.jpg ?? s.png, width: s.width, height: s.height }));
     const errors = res.flatMap((s) => s.findings).filter((f) => f.level === "error");
     if (errors.length) {
@@ -769,6 +773,19 @@ const cmdDiff = async (args: Args) => {
   log(`scenes touched: ${touched.map(([id]) => id).join(", ") || "none"}${untouched.length ? `   unchanged: ${untouched.join(", ")}` : ""}`);
 };
 
+/** two pictures, one number: how much differs, where, and a diff image; the check behind "same frame on both engines" */
+const cmdCompare = async (args: Args) => {
+  const [a, b] = args._;
+  if (!a || !b) die("usage: mh compare <a.png> <b.png> [--out diff.png] [--threshold 0.08]");
+  for (const f of [a, b]) if (!existsSync(f)) die(`no such file: ${f}`);
+  const out = str(args, "out");
+  const d = await diffImages(resolvePath(a), resolvePath(b), { threshold: num(args, "threshold", 0.08), out: out ? resolvePath(out) : undefined });
+  const verdict = d.changed < 0.001 ? "same" : d.changed < 0.01 ? "close" : d.changed < 0.05 ? "differs" : "different";
+  log(`${basename(a)} vs ${basename(b)}: ${(d.changed * 100).toFixed(3)}% of pixels changed (>${Math.round(num(args, "threshold", 0.08) * 255)}/255), mean ${(d.mean * 100).toFixed(2)}%${d.box ? `, box ${d.box.x},${d.box.y} ${d.box.w}x${d.box.h}` : ""}: ${verdict}${out ? `  diff -> ${out}` : ""}`);
+  if (flag(args, "json")) out2(JSON.stringify({ a, b, ...d, verdict }));
+};
+const out2 = out;
+
 /** one scene rendered at several concurrencies, full and draft: the numbers to pick the render defaults from on this machine */
 const cmdBench = async (args: Args) => {
   const x = await ctx(args);
@@ -779,11 +796,11 @@ const cmdBench = async (args: Args) => {
   const dur = s.dur;
   const concs = (str(args, "concurrencies") ?? "4,6,8,10").split(",").map(Number);
   const rows: (string | number)[][] = [];
-  await withRenderer(x, async (r, serveUrl, bundleHash) => {
+  await withEngine(x, async (e) => {
     for (const q of [FULL, DRAFT]) {
       for (const conc of concs) {
         const t0 = performance.now();
-        await renderSegments(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { subset: [s.id], only: [s.id], quality: q, concurrency: conc, force: true });
+        await renderSegments(x.cfg, e, x.c, x.filmName, x.format, { subset: [s.id], only: [s.id], quality: q, concurrency: conc, force: true });
         const sec = (performance.now() - t0) / 1000;
         rows.push([q === FULL ? "full" : "draft", conc, `${sec.toFixed(1)}s`, `${(dur / sec).toFixed(1)} f/s`]);
         log(`${q === FULL ? "full " : "draft"} concurrency ${conc}: ${sec.toFixed(1)}s for ${dur}f`);
@@ -798,13 +815,13 @@ const cmdMotion = async (args: Args) => {
   const scenes = scenesOf(x.c, args);
   if (scenes.length > 6 && !flag(args, "yes")) die(`${scenes.length} scenes would be rendered at full frame rate, pass --scene a,b or --yes`);
   const rules = { ...(x.c.timeline.rules ?? {}), ...(x.cfg.rules ?? {}) };
-  await withRenderer(x, async (r, serveUrl) => {
+  await withEngine(x, async (e) => {
     for (const s of scenes) {
       const part = x.c.parts.find((p) => p.id === s.part)!;
       const compId = compositionFor(part, x.format);
       const dir = join(x.cfg.cachePath, "motion", `${x.filmName}-${x.format}`, s.id);
       const t0 = performance.now();
-      const m = await measureScene(r, serveUrl, compId, s, x.c.fps, dir, { width: num(args, "width", 320), extra: num(args, "extra", 0), concurrency: num(args, "concurrency", 4), still: num(args, "still", 0.003), jump: num(args, "jump", 0.08) });
+      const m = await measureScene(e, compId, s, x.c.fps, dir, { width: num(args, "width", 320), extra: num(args, "extra", 0), concurrency: num(args, "concurrency", 4), still: num(args, "still", 0.003), jump: num(args, "jump", 0.08) });
       writeJson(join(dir, "curve.json"), m);
       const settledMs = m.settled === null ? null : Math.round((m.settled / x.c.fps) * 1000);
       log(`${s.id} (${m.frames}f, ${ms(t0)})  enter declared ${m.enterDur}f, measured settle ${m.settled === null ? "never" : `${m.settled}f = ${settledMs}ms`}  drift after settle ${(m.drift * 1000).toFixed(2)}‰`);
@@ -1129,12 +1146,12 @@ const renderOne = async (args: Args) => {
   const res = await withLock(x.cfg.cachePath, `render ${x.filmName} ${x.format}`, async () => {
     if (flag(args, "remix")) {
       // no picture step at all: the concatenated picture from the cache, mixed again
-      const picture = picturePath(x.cfg, x.filmName, x.format);
+      const picture = picturePath(x.cfg, x.filmName, x.format, engineOf(x));
       if (!existsSync(picture)) die(`--remix needs a rendered picture, none in the cache for ${x.filmName} ${x.format} (expected ${picture}). Run "mh render" once without --remix.`);
       log(`remix from ${picture} (${new Date(statSync(picture).mtimeMs).toISOString()})`);
       return mixFilm(x.cfg, x.c, picture, x.filmName, x.format, mixOpts);
     }
-    return withRenderer(x, async (r, serveUrl, bundleHash) => {
+    return withEngine(x, async (e) => {
       // a 12-core machine renders four tabs at a time by default: use most of the cores, leave two for the encoder
       const conc = num(args, "concurrency", Math.max(2, Math.min(10, cpus().length - 2)));
       const quality = flag(args, "draft") ? DRAFT : { ...FULL, crf: num(args, "crf", 18) };
@@ -1144,21 +1161,21 @@ const renderOne = async (args: Args) => {
         const scenes = scenesOf(x.c, args);
         if (!list(args, "scene") && !str(args, "part")) die("--preview needs --scene a[,b] (or --part)");
         const ids = scenes.map((s) => s.id);
-        const segs = await renderSegments(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { subset: ids, quality, log, concurrency: conc, force: flag(args, "force") });
+        const segs = await renderSegments(x.cfg, e, x.c, x.filmName, x.format, { subset: ids, quality, log, concurrency: conc, force: flag(args, "force") });
         const all = [...segs.values()].flat();
         log(`${all.filter((s) => s.cached).length} segments cached, ${all.filter((s) => !s.cached).length} rendered`);
         const parts = [...new Set(scenes.map((s) => s.part))];
-        const audio = flag(args, "no-audio") ? new Map<string, string>() : await renderPartAudio(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { log, concurrency: conc, parts });
+        const audio = flag(args, "no-audio") ? new Map<string, string>() : await renderPartAudio(x.cfg, e, x.c, x.filmName, x.format, { log, concurrency: conc, parts });
         const { picture, span } = await concatScenes(x.cfg, x.c, scenes, segs, audio, x.filmName, x.format, x.size, { log });
         const name = `${x.filmName}-${x.format}-preview-${scenes.map((s) => s.id).join("+")}`;
         if (flag(args, "no-audio")) return { master: picture };
         return mixFilm(x.cfg, x.c, picture, x.filmName, x.format, { ...mixOpts, out: str(args, "out") ?? join(ensureDir(join(x.cfg.cachePath, "out")), `${name}.mp4`), span });
       }
-      const segs = await renderSegments(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { only: list(args, "scene"), quality, log, concurrency: conc, force: flag(args, "force") });
+      const segs = await renderSegments(x.cfg, e, x.c, x.filmName, x.format, { only: list(args, "scene"), quality, log, concurrency: conc, force: flag(args, "force") });
       const all = [...segs.values()].flat();
       log(`${all.filter((s) => s.cached).length} segments cached, ${all.filter((s) => !s.cached).length} rendered`);
-      const audio = flag(args, "no-audio") ? new Map<string, string>() : await renderPartAudio(x.cfg, r, serveUrl, bundleHash, x.c, x.filmName, x.format, { log, concurrency: conc });
-      const picture = await concatParts(x.cfg, x.c, segs, audio, x.filmName, x.format, x.size, { log });
+      const audio = flag(args, "no-audio") ? new Map<string, string>() : await renderPartAudio(x.cfg, e, x.c, x.filmName, x.format, { log, concurrency: conc });
+      const picture = await concatParts(x.cfg, x.c, segs, audio, x.filmName, x.format, x.size, { log, engine: e.kind });
       if (flag(args, "no-audio")) return { master: picture };
       return mixFilm(x.cfg, x.c, picture, x.filmName, x.format, mixOpts);
     });
@@ -1269,7 +1286,7 @@ const cursorRun = async (x: Ctx): Promise<string> => {
   if (!cursor?.legs?.length) throw new Error(`film "${x.filmName}" declares no cursor legs (films.${x.filmName}.cursor.legs)`);
   const rel = cursor.out?.[x.format];
   if (!rel) throw new Error(`films.${x.filmName}.cursor.out has no file for format "${x.format}" (has: ${Object.keys(cursor.out ?? {}).join(", ") || "none"})`);
-  const targets = await withRenderer(x, (r, serveUrl) => measureLegs(r, serveUrl, x.cfg, x.c, x.format, x.size.width, cursor, { settleMs: num(x.args, "settle", 150), concurrency: num(x.args, "concurrency", 4), log }));
+  const targets = await withEngine(x, (e) => measureLegs(e, x.cfg, x.c, x.format, x.size.width, cursor, { settleMs: num(x.args, "settle", 150), concurrency: num(x.args, "concurrency", 4), log }));
   const w = writeTargets(resolvePath(x.cfg.projectDir, rel), targets);
   log(table(targets.map((t) => [t.id, `f${t.frame}`, t.x, t.y, `${t.click ? "click" : t.id.endsWith("(hover)") ? "hover" : "park"}${t.dwell ? ` dwell ${t.dwell}f` : ""}`]), ["leg", "part f", "x", "y", ""]));
   log(`${x.format}: ${targets.length} targets -> ${rel}${w.changed ? "" : " (unchanged)"}`);
@@ -1312,6 +1329,7 @@ const cmdCheck = async (args: Args) => {
     });
   } else rows.push(["typecheck", "skip", "no tsconfig.json in the project", ""]);
   await step("bundle", async () => {
+    if (engineOf(first) === "native") return "native engine: vite serves the source, nothing to bundle";
     const b = await bundleProject(first.cfg, { force: flag(args, "rebundle"), log });
     return `${b.fresh ? "built" : "reused"} ${b.hash.slice(0, 12)}`;
   });
@@ -1342,6 +1360,7 @@ const cmdCheck = async (args: Args) => {
 
 const cmdBundle = async (args: Args) => {
   const x = await ctx(args);
+  if (engineOf(x) === "native") return log("native engine: there is no bundle, vite serves the source on demand");
   const b = await bundleProject(x.cfg, { force: flag(args, "force") || true, log });
   log(`bundle: ${b.serveUrl} (${b.hash.slice(0, 12)})`);
 };
@@ -1381,6 +1400,7 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
                                     colors vs tokens (source and painted), text durations, events, safe zone,
                                     overflow, wrap, collision, same-top, format-parity (--rendered runs every format by default)
   diff [tagA] [tagB] [--min 0.002]  which check frames changed between two runs (default approved vs latest), touched scenes first
+  compare <a.png> <b.png> [--out diff.png]   two pictures: changed pixels, mean, box, diff image (same frame on both engines?)
   motion --scene a[,b] [--width 320]
                                     frame-to-frame motion curve: when it settles, how long it holds, where it jumps
   audio [file] [--window 0.25] [--scene id]
@@ -1407,6 +1427,7 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
                                     films per format, stills as jpg, the srt, a manifest (sizes, durations, bitrates, sha1, chapters, scenes) and a .gitignore for the mp4
   init [--force]                    write a harness.config.ts template into the project
 
+  engine: --engine remotion|native (or config.engine): remotion uses the project's Remotion install, native runs Vite + shim + Playwright without it
   project: --project dir, else $MH_PROJECT, else the cwd when it holds harness.config.ts, else the project used last (~/.mh/last)
   --format all fans check, frames, frame, lint, cursor, render and deliver out over every format of the film
   lint --rendered refuses a run whose bundle is older than the sources (--allow-stale reads it anyway); sheet warns
@@ -1431,6 +1452,7 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   probe: cmdProbe,
   lint: cmdLint,
   diff: cmdDiff,
+  compare: cmdCompare,
   motion: cmdMotion,
   bench: cmdBench,
   audio: cmdAudio,
@@ -1452,8 +1474,10 @@ const main = async () => {
   try {
     await fn(args);
   } catch (e) {
+    await closeEngines();
     die((e as Error).stack ?? String(e));
   }
+  await closeEngines();
 };
 
 main();

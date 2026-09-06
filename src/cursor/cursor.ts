@@ -11,7 +11,7 @@ import { join } from "node:path";
 import type { Cursor, CursorLeg, LoadedConfig } from "../config.ts";
 import { compositionFor, type Compiled } from "../timeline/schema.ts";
 import { resolve } from "../timeline/resolve.ts";
-import { renderFrameSet, type Renderer } from "../render/frames.ts";
+import type { Engine } from "../render/engine.ts";
 import { ensureDir } from "../util.ts";
 
 /** same shape the film's GlobalCursor reads: part frame, film px, press or not */
@@ -61,8 +61,7 @@ export const writeTargets = (file: string, targets: CursorTarget[]): { file: str
 
 /** render every leg's frame once per composition (batched), take the element centres, fill in the parks in film order */
 export const measureLegs = async (
-  r: Renderer,
-  serveUrl: string,
+  e: Engine,
   cfg: LoadedConfig,
   c: Compiled,
   format: string,
@@ -83,7 +82,7 @@ export const measureLegs = async (
   for (const [compId, ls] of byComp) {
     const frames = [...new Set(ls.map((l) => l.partFrame))];
     opts.log?.(`${compId}: ${frames.length} frames for ${ls.length} legs`);
-    const outs = await renderFrameSet(r, serveUrl, compId, frames.map((frame) => ({ frame, file: join(dir, `${compId}-f${frame}.png`) })), { probe: "probe", settleMs: opts.settleMs ?? 150, concurrency: opts.concurrency ?? 4 });
+    const outs = await e.stills(compId, frames.map((frame) => ({ frame, file: join(dir, `${compId}-f${frame}.png`) })), { probe: "probe", settleMs: opts.settleMs ?? 150, concurrency: opts.concurrency ?? 4 });
     for (const o of outs) {
       const items = o.probe?.items ?? [];
       for (const l of ls.filter((x) => x.partFrame === o.frame)) {

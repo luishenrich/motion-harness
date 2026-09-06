@@ -5,30 +5,24 @@
  */
 import { existsSync, writeFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { renderMedia } from "@remotion/renderer";
 import type { LoadedConfig } from "../config.ts";
 import { compositionFor, type Compiled, type CompiledPart, type CompiledScene, type AudioCue } from "../timeline/schema.ts";
 import { resolve as resolveRef, resolveUnclamped } from "../timeline/resolve.ts";
 import { cuesInSpan, volumeExprFor, type Span } from "./mix.ts";
 import { partHash } from "../render/deps.ts";
-import { getComposition, type Renderer } from "../render/frames.ts";
-import { ensureDir, hashString, run, ffprobeDuration, ms, nextPort, mediaStats, statsLine } from "../util.ts";
+import { FULL, DRAFT, type Engine, type Quality } from "../render/engine.ts";
+import { ensureDir, hashString, run, ffprobeDuration, ms, mediaStats, statsLine } from "../util.ts";
 import { cuePlacement, cueSpan, sourceSeconds } from "../audio/coverage.ts";
 
 export type SegmentResult = { scene: CompiledScene; file: string; cached: boolean; ms: number };
 
-export type Quality = { crf: number; scale: number; preset: string; hw?: boolean };
-export const FULL: Quality = { crf: 18, scale: 1, preset: "medium" };
-/** half size, the Mac's own encoder (VideoToolbox, frees the cores for Chrome), coarse crf: a review render, not a delivery */
-export const DRAFT: Quality = { crf: 28, scale: 0.5, preset: "veryfast", hw: true };
+export { FULL, DRAFT, type Quality };
 export const segmentKey = (sourceHash: string, compositionId: string, s: CompiledScene, q: Quality) =>
   hashString(JSON.stringify([sourceHash, compositionId, s.id, s.start, s.end, s.scene, q]));
 
 export const renderSegments = async (
   cfg: LoadedConfig,
-  r: Renderer,
-  serveUrl: string,
-  bundleHash: string,
+  e: Engine,
   c: Compiled,
   film: string,
   format: string,
@@ -42,13 +36,14 @@ export const renderSegments = async (
     const wantedScenes = opts.subset ? part.scenes.filter((s) => opts.subset!.includes(s.id)) : part.scenes;
     if (!wantedScenes.length) continue;
     const compId = compositionFor(part, format);
-    const composition = await getComposition(serveUrl, compId);
+    const composition = await e.composition(compId);
     if (composition.durationInFrames !== part.dur) {
       throw new Error(`part "${part.id}": composition ${compId} has ${composition.durationInFrames} frames, timeline says ${part.dur}. Fix the timeline (or the composition) before rendering.`);
     }
     const dir = ensureDir(join(cfg.cachePath, "segments", `${film}-${format}${q.scale === 1 ? "" : "-draft"}`, part.id));
     // the key follows the part's own sources when it declares them, else the whole bundle
-    const sourceHash = partHash(cfg, part, bundleHash);
+    // the engine is part of the key: the same sources rendered by the other engine are other pixels
+    const sourceHash = `${e.kind}:${partHash(cfg, part, e.hash)}`;
     const results: SegmentResult[] = [];
     for (const s of wantedScenes) {
       const key = segmentKey(sourceHash, compId, s, q);
@@ -61,25 +56,7 @@ export const renderSegments = async (
       // a scene outside --scene with no cached segment is rendered anyway: the film needs every segment
       const t0 = performance.now();
       // video only: an AAC track per segment carries encoder padding, and concat would stretch the film by ~50 ms per scene
-      await renderMedia({
-        composition,
-        serveUrl,
-        codec: "h264",
-        crf: q.crf,
-        scale: q.scale,
-        x264Preset: q.preset as "medium",
-        hardwareAcceleration: q.hw ? "if-possible" : "disable",
-        outputLocation: file,
-        frameRange: [s.start, s.end - 1],
-        inputProps: {},
-        puppeteerInstance: r.browser,
-        concurrency: opts.concurrency ?? 4,
-        logLevel: "error",
-        overwrite: true,
-        pixelFormat: "yuv420p",
-        muted: true,
-        port: nextPort(),
-      });
+      await e.segment(compId, [s.start, s.end - 1], file, q, { concurrency: opts.concurrency ?? 4, log });
       // drop stale segments of the same scene
       for (const f of readdirSync(dir)) if (f.startsWith(`${String(s.indexInPart).padStart(2, "0")}-${s.id}-`) && join(dir, f) !== file) unlinkSync(join(dir, f));
       const t = Math.round(performance.now() - t0);
@@ -101,9 +78,7 @@ const blackSegment = async (file: string, w: number, h: number, seconds: number,
 /** the sound a part carries itself (<Audio> tags in the composition), rendered once per bundle and cached */
 export const renderPartAudio = async (
   cfg: LoadedConfig,
-  r: Renderer,
-  serveUrl: string,
-  bundleHash: string,
+  e: Engine,
   c: Compiled,
   film: string,
   format: string,
@@ -111,16 +86,15 @@ export const renderPartAudio = async (
 ): Promise<Map<string, string>> => {
   const log = opts.log ?? (() => {});
   const out = new Map<string, string>();
-  const dir = ensureDir(join(cfg.cachePath, "segments", `${film}-${format}`, "audio"));
+  const dir = ensureDir(join(cfg.cachePath, "segments", `${film}-${format}`, `audio-${e.kind}`));
   for (const part of c.parts) {
     if (opts.parts && !opts.parts.includes(part.id)) continue;
     if (!part.audio) continue; // the part says it is silent: the concat pads it with silence
     const compId = compositionFor(part, format);
-    const file = join(dir, `${part.id}-${hashString(partHash(cfg, part, bundleHash) + compId)}.m4a`);
+    const file = join(dir, `${part.id}-${hashString(partHash(cfg, part, e.hash) + compId)}.m4a`);
     if (!existsSync(file)) {
-      const composition = await getComposition(serveUrl, compId);
       const t0 = performance.now();
-      await renderMedia({ composition, serveUrl, codec: "aac", outputLocation: file, inputProps: {}, puppeteerInstance: r.browser, concurrency: opts.concurrency ?? 4, logLevel: "error", overwrite: true, port: nextPort() });
+      await e.audio(compId, file, { concurrency: opts.concurrency ?? 4 });
       for (const f of readdirSync(dir)) if (f.startsWith(`${part.id}-`) && join(dir, f) !== file) unlinkSync(join(dir, f));
       log(`  ${part.id} audio rendered in ${ms(t0)}`);
     }
@@ -130,7 +104,7 @@ export const renderPartAudio = async (
 };
 
 /** where concatParts leaves the picture (segments + the parts' own sound, no timeline cues yet) */
-export const picturePath = (cfg: LoadedConfig, film: string, format: string) => join(cfg.cachePath, "film", `${film}-${format}-picture.mp4`);
+export const picturePath = (cfg: LoadedConfig, film: string, format: string, engine: "remotion" | "native" = "remotion") => join(cfg.cachePath, "film", `${film}-${format}${engine === "native" ? "-native" : ""}-picture.mp4`);
 
 /**
  * A preview clip: the segments of a contiguous run of scenes, the parts' own sound
@@ -204,7 +178,7 @@ export const concatParts = async (
   film: string,
   format: string,
   size: { width: number; height: number },
-  opts: { log?: (s: string) => void } = {},
+  opts: { log?: (s: string) => void; engine?: "remotion" | "native" } = {},
 ): Promise<string> => {
   const log = opts.log ?? (() => {});
   const dir = ensureDir(join(cfg.cachePath, "film"));
@@ -245,7 +219,7 @@ export const concatParts = async (
     }
   }
   const graph = `${chains.join(";")};${cat.join("")}concat=n=${cat.length}:v=0:a=1[a]`;
-  const out = picturePath(cfg, film, format);
+  const out = picturePath(cfg, film, format, opts.engine ?? "remotion");
   await run(["ffmpeg", "-y", "-v", "error", ...inputs, "-filter_complex", graph, "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", out]);
   log(`concat ${list.length} segments + ${partAudio.size} audio track${partAudio.size === 1 ? "" : "s"} in ${ms(t0)}`);
   return out;
@@ -346,11 +320,11 @@ export const mixFilm = async (
   return res;
 };
 
-export const partDurationCheck = async (serveUrl: string, c: Compiled, format: string): Promise<{ part: CompiledPart; composition: string; actual: number; expected: number }[]> => {
+export const partDurationCheck = async (e: Engine, c: Compiled, format: string): Promise<{ part: CompiledPart; composition: string; actual: number; expected: number }[]> => {
   const out = [];
   for (const part of c.parts) {
     const id = compositionFor(part, format);
-    const comp = await getComposition(serveUrl, id);
+    const comp = await e.composition(id);
     out.push({ part, composition: id, actual: comp.durationInFrames, expected: part.dur });
   }
   return out;

@@ -63,6 +63,10 @@ export type HarnessConfig = {
   rules?: Rules;
   /** extra chromium flags, rarely needed */
   chromiumOptions?: Record<string, unknown>;
+  /** which renderer: "remotion" (the project's Remotion install) or "native" (Vite + shim + Playwright, no Remotion needed). Default remotion. */
+  engine?: "remotion" | "native";
+  /** native engine: run tailwind as a postcss plugin. Default: when the project has a tailwind.config.* */
+  tailwind?: boolean;
 };
 
 export const defineConfig = (c: HarnessConfig): HarnessConfig => c;

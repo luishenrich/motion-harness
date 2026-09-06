@@ -18,8 +18,8 @@
  */
 export const PROBE_MARK = "__HARNESS_PROBE__";
 
-export const PROBE_SOURCE = `
-import { delayRender, continueRender, getInputProps } from "remotion";
+/** the measuring function alone (plain JS, no imports): the native engine installs it as window.__mh.measure */
+export const PROBE_MEASURE_SOURCE = `
 const __probeMark = ${JSON.stringify(PROBE_MARK)};
 const __effectiveOpacity = (el) => {
   let o = 1;
@@ -123,6 +123,12 @@ const __measure = (mode, settleMs) => {
   });
   return { viewport: { w: W, h: H }, items, colors: [...colors.values()], settleMs };
 };
+`;
+
+/** the React component the Remotion wrapper mounts next to the project's Root */
+export const PROBE_SOURCE = `
+import { delayRender, continueRender, getInputProps } from "remotion";
+` + PROBE_MEASURE_SOURCE + `
 const HarnessProbe = () => {
   React.useEffect(() => {
     let props = null;

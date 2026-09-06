@@ -4,7 +4,9 @@
   "description": "Agent-first harness around Remotion: timeline as data, scene renders in seconds, contact sheets with scene knowledge, DOM probes, design lint, motion and audio metrics, review player with scene-addressed feedback.",
   "license": "MIT",
   "type": "module",
-  "bin": { "mh": "./bin/mh" },
+  "bin": {
+    "mh": "./bin/mh"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./timeline": "./src/timeline/schema.ts",
@@ -22,7 +24,10 @@
     "remotion": "4.0.475"
   },
   "dependencies": {
-    "sharp": "^0.34.3"
+    "@vitejs/plugin-react": "^6.1.1",
+    "playwright-core": "1.57.0",
+    "sharp": "^0.34.3",
+    "vite": "^8.2.2"
   },
   "devDependencies": {
     "@remotion/bundler": "4.0.475",
