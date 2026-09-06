@@ -97,13 +97,12 @@ export const TextFx: React.FC<{ ctx: VCtx; layer: TextLayer; style: React.CSSPro
       </div>
     );
   }
-  // flip: every character turns over on its own axis
+  // flip: every character turns over on its own axis, in the order the layer's own stagger gives
   const chars = [...plain];
-  const stagger = st ?? { by: "char" as const, each: 2 };
   return (
     <div style={{ ...style, perspective: `${600 * ctx.fr.u}px` }}>
       {chars.map((c, i) => {
-        const delay = staggerDelay(stagger, i, chars.length);
+        const delay = staggerDelay(st, i, chars.length);
         const p = inProgress(film, scene, layer, frame, delay);
         if (!c.trim()) return <span key={i}>{c}</span>;
         return (

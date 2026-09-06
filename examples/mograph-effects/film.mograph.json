@@ -176,7 +176,7 @@
           "color": "paper",
           "at": { "x": 0.5, "y": 0.72 },
           "lines": 1,
-          "in": { "preset": "rise", "at": 54, "dur": 14 },
+          "in": { "preset": "rise", "at": 42, "dur": 14 },
           "formats": { "vertical": { "size": 40, "at": { "x": 0.5, "y": 0.62 } } }
         }
       ]
@@ -306,7 +306,7 @@
           "color": "muted",
           "at": { "x": 0.5, "y": 0.85 },
           "lines": 1,
-          "in": { "preset": "rise", "at": 60, "dur": 14 },
+          "in": { "preset": "rise", "at": 50, "dur": 14 },
           "formats": { "vertical": { "at": { "x": 0.5, "y": 0.74 } } }
         }
       ]

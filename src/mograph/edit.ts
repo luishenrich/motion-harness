@@ -229,8 +229,8 @@ const readSeconds = (words: number) => 1.2 + Math.max(0, words - 4) * 0.25;
 const KNOWN_IN = ["cut", "fade", "rise", "drop", "pop", "slide", "wipe", "grow", "blur", "typewriter", "mask", "flip", "track", "scramble", "fall", "line-wipe"];
 const KNOWN_SHAPES = ["rect", "circle", "line", "ring", "path", "polygon", "star", "arrow"];
 const PARTICLE_SHAPES = ["dot", "line", "confetti"];
-/** the presets that draw their units one after another: without a stagger the timeline and the picture disagree */
-const NEEDS_STAGGER = ["flip", "fall", "line-wipe", "mask"];
+/** flip reads as one plate turning over unless the layer staggers it by character */
+const NEEDS_STAGGER = ["flip"];
 const KNOWN_OUT = ["cut", "fade", "sink", "lift", "shrink", "slide", "wipe", "blur"];
 
 export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
@@ -308,7 +308,7 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
         if (fx.highlight?.in && !isKnownEase(fx.highlight.in.ease, film.easings ?? {})) out.push({ level: "error", rule: "ease", where: `${lw}.effects.highlight.in.ease`, message: `"${String(fx.highlight.in.ease)}" is not an easing` });
         if (fx.gradientText && (Array.isArray(fx.gradientText) ? fx.gradientText.length : fx.gradientText.gradient.length) < 2) out.push({ level: "error", rule: "effect", where: `${lw}.effects.gradientText`, message: "gradient text needs at least two stops" });
       }
-      if (l.in?.preset && NEEDS_STAGGER.includes(l.in.preset) && !l.in.stagger && !film.defaults?.layerIn?.stagger) out.push({ level: "warn", rule: "stagger-missing", where: `${lw}.in`, message: `the ${l.in.preset} preset arrives unit by unit; without a stagger everything moves at once` });
+      if (l.in?.preset && NEEDS_STAGGER.includes(l.in.preset) && !l.in.stagger && !film.defaults?.layerIn?.stagger) out.push({ level: "warn", rule: "stagger-missing", where: `${lw}.in`, message: `a ${l.in.preset} without a stagger turns every character at once; { "by": "char", "each": 2 } reads as writing` });
       if (l.type === "text") {
         if (!l.text) out.push({ level: "warn", rule: "empty-text", where: lw, message: "no text" });
         const words = l.text.replace(/\*/g, "").split(/\s+/).filter(Boolean).length;
