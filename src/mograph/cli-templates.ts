@@ -131,13 +131,15 @@ const cmdList = (a: Args) => {
   log(`mh template show <name>   mh template add <name> --param k=v ...   mh template apply <scene> [name]`);
 };
 
-const cmdShow = (a: Args) => {
+const cmdShow = async (a: Args) => {
   const name = a._[1];
   if (!name) die(`usage: mh template show <name>   (${templateNames().join(", ")})`);
   const tpl = resolveTemplate(name);
   if (!tpl) die(`no template "${name}" (have: ${templateNames().join(", ")})`);
   const raw = paramsOf(a);
-  const scene = buildScene(tpl!.name, raw);
+  // inside a project the film's design decides the colours; outside it the tokens are the guess
+  const design = await filmFile(a).then((f) => f.film.design).catch(() => undefined);
+  const scene = buildScene(tpl!.name, raw, { design });
   if (flag(a, "json")) return out(JSON.stringify(scene, null, 2));
   log(`${tpl!.name}: ${tpl!.description}`);
   log(table(Object.entries(tpl!.params).map(([k, s]) => [k, s.type, JSON.stringify(coerceParams(tpl!, raw)[k]), s.help]), ["param", "type", "value", "what it does"]));
@@ -151,7 +153,7 @@ const cmdAdd = async (a: Args) => {
   if (!name) die(`usage: mh template add <name> [--param k=v ...] [--id x] [--after id|--before id] [--no-groups]   (${templateNames().join(", ")})`);
   const { path, dir, film } = await filmFile(a);
   const at = insertIndex(film, a);
-  const scene = buildScene(name, paramsOf(a), { id: str(a, "id"), taken: film.scenes.map((s) => s.id), previousGround: groundBefore(film, at) });
+  const scene = buildScene(name, paramsOf(a), { id: str(a, "id"), taken: film.scenes.map((s) => s.id), previousGround: groundBefore(film, at), design: film.design });
   addScene(film, scene, { after: str(a, "after"), before: str(a, "before") });
   saveFilm(path, film);
   log(sceneLine(scene));
@@ -170,7 +172,7 @@ const cmdApply = async (a: Args) => {
   const name = a._[2] ?? old.template;
   if (!name) die(`scene "${id}" came from no template; name one: mh template apply ${id} statement`);
   const params = { ...(old.template && (!a._[2] || a._[2] === old.template) ? old.params ?? {} : {}), ...paramsOf(a) };
-  const scene = buildScene(name, params, { id: old.id, previousGround: groundBefore(film, i) });
+  const scene = buildScene(name, params, { id: old.id, previousGround: groundBefore(film, i), design: film.design });
   film.scenes[i] = scene;
   saveFilm(path, film);
   log(`${old.id}: ${old.layers.length} layer${old.layers.length === 1 ? "" : "s"} -> ${sceneLine(scene)}`);

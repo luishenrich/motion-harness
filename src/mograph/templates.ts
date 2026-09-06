@@ -18,8 +18,8 @@
  * the ink fails the contrast lint on paper. `--param accent=accent` overrides
  * that when a film's accent is dark enough.
  */
-import type { Layer, LayerBase, MgScene } from "./schema.ts";
-import { isDark } from "./schema.ts";
+import type { Design, Layer, LayerBase, MgScene } from "./schema.ts";
+import { colorOf, isDark } from "./schema.ts";
 
 /* ---------- manifests ---------- */
 
@@ -30,7 +30,7 @@ export type MgTemplate = {
   name: string;
   description: string;
   params: Record<string, MgParamSpec>;
-  build: (p: MgParams) => MgScene;
+  build: (p: MgParams, design?: Design) => MgScene;
 };
 
 /** a label and a number, the shape a bars layer wants */
@@ -98,16 +98,62 @@ export const givenParams = (tpl: MgTemplate, raw: MgParams = {}): MgParams => {
 /* ---------- colours, grounds, shorthands ---------- */
 
 const LIGHT_TOKENS = new Set(["paper", "white", "accent"]);
+const HEX = /^#[0-9a-fA-F]{3,8}$/;
 
-/** a ground a viewer reads dark text on: paper, white, accent, or a light hex */
-export const groundIsLight = (ground: string): boolean => LIGHT_TOKENS.has(ground) || (/^#[0-9a-fA-F]{3,8}$/.test(ground) && !isDark(ground));
+/** the hex a colour reference paints, when the design is known and names it */
+const hexOf = (ref: string, design?: Design): string | null => {
+  if (HEX.test(ref)) return ref;
+  if (!design) return null;
+  const v = colorOf(design, ref, "");
+  return HEX.test(v) ? v : null;
+};
+
+const luminance = (hex: string): number => {
+  const m = hex.replace("#", "");
+  const full = m.length === 3 ? m.split("").map((c) => c + c).join("") : m.slice(0, 6);
+  const n = parseInt(full, 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => (v /= 255) <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+};
+
+/** WCAG contrast, the number the rendered lint measures on the painted pixels */
+export const contrast = (a: string, b: string): number => {
+  const [x, y] = [luminance(a), luminance(b)];
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
+
+/**
+ * A ground a viewer reads dark text on. With the film's design any ground reads
+ * true, hex or design name; without it the tokens are the best guess (a film may
+ * ground a scene in "sky" and only the design knows whether that is light).
+ */
+export const groundIsLight = (ground: string, design?: Design): boolean => {
+  const hex = hexOf(ground, design);
+  return hex ? !isDark(hex) : LIGHT_TOKENS.has(ground);
+};
 
 export type Palette = { fg: string; dim: string; accentText: string; accent: string; light: boolean };
 
-/** the colours a template paints with, from its ground */
-export const paletteFor = (ground: string, accent = "auto"): Palette => {
-  const light = groundIsLight(ground);
-  return { fg: light ? "ink" : "paper", dim: "muted", accentText: accent && accent !== "auto" ? accent : light ? "ink" : "accent", accent: "accent", light };
+/**
+ * The colours a template paints with, from its ground. When the design is known
+ * every one of them is chosen by contrast, so a template stays readable on a
+ * ground the film invented; the large text rule (3:1) is the one the rendered
+ * lint applies to everything a template writes.
+ */
+export const paletteFor = (ground: string, accent = "auto", design?: Design): Palette => {
+  const light = groundIsLight(ground, design);
+  const g = hexOf(ground, design);
+  const reads = (ref: string, min = 3) => {
+    const c = hexOf(ref, design);
+    return g && c ? contrast(c, g) >= min : null;
+  };
+  const fg = (() => {
+    if (!g || !design) return light ? "ink" : "paper";
+    return contrast(design.ink, g) >= contrast(design.paper, g) ? "ink" : "paper";
+  })();
+  const dim = reads("muted") === false ? fg : "muted";
+  const accentText = accent && accent !== "auto" ? accent : reads("accent") === false ? fg : reads("accent") === true ? "accent" : light ? "ink" : "accent";
+  return { fg, dim, accentText, accent: "accent", light };
 };
 
 /** per format overrides, the vertical ones a template always ships */
@@ -170,8 +216,8 @@ const title: MgTemplate = {
     dur: pDur(90),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const size = N(p, "size");
     return sceneOf("title", p, "the opening claim", keep(
       S(p, "kicker") && {
@@ -205,8 +251,8 @@ const statement: MgTemplate = {
     dur: pDur(120),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const size = N(p, "size");
     return sceneOf("statement", p, "the claim and its support", keep(
       {
@@ -240,8 +286,8 @@ const stat: MgTemplate = {
     dur: pDur(100),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const size = N(p, "size");
     return sceneOf("stat", p, "the number is the point", keep(
       {
@@ -276,8 +322,8 @@ const list: MgTemplate = {
     dur: pDur(140),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const items = L(p, "items");
     const size = N(p, "size");
     return sceneOf("list", p, "the steps, one after another", keep(
@@ -311,8 +357,8 @@ const compare: MgTemplate = {
     dur: pDur(150),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const size = N(p, "size");
     const marker = (S(p, "marker") || "dash") as "dot" | "number" | "check" | "dash" | "none";
     const col = (side: "left" | "right", head: string, items: string[], x: number, delay: number, vy: [number, number]): Layer[] => [
@@ -351,8 +397,8 @@ const quote: MgTemplate = {
     dur: pDur(145),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const size = N(p, "size");
     return sceneOf("quote", p, "someone else says it", keep(
       {
@@ -392,8 +438,8 @@ const lowerThird: MgTemplate = {
     dur: pDur(100),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const size = N(p, "size");
     const role = S(p, "role");
     const bar: Layer = { id: "bar", type: "shape", shape: "rect", w: 8, h: 150, radius: 4, fill: c.accent, at: at(0.07, 0.78), anchor: "left", in: { preset: "grow", at: 4, dur: 10, ease: "out" }, ...V({ h: 140, at: at(0.1, 0.74) }) };
@@ -439,8 +485,8 @@ const chart: MgTemplate = {
     dur: pDur(140),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const values = PR(p, "values");
     const horizontal = S(p, "direction") !== "vertical";
     return sceneOf("chart", p, "the numbers side by side", keep(
@@ -478,8 +524,8 @@ const logo: MgTemplate = {
     dur: pDur(100),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const src = S(p, "src");
     const size = N(p, "size");
     const mark: Layer = src
@@ -515,8 +561,8 @@ const cta: MgTemplate = {
     dur: pDur(110),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const w = N(p, "width");
     const head: Layer = {
       id: "headline", type: "text", text: S(p, "headline"), size: 80, weight: 700, color: c.fg, accent: c.accentText,
@@ -557,8 +603,8 @@ const steps: MgTemplate = {
     dur: pDur(150),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const items = L(p, "steps").slice(0, 4);
     const list3 = items.length ? items : ["one", "two", "three"];
     const size = N(p, "size");
@@ -609,8 +655,8 @@ const split: MgTemplate = {
     dur: pDur(120),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const src = S(p, "src");
     const figure: Layer = src
       ? { id: "figure", type: "image", src, w: 420, radius: 16, at: at(0.75, 0.5), in: { preset: "pop", at: 14, dur: 16, ease: "back" }, ...V({ w: 380, at: at(0.5, 0.74) }) }
@@ -648,8 +694,8 @@ const kinetic: MgTemplate = {
     dur: pDur(110),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const size = N(p, "size");
     const s = sceneOf("kinetic", p, "one line, word by word", [
       {
@@ -677,8 +723,8 @@ const countdown: MgTemplate = {
     dur: pDur(120),
     exit: pExit(),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const count = Math.max(12, Math.round(N(p, "seconds") * 30));
     const dur = Math.max(20, Math.round(N(p, "dur")));
     const end = Math.min(dur - 6, 8 + count);
@@ -715,8 +761,8 @@ const endCard: MgTemplate = {
     dur: pDur(110),
     exit: pExit(0),
   },
-  build: (p) => {
-    const c = paletteFor(S(p, "ground"), S(p, "accent"));
+  build: (p, design) => {
+    const c = paletteFor(S(p, "ground"), S(p, "accent"), design);
     const size = N(p, "size");
     return sceneOf("end-card", p, "the last frame, held", keep(
       {
@@ -790,6 +836,8 @@ export type BuildOpts = {
   taken?: Iterable<string>;
   /** the ground of the scene before this one: an unset ground alternates away from it */
   previousGround?: string;
+  /** the film's design: with it a template reads any ground, hex or design name, and picks colours by contrast */
+  design?: Design;
 };
 
 /**
@@ -802,7 +850,7 @@ export const buildScene = (name: string, raw: MgParams = {}, opts: BuildOpts = {
   if (!tpl) throw new Error(`no template "${name}" (have: ${templateNames().join(", ")})`);
   const params = { ...raw };
   if (params.ground === undefined && tpl.params.ground) params.ground = alternateGround(String(tpl.params.ground.default), opts.previousGround);
-  const scene = tpl.build(coerceParams(tpl, params));
+  const scene = tpl.build(coerceParams(tpl, params), opts.design);
   scene.id = opts.id ?? uniqueId(tpl.name, opts.taken ?? []);
   scene.template = tpl.name;
   const given = givenParams(tpl, params);
@@ -823,6 +871,7 @@ type RawScene = Partial<MgScene> & { template?: string; params?: MgParams; layer
  * the truth.
  */
 export const expandTemplates = <F extends { scenes?: unknown[] }>(film: F): F => {
+  const design = (film as { design?: Design }).design;
   const raw = (Array.isArray(film.scenes) ? film.scenes : []) as RawScene[];
   if (!raw.some((s) => s && typeof s === "object" && s.template && !(Array.isArray(s.layers) && s.layers.length))) return film;
   const taken = new Set(raw.map((s) => (s && typeof s === "object" ? String(s.id ?? "") : "")).filter(Boolean));
@@ -841,7 +890,7 @@ export const expandTemplates = <F extends { scenes?: unknown[] }>(film: F): F =>
     if (params.exit === undefined && s.exit && typeof s.exit === "object" && typeof (s.exit as { dur?: number }).dur === "number") params.exit = (s.exit as { dur: number }).dur;
     const id = s.id ? uniqueId(String(s.id), [...taken].filter((x) => x !== String(s.id))) : uniqueId(resolveTemplate(s.template)!.name, taken);
     taken.add(id);
-    const scene = buildScene(s.template, params, { id, previousGround });
+    const scene = buildScene(s.template, params, { id, previousGround, design });
     if (typeof s.why === "string" && s.why.trim()) scene.why = s.why;
     if (typeof s.caption === "string" && s.caption.trim()) scene.caption = s.caption;
     previousGround = scene.ground;

@@ -156,7 +156,7 @@
           "size": 88,
           "weight": 700,
           "color": "ink",
-          "accent": "ink",
+          "accent": "accent",
           "at": {
             "x": 0.5,
             "y": 0.42
@@ -389,7 +389,6 @@
         "label": "templates in the box",
         "note": "one scene each, all editable by address",
         "ground": "paper",
-        "accent": "accent",
         "dur": 96
       }
     },
@@ -594,7 +593,6 @@
         ],
         "format": "0.0",
         "ground": "paper",
-        "accent": "accent",
         "dur": 90
       }
     },
@@ -1059,7 +1057,6 @@
           "edit"
         ],
         "ground": "paper",
-        "accent": "accent",
         "dur": 90
       }
     },
@@ -1583,7 +1580,6 @@
         "label": "rendering",
         "seconds": 2,
         "ground": "paper",
-        "accent": "accent",
         "dur": 84
       }
     },
@@ -1840,7 +1836,6 @@
         "wordmark": "motion harness",
         "tagline": "one file, every format",
         "ground": "paper",
-        "accent": "accent",
         "dur": 84
       }
     },
