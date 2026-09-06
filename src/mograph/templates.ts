@@ -402,9 +402,10 @@ const quote: MgTemplate = {
     const size = N(p, "size");
     return sceneOf("quote", p, "someone else says it", keep(
       {
-        id: "mark", type: "text", text: "“", size: 130, weight: 700, color: c.accentText, accent: c.accentText, probe: false,
-        at: at(0.5, 0.26), maxWidth: 0.3, in: { preset: "pop", at: 0, dur: 12, ease: "back" },
-        ...V({ size: 110, at: at(0.5, 0.28) }),
+        // a quote glyph paints only the top of its em box: it needs a size well over the quote's to read as a mark
+        id: "mark", type: "text", text: "“", size: 190, weight: 700, lineHeight: 0.8, color: c.accentText, accent: c.accentText, probe: false,
+        at: at(0.5, 0.27), maxWidth: 0.3, in: { preset: "pop", at: 0, dur: 12, ease: "back" },
+        ...V({ size: 160, at: at(0.5, 0.29) }),
       },
       {
         id: "quote", type: "text", text: S(p, "quote"), size, weight: 500, lineHeight: 1.3, color: c.fg, accent: c.accentText,
@@ -666,7 +667,7 @@ const split: MgTemplate = {
     const src = S(p, "src");
     const figure: Layer = src
       ? { id: "figure", type: "image", src, w: 420, radius: 16, at: at(0.75, 0.5), in: { preset: "pop", at: 14, dur: 16, ease: "back" }, ...V({ w: 520, at: at(0.5, 0.74) }) }
-      : { id: "figure", type: "shape", shape: "ring", d: 280, thickness: 20, fill: c.accent, progress: 1, at: at(0.75, 0.5), in: { preset: "pop", at: 14, dur: 16, ease: "back" }, ...V({ d: 340, thickness: 24, at: at(0.5, 0.74) }) };
+      : { id: "figure", type: "shape", shape: "ring", d: 340, thickness: 22, fill: c.accent, progress: 1, at: at(0.75, 0.5), in: { preset: "pop", at: 14, dur: 16, ease: "back" }, ...V({ d: 340, thickness: 24, at: at(0.5, 0.74) }) };
     return sceneOf("split", p, "text on one side, the picture on the other", keep(
       {
         id: "panel", type: "shape", shape: "rect", w: 960, h: 1080, fill: S(p, "panel") || "ink", probe: false,
@@ -674,12 +675,12 @@ const split: MgTemplate = {
         ...V({ w: 1080, h: 960, at: at(0.5, 0.75) }),
       },
       {
-        id: "headline", type: "text", text: S(p, "headline"), size: 64, weight: 700, color: c.fg, accent: c.accentText, align: "left",
+        id: "headline", type: "text", text: S(p, "headline"), size: 72, weight: 700, color: c.fg, accent: c.accentText, align: "left",
         at: at(0.08, 0.42), anchor: "left", maxWidth: 0.34, in: { preset: "rise", at: 4, dur: 14, ease: "out" },
         ...V({ size: 62, at: at(0.09, 0.24), maxWidth: 0.82 }),
       },
       S(p, "body") && {
-        id: "body", type: "text", text: S(p, "body"), role: "body", size: 34, weight: 400, color: c.dim, accent: c.accentText, align: "left",
+        id: "body", type: "text", text: S(p, "body"), role: "body", size: 36, weight: 400, color: c.dim, accent: c.accentText, align: "left",
         at: at(0.08, 0.56), anchor: "left", maxWidth: 0.32, in: { preset: "fade", at: 20, dur: 14, ease: "out" },
         ...V({ size: 34, at: at(0.09, 0.35), maxWidth: 0.8 }),
       },
