@@ -104,6 +104,8 @@ export type OdometerCell = { char: string; digit: boolean; offset: number };
 
 /** how much of a digit's step is spent holding still before it flips to the next one */
 export const ROLL_HOLD = 0.8;
+/** a column above the last one waits for the carry: it flips only while the column below it wraps */
+export const CARRY_HOLD = 0.95;
 
 /** the integer part of a formatted number padded with leading zeros to `pad` digits */
 export const padDigits = (text: string, pad: number | undefined): string => {
@@ -136,7 +138,8 @@ export const odometerCells = (value: number, text: string): OdometerCell[] => {
     const scaled = v / Math.pow(10, places[i]);
     // a column holds its digit and then flips: a still frame mostly shows a whole number, not two halves
     const frac = scaled % 1;
-    const roll = frac <= ROLL_HOLD ? 0 : (frac - ROLL_HOLD) / (1 - ROLL_HOLD);
+    const hold = places[i] === 0 ? ROLL_HOLD : CARRY_HOLD;
+    const roll = frac <= hold ? 0 : (frac - hold) / (1 - hold);
     return { char, digit: true, offset: Math.max(0, (Math.floor(scaled) % 10) + roll) };
   });
 };

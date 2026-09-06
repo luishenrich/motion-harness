@@ -260,7 +260,9 @@ describe("shapes and charts", () => {
     // a column holds its digit for most of the step and then flips, so a still frame shows whole numbers
     expect(odometerCells(37.5, "40")[1].offset).toBe(7);
     expect(odometerCells(37.9, "40")[1].offset).toBeCloseTo(7.5, 5);
-    expect(odometerCells(39.9, "40")[0].offset).toBeCloseTo(3.95, 2);
+    expect(odometerCells(39.9, "40")[0].offset).toBeCloseTo(3.8, 2);
+    // the column above waits for the carry: at 1239 the tens still reads 3, not a half turned 4
+    expect(odometerCells(1239.4, "1,240").filter((c) => c.digit).map((c) => Math.floor(c.offset))).toEqual([1, 2, 3, 9]);
     expect(odometerCells(1240, "1,240").filter((c) => c.digit).map((c) => c.offset)).toEqual([1, 2, 4, 0]);
   });
 });

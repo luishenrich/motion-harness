@@ -12,8 +12,8 @@ import type { BarsLayer, CounterLayer, ImageLayer, Layer, LineChartLayer, ListLa
 import { colorOf, layerFor, layerTiming } from "./schema.ts";
 import { poseAt, staggerDelay, type Pose } from "./pose.ts";
 import { defaultMaxWidth, frameFor, placement, type Frame } from "./layout.ts";
-import { backgroundStyle, groundFlat, groundPaint, layerPaint, paintOf, textStyle } from "./colour.ts";
-import { highlightAt, lintFlags } from "./effects.ts";
+import { backgroundStyle, flatOf, groundFlat, groundPaint, layerPaint, paintOf, textStyle, type Paint } from "./colour.ts";
+import { gradientTextOf, highlightAt, lintFlags } from "./effects.ts";
 import { Fx, LineChartView, Odometer, ParticlesView, RingsView, ShapeSvg, TextFx, isDrawnShape, isTextFx } from "./views.tsx";
 
 const fontStack = (family: string | undefined, fallback: string) => (family ? `'${family}', ${fallback}` : fallback);
@@ -79,13 +79,20 @@ const marked = (text: string, accent: string, key: string, markStyle?: React.CSS
 const TextView: React.FC<{ ctx: Ctx; layer: TextLayer }> = ({ ctx, layer }) => {
   const { film, fr, frame } = ctx;
   const size = (layer.size ?? 72) * fr.u;
-  const paint = layerPaint(film, ctx.scene, layer, "color", frame, film.design.ink);
+  const gt = gradientTextOf(layer.effects);
+  // gradientText and a gradient colour are the same thing on a text layer: a paint through the glyphs
+  const paint: Paint = gt ? { css: paintOf(film.design, gt, film.design.accent), gradient: true, animated: false } : layerPaint(film, ctx.scene, layer, "color", frame, film.design.ink);
+  // the div keeps the layer's own width so a line wraps where it is told; the gradient goes on a span that
+  // hugs the words, because a gradient painted across the whole block only ever shows its middle band
+  const flat: Paint = paint.gradient ? { css: flatOf(film.design, gt ?? layer.color, film.design.ink), gradient: false, animated: paint.animated } : paint;
+  const inGradient = (nodes: React.ReactNode, key: string | number): React.ReactNode =>
+    paint.gradient ? <span key={key} style={{ display: "inline-block", ...textStyle(paint) }}>{nodes}</span> : nodes;
   const accentPaint = layerPaint(film, ctx.scene, layer, "accent", frame, film.design.accent);
   const accent = accentPaint.gradient ? colorOf(film.design, layer.accent ?? "accent", film.design.accent) : accentPaint.css;
   const st = layer.in?.stagger ?? film.defaults?.layerIn?.stagger;
   const whole = poseAt(film, ctx.scene, layer, frame);
   const width = (layer.maxWidth ?? defaultMaxWidth(fr)) * fr.width;
-  const style: React.CSSProperties = { fontFamily: fontFor(film, layer.role), fontSize: size, fontWeight: layer.weight ?? (layer.role === "body" ? 400 : 700), lineHeight: layer.lineHeight ?? 1.1, letterSpacing: layer.letterSpacing !== undefined ? `${layer.letterSpacing}em` : layer.role === "display" || !layer.role ? "-0.01em" : undefined, ...textStyle(paint), width, whiteSpace: "pre-wrap", textTransform: layer.uppercase ? "uppercase" : undefined, textAlign: layer.align ?? placement(layer, fr).textAlign, margin: 0 };
+  const style: React.CSSProperties = { fontFamily: fontFor(film, layer.role), fontSize: size, fontWeight: layer.weight ?? (layer.role === "body" ? 400 : 700), lineHeight: layer.lineHeight ?? 1.1, letterSpacing: layer.letterSpacing !== undefined ? `${layer.letterSpacing}em` : layer.role === "display" || !layer.role ? "-0.01em" : undefined, ...textStyle(flat), width, whiteSpace: "pre-wrap", textTransform: layer.uppercase ? "uppercase" : undefined, textAlign: layer.align ?? placement(layer, fr).textAlign, margin: 0 };
   const preset = layer.in?.preset ?? film.defaults?.layerIn?.preset;
   const typewriter = preset === "typewriter";
   // the wrap lint expects this many lines: the layer's own count, else the explicit line breaks
@@ -97,7 +104,7 @@ const TextView: React.FC<{ ctx: Ctx; layer: TextLayer }> = ({ ctx, layer }) => {
   if (isTextFx(preset)) {
     return (
       <Box ctx={ctx} layer={layer} pose={whole} lines={expectLines}>
-        <TextFx ctx={ctx} layer={layer} style={style} accent={accent} preset={preset!} markStyle={markStyle} />
+        <TextFx ctx={ctx} layer={layer} style={style} accent={accent} preset={preset!} markStyle={markStyle} paint={paint} />
       </Box>
     );
   }
@@ -113,7 +120,7 @@ const TextView: React.FC<{ ctx: Ctx; layer: TextLayer }> = ({ ctx, layer }) => {
   if (!st) {
     return (
       <Box ctx={ctx} layer={layer} pose={whole} lines={expectLines}>
-        <div style={style}>{layer.text.split("\n").map((line, i) => <React.Fragment key={i}>{i > 0 ? <br /> : null}{lineStyle ? <span style={lineStyle}>{marked(line, accent, `l${i}`, markStyle)}</span> : marked(line, accent, `l${i}`, markStyle)}</React.Fragment>)}</div>
+        <div style={style}>{layer.text.split("\n").map((line, i) => <React.Fragment key={i}>{i > 0 ? <br /> : null}{inGradient(lineStyle ? <span style={lineStyle}>{marked(line, accent, `l${i}`, markStyle)}</span> : marked(line, accent, `l${i}`, markStyle), `g${i}`)}</React.Fragment>)}</div>
       </Box>
     );
   }
@@ -125,7 +132,7 @@ const TextView: React.FC<{ ctx: Ctx; layer: TextLayer }> = ({ ctx, layer }) => {
         {units.map((u, i) => {
           const p = poseAt(film, ctx.scene, layer, frame, staggerDelay(st, i, units.length));
           // a line unit wraps inside its own row; a word or a character never wraps
-          const body = lineStyle ? <span style={lineStyle}>{marked(u, accent, `u${i}`, markStyle)}</span> : marked(u, accent, `u${i}`, markStyle);
+          const body = inGradient(lineStyle ? <span style={lineStyle}>{marked(u, accent, `u${i}`, markStyle)}</span> : marked(u, accent, `u${i}`, markStyle), `g${i}`);
           // a line that is wiped in shrinks to its own words: the reveal follows the ink, not the block's full width
           const inner = <span style={{ display: lines && preset !== "line-wipe" ? "block" : "inline-block", ...poseStyle(p, fr), whiteSpace: lines ? "pre-wrap" : "pre" }}>{body}</span>;
           if (lines) return <div key={i} style={{ overflow: mask ? "hidden" : undefined }}>{inner}</div>;

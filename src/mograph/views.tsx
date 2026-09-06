@@ -41,7 +41,7 @@ const mark = (text: string, accent: string, key: string, markStyle?: React.CSSPr
 /** everything a layer's effects add around its content; no effects means no extra element */
 export const Fx: React.FC<{ ctx: VCtx; layer: Layer; children: React.ReactNode }> = ({ ctx, layer, children }) => {
   if (!layer.effects) return <>{children}</>;
-  const g = gradientTextOf(layer.effects);
+  const g = layer.type === "text" ? undefined : gradientTextOf(layer.effects);
   const style: React.CSSProperties = { ...effectStyle(ctx.film, layer, ctx.fr.u) } as React.CSSProperties;
   if (g) Object.assign(style, textStyle({ css: paintOf(ctx.film.design, g, ctx.film.design.accent), gradient: true, animated: false }));
   return <div style={style}>{children}</div>;
@@ -74,13 +74,15 @@ export const TEXT_FX = ["flip", "track", "scramble"] as const;
 export const isTextFx = (preset: string | undefined): boolean => (TEXT_FX as readonly string[]).includes(preset ?? "");
 
 /** flip, track and scramble: the same text, drawn from the layer's own progress */
-export const TextFx: React.FC<{ ctx: VCtx; layer: TextLayer; style: React.CSSProperties; accent: string; preset: string; markStyle?: React.CSSProperties }> = ({ ctx, layer, style, accent, preset, markStyle }) => {
+export const TextFx: React.FC<{ ctx: VCtx; layer: TextLayer; style: React.CSSProperties; accent: string; preset: string; markStyle?: React.CSSProperties; paint?: Paint }> = ({ ctx, layer, style, accent, preset, markStyle, paint }) => {
   const { film, scene, frame } = ctx;
   const st = layer.in?.stagger ?? film.defaults?.layerIn?.stagger;
   const plain = layer.text.replace(/\*/g, "");
+  // a gradient hugs the words instead of the block, like the plain text branch
+  const paintSpan = (nodes: React.ReactNode): React.ReactNode => (paint?.gradient ? <span style={{ display: "inline-block", ...textStyle(paint) }}>{nodes}</span> : nodes);
   if (preset === "scramble") {
     const p = inProgress(film, scene, layer, frame);
-    return <div style={style}>{scrambleText(plain, p, frame, layer.id.length)}</div>;
+    return <div style={style}>{paintSpan(scrambleText(plain, p, frame, layer.id.length))}</div>;
   }
   if (preset === "track") {
     const p = inProgress(film, scene, layer, frame);
@@ -91,7 +93,7 @@ export const TextFx: React.FC<{ ctx: VCtx; layer: TextLayer; style: React.CSSPro
         {layer.text.split("\n").map((line, i) => (
           <React.Fragment key={i}>
             {i > 0 ? <br /> : null}
-            {mark(line, accent, `t${i}`, markStyle)}
+            {paintSpan(mark(line, accent, `t${i}`, markStyle))}
           </React.Fragment>
         ))}
       </div>
@@ -101,7 +103,7 @@ export const TextFx: React.FC<{ ctx: VCtx; layer: TextLayer; style: React.CSSPro
   const chars = [...plain];
   return (
     <div style={{ ...style, perspective: `${600 * ctx.fr.u}px` }}>
-      {chars.map((c, i) => {
+      {paintSpan(chars.map((c, i) => {
         const delay = staggerDelay(st, i, chars.length);
         const p = inProgress(film, scene, layer, frame, delay);
         if (!c.trim()) return <span key={i}>{c}</span>;
@@ -110,7 +112,7 @@ export const TextFx: React.FC<{ ctx: VCtx; layer: TextLayer; style: React.CSSPro
             {c}
           </span>
         );
-      })}
+      }))}
     </div>
   );
 };
