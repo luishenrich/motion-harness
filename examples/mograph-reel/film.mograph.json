@@ -223,11 +223,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 76,
-              "maxWidth": 0.86,
+              "size": 80,
+              "maxWidth": 0.88,
               "at": {
                 "x": 0.5,
-                "y": 0.4
+                "y": 0.38
               }
             }
           }
@@ -253,11 +253,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 38,
-              "maxWidth": 0.88,
+              "size": 42,
+              "maxWidth": 0.9,
               "at": {
                 "x": 0.5,
-                "y": 0.55
+                "y": 0.58
               }
             }
           }
@@ -301,10 +301,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 56,
+              "size": 60,
               "at": {
                 "x": 0.5,
-                "y": 0.28
+                "y": 0.27
               }
             }
           }
@@ -430,12 +430,12 @@
           },
           "formats": {
             "vertical": {
-              "size": 34,
+              "size": 38,
               "at": {
                 "x": 0.5,
-                "y": 0.71
+                "y": 0.74
               },
-              "maxWidth": 0.86
+              "maxWidth": 0.88
             }
           }
         }
@@ -472,11 +472,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 58,
+              "size": 64,
               "maxWidth": 0.9,
               "at": {
                 "x": 0.5,
-                "y": 0.36
+                "y": 0.32
               }
             }
           }
@@ -492,7 +492,8 @@
           "lines": 1,
           "sound": {
             "name": "tick",
-            "at": 6
+            "at": 6,
+            "gain": 2.6
           },
           "at": {
             "x": 0.5,
@@ -511,7 +512,7 @@
           },
           "formats": {
             "vertical": {
-              "size": 36,
+              "size": 40,
               "maxWidth": 0.94,
               "at": {
                 "x": 0.5,
@@ -541,10 +542,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 34,
+              "size": 38,
               "at": {
                 "x": 0.5,
-                "y": 0.6
+                "y": 0.68
               }
             }
           }
@@ -602,10 +603,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 52,
+              "size": 58,
               "at": {
                 "x": 0.5,
-                "y": 0.3
+                "y": 0.26
               }
             }
           }
@@ -871,10 +872,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 34,
+              "size": 38,
               "at": {
                 "x": 0.5,
-                "y": 0.72
+                "y": 0.76
               }
             }
           }
@@ -912,11 +913,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 56,
+              "size": 62,
               "maxWidth": 0.92,
               "at": {
                 "x": 0.5,
-                "y": 0.32
+                "y": 0.28
               }
             }
           }
@@ -936,7 +937,8 @@
           "stroke": "iris",
           "sound": {
             "name": "ding",
-            "at": 30
+            "at": 30,
+            "gain": 1.2
           },
           "at": {
             "x": 0.5,
@@ -952,8 +954,8 @@
           },
           "formats": {
             "vertical": {
-              "w": 260,
-              "h": 190,
+              "w": 300,
+              "h": 220,
               "at": {
                 "x": 0.5,
                 "y": 0.5
@@ -982,11 +984,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 30,
+              "size": 34,
               "maxWidth": 0.94,
               "at": {
                 "x": 0.5,
-                "y": 0.64
+                "y": 0.72
               }
             }
           }
@@ -1023,10 +1025,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 54,
+              "size": 60,
               "at": {
                 "x": 0.5,
-                "y": 0.3
+                "y": 0.26
               }
             }
           }
@@ -1100,10 +1102,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 34,
+              "size": 38,
               "at": {
                 "x": 0.5,
-                "y": 0.66
+                "y": 0.72
               }
             }
           }
@@ -1119,7 +1121,7 @@
         "dur": 14,
         "ease": "inOut"
       },
-      "why": "the lints as three rings, all of them green",
+      "why": "the lints as three rings, every one of them full",
       "layers": [
         {
           "id": "head",
@@ -1142,11 +1144,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 42,
+              "size": 46,
               "maxWidth": 0.94,
               "at": {
                 "x": 0.5,
-                "y": 0.28
+                "y": 0.24
               }
             }
           }
@@ -1225,10 +1227,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 34,
+              "size": 38,
               "at": {
                 "x": 0.5,
-                "y": 0.68
+                "y": 0.76
               }
             }
           }
@@ -1251,7 +1253,7 @@
           "type": "counter",
           "from": 0,
           "to": 1594,
-          "format": "0,0",
+          "format": "0",
           "roll": true,
           "dur": 52,
           "size": 200,
@@ -1276,7 +1278,7 @@
           },
           "formats": {
             "vertical": {
-              "size": 150,
+              "size": 170,
               "at": {
                 "x": 0.5,
                 "y": 0.44
@@ -1304,10 +1306,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 40,
+              "size": 46,
               "at": {
                 "x": 0.5,
-                "y": 0.56
+                "y": 0.58
               }
             }
           }
@@ -1333,10 +1335,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 34,
+              "size": 38,
               "at": {
                 "x": 0.5,
-                "y": 0.63
+                "y": 0.68
               }
             }
           }
@@ -1373,10 +1375,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 54,
+              "size": 60,
               "at": {
                 "x": 0.5,
-                "y": 0.26
+                "y": 0.25
               }
             }
           }
@@ -1453,11 +1455,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 48,
-              "maxWidth": 0.8,
+              "size": 52,
+              "maxWidth": 0.84,
               "at": {
                 "x": 0.5,
-                "y": 0.55
+                "y": 0.57
               }
             }
           }

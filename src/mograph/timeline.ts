@@ -77,14 +77,25 @@ export const toScene = (film: MgFilm, s: MgScene, index = film.scenes.indexOf(s)
     events: sceneEvents(film, s),
     // a layer is expected on screen from the end of its in to the start of its out
     // a shape and a field of particles are decoration: what must be on screen is the text, the numbers and the pictures
-    probes: walkLayers(film, s)
-      .filter((n) => n.layer.probe !== false && n.layer.type !== "shape" && n.layer.type !== "particles")
-      .map((n) => {
+    probes: (() => {
+      const nodes = walkLayers(film, s);
+      // a child is on screen once it and every group above it have settled
+      const settleOfNode = new Map<string, number>();
+      for (const n of nodes) {
         const t = layerTiming(film, s, n.layer);
-        const from = Math.min(t.to - 1, s.dur - 1, n.delay + t.inAt + t.inDur);
-        const to = t.outAt !== null ? Math.max(from, t.outAt - 1) : t.to - 1;
-        return `${n.layer.id}@${from}-${to}`;
-      }),
+        settleOfNode.set(n.address, n.delay + t.inAt + t.inDur);
+      }
+      return nodes
+        .filter((n) => n.layer.probe !== false && n.layer.type !== "shape" && n.layer.type !== "particles")
+        .map((n) => {
+          const t = layerTiming(film, s, n.layer);
+          let settled = settleOfNode.get(n.address) ?? 0;
+          for (let i = 1; i < n.path.length; i++) settled = Math.max(settled, settleOfNode.get(n.path.slice(0, i).join(".")) ?? 0);
+          const from = Math.min(t.to - 1, s.dur - 1, settled);
+          const to = t.outAt !== null ? Math.max(from, t.outAt - 1) : t.to - 1;
+          return `${n.layer.id}@${from}-${to}`;
+        });
+    })(),
   };
 };
 

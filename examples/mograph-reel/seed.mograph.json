@@ -1,0 +1,66 @@
+{
+  "title": "Films as data",
+  "fps": 30,
+  "design": {
+    "ink": "#171233",
+    "paper": "#F3F1FB",
+    "accent": "#5BE0B4",
+    "muted": "#837EA0",
+    "colors": { "iris": "#6C5CE7", "ember": "#FF7A5A", "deep": "#0B0819" },
+    "fontDisplay": "Bricolage Grotesque",
+    "fontBody": "Manrope",
+    "fontMono": "JetBrains Mono"
+  },
+  "formats": {
+    "wide": { "width": 1920, "height": 1080 },
+    "vertical": { "width": 1080, "height": 1920 }
+  },
+  "easings": {
+    "settle": "cubic-bezier(0.2, 0.9, 0.1, 1)",
+    "glide": "cubic-bezier(0.32, 0.72, 0, 1)"
+  },
+  "defaults": {
+    "enterFrames": 0,
+    "layerIn": { "preset": "rise", "dur": 14, "ease": "out" }
+  },
+  "scenes": [
+    {
+      "id": "blind",
+      "dur": 126,
+      "ground": "paper",
+      "why": "the problem: an agent renders what it cannot see",
+      "layers": [
+        {
+          "id": "head",
+          "type": "text",
+          "text": "An agent cannot *see*\nwhat it renders.",
+          "size": 88,
+          "color": "ink",
+          "accent": "ink",
+          "lines": 2,
+          "lineHeight": 1.12,
+          "at": { "x": 0.5, "y": 0.42 },
+          "maxWidth": 0.78,
+          "effects": { "highlight": { "color": "accent", "only": "marks", "pad": 14, "radius": 8, "in": { "at": 30, "dur": 16, "ease": "out" } } },
+          "in": { "preset": "rise", "at": 4, "dur": 16 },
+          "formats": { "vertical": { "size": 76, "maxWidth": 0.86, "at": { "x": 0.5, "y": 0.4 } } }
+        },
+        {
+          "id": "sub",
+          "type": "text",
+          "text": "So it renders a frame and looks.",
+          "role": "body",
+          "size": 42,
+          "weight": 500,
+          "color": "muted",
+          "lines": 1,
+          "at": { "x": 0.5, "y": 0.6 },
+          "maxWidth": 0.72,
+          "in": { "preset": "fade", "at": 52, "dur": 14 },
+          "formats": { "vertical": { "size": 38, "maxWidth": 0.88, "at": { "x": 0.5, "y": 0.55 } } }
+        }
+      ]
+    }
+  ],
+  "audio": []
+}
