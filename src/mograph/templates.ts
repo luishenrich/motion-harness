@@ -144,7 +144,16 @@ const pGround = (d: string): MgParamSpec => ({ type: "color", default: d, help: 
 const pDur = (d: number): MgParamSpec => ({ type: "number", default: d, help: "the scene's length in frames" });
 const pExit = (d = 8): MgParamSpec => ({ type: "number", default: d, help: "frames of the closing fade over the ground, 0 for none" });
 const pAccent: MgParamSpec = { type: "color", default: "auto", help: "colour of the accented text; auto means accent on a dark ground and ink on a light one" };
-const pGroups: MgParamSpec = { type: "boolean", default: true, help: "write one group layer instead of flat layers; false until the group runtime has landed" };
+
+/**
+ * A group draws once the group runtime is on main (roadmap section 1, core A).
+ * Until then a template writes the same children as flat layers, so every film
+ * a template builds passes `mh check` today. Flip this to true when the runtime
+ * has landed; `--param groups=true` asks for a group before that.
+ */
+export const GROUPS_RENDER = false;
+
+const pGroups: MgParamSpec = { type: "boolean", default: GROUPS_RENDER, help: "one group layer instead of flat layers; the group runtime draws it, so this is off until that has landed" };
 
 /* ---------- the templates ---------- */
 
