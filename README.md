@@ -132,7 +132,21 @@ mh edit                                           # the editor: click a layer, n
 Easing is data too (`out`, `back`, `snappy`, `cubic-bezier(...)`, `{ "spring": {...} }`),
 staggers by word, character, line or item, per format overrides for vertical, and the layers'
 ins and outs become events (`hook.lineSettled`) so `mh frame` and `mh resolve` address them.
-Reference: [docs/mograph.md](docs/mograph.md); example: [examples/mograph](examples/mograph).
+
+The vocabulary covers what a motion designer reaches for: groups (a card that moves as one,
+children placed inside its box), a scene camera (push, pull, pan, tilt, drift, orbit, shake, or
+a travelling shot as an x track), handovers between scenes (dissolve, dip, push, wipe, zoom,
+blur), gradients and colour tracks mixed in OKLab, effects (shadow, glow, stroke, a marker
+sweep, gradient text), text presets from rise to flip and scramble, paths drawn by a progress
+track, polygons, stars, arrows, bar, line and ring charts, odometer counters, seeded particles,
+fifteen scene templates (`mh template add stat --param value=40`), and a sound bank the harness
+synthesises (`"sound": "pop"` on a layer, `mh sounds --make`). `mh edit` is the editor in the
+browser: a stage per format, a timeline strip with draggable bars and keyframes, an inspector
+with swatches and a gradient editor, multi-select and align, undo and redo, every change
+written to the file at once. Reference: [docs/mograph.md](docs/mograph.md); examples:
+[examples/mograph](examples/mograph), [examples/mograph-effects](examples/mograph-effects),
+[examples/mograph-templates](examples/mograph-templates); numbers:
+[docs/benchmark-mograph-2026-09-07.md](docs/benchmark-mograph-2026-09-07.md).
 
 ## Any film, not one kind of film
 

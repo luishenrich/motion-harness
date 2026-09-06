@@ -365,6 +365,18 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
       const lw = `${s.id}.${node.address}`;
       if (lids.has(l.id)) out.push({ level: "error", rule: "duplicate-id", where: lw, message: "layer id used twice in this scene; ids name events and probes, a group's children included" });
       if (!l.id) out.push({ level: "error", rule: "id", where: `${s.id}.(no id)`, message: "a layer needs an id" });
+      for (const [fmt, over] of Object.entries((l as { formats?: Record<string, Record<string, unknown>> }).formats ?? {})) {
+        if (!(fmt in film.formats)) out.push({ level: "error", rule: "format", where: `${lw}.formats.${fmt}`, message: `"${fmt}" is not a format of this film (${Object.keys(film.formats).join(", ")})` });
+        for (const k of Object.keys(over ?? {})) {
+          // the timeline is one for every format: a format may restyle an in (preset, dur, ease) but a moved `at` or span leaves events and probes on the base timing
+          if (k === "in" || k === "out") {
+            const o = over[k] as { at?: number } | undefined;
+            const b = (l as unknown as Record<string, { at?: number } | undefined>)[k];
+            if (o && o.at !== undefined && o.at !== b?.at) out.push({ level: "warn", rule: "format", where: `${lw}.formats.${fmt}.${k}.at`, message: `${fmt} moves the ${k} to ${o.at}; events and probes follow the base timing (${b?.at ?? 0})` });
+          } else if (k === "span") out.push({ level: "warn", rule: "format", where: `${lw}.formats.${fmt}.span`, message: "events and probes follow the base span" });
+          else if (!LAYER_PROPS.has(k) && !["effects", "colorTracks", "sound", "layers", "d", "sides", "inner", "head", "roll", "pad", "points", "labels", "area", "dots", "smooth", "axis", "count", "speed", "spread", "seed", "shape", "legend"].includes(k)) out.push({ level: "warn", rule: "format", where: `${lw}.formats.${fmt}.${k}`, message: `"${k}" is not a layer field` });
+        }
+      }
       if (l.id && SCENE_PROPS.has(l.id)) out.push({ level: "warn", rule: "id", where: lw, message: `"${l.id}" is also a scene property: the layer wins at this address, the scene's ${l.id} is not reachable by mh set` });
       {
         const L = l as unknown as Record<string, unknown>;

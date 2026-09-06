@@ -2058,6 +2058,7 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
                                     --transcribe: Gemini listens (word times, snapped to ffmpeg silences); --look: Gemini looks at the mid frame (subject, kind, box, on-screen text)
                                     footage in, facts out: streams, length, loudness, shot changes, silences, colour, transcript into assets.json
   transcribe <file> [--srt out.srt] [--spans] [--from --to] [--language de]
+                                    words with times (Gemini listens, silences sharpen the edges); --spans lists the spoken spans a silence cut would keep
   look <image|clip> [--at 3.5] [--json]   the subject of one frame, its kind, its box and readable text (Gemini)
 
 motion graphics as data (film.mograph.json, see docs/mograph.md):
@@ -2071,12 +2072,12 @@ motion graphics as data (film.mograph.json, see docs/mograph.md):
   add scene <json> [--after id]     add layer <scene> <json> [--after id|--before id]
   remove <scene>|<scene.layer>      move <addr> --after id|--before id    dup <addr> [--as id]    rename <addr> <id>
   layout [scene]                    stacked blocks pushed apart and kept in the safe band, per format
-  edit [--port 4850] [--no-open]    the editor in the browser: stage, scrubber, layers, inspector, keyboard; every change lands in the file
+  edit [--port 4850] [--no-open]    the editor in the browser: stages per format, a timeline strip with draggable bars and keyframes, layers, inspector
+                                    with swatches and a gradient editor, multi-select and align, undo and redo; every change lands in the file
+                                    every edit lints the film and names the frame to look at
 ${SOUNDS_HELP}
 
 ${TEMPLATES_HELP}
-                                    every edit lints the film and names the frame to look at
-                                    words with times (Gemini listens, silences sharpen the edges); --spans lists the spoken spans a silence cut would keep
   image "<prompt>" [--width --height] [--provider azure-mai|azure-flux|openai] [--out file]
                                     an image plate from a prompt (config.imageStyle appended, no text asked of the model), fitted to the size, registered in images.json
   otio [--out film.otio] [--no-audio]

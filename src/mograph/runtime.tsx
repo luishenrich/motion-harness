@@ -250,7 +250,8 @@ const CounterView: React.FC<{ ctx: Ctx; layer: CounterLayer }> = ({ ctx, layer }
   const start = ctx.delay + t.inAt;
   const raw = interpolate(frame, [start, start + dur], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   // an explicit progress track wins; otherwise the count eases out over `dur`
-  const prog = layer.tracks?.progress ? p.progress : 1 - Math.pow(1 - raw, 3);
+  // the layer's own ease shapes the count (default: a cubic out)
+  const prog = layer.tracks?.progress ? p.progress : progressOf(resolveEase(layer.ease ?? "cubic-bezier(0.33,1,0.68,1)", film.easings ?? {}), frame - t.inAt, dur, film.fps);
   const v = (layer.from ?? 0) + ((layer.to ?? 0) - (layer.from ?? 0)) * prog;
   const paint = layerPaint(film, ctx.scene, layer, "color", frame, film.design.ink);
   const size = (layer.size ?? 160) * fr.u;
