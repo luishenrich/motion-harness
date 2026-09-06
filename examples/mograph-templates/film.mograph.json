@@ -618,7 +618,7 @@
           "id": "left-head",
           "type": "text",
           "text": "Before",
-          "size": 46,
+          "size": 52,
           "weight": 700,
           "color": "paper",
           "accent": "accent",
@@ -655,7 +655,7 @@
             "re-render"
           ],
           "marker": "dash",
-          "size": 40,
+          "size": 46,
           "weight": 500,
           "color": "muted",
           "markerColor": "muted",
@@ -678,7 +678,7 @@
           },
           "formats": {
             "vertical": {
-              "size": 50,
+              "size": 58,
               "maxWidth": 0.8,
               "at": {
                 "x": 0.5,
@@ -720,7 +720,7 @@
           "id": "right-head",
           "type": "text",
           "text": "After",
-          "size": 46,
+          "size": 52,
           "weight": 700,
           "color": "accent",
           "accent": "accent",
@@ -757,7 +757,7 @@
             "look once"
           ],
           "marker": "dash",
-          "size": 40,
+          "size": 46,
           "weight": 500,
           "color": "paper",
           "markerColor": "accent",
@@ -780,7 +780,7 @@
           },
           "formats": {
             "vertical": {
-              "size": 50,
+              "size": 58,
               "maxWidth": 0.8,
               "at": {
                 "x": 0.5,
@@ -1784,13 +1784,13 @@
           "id": "mark",
           "type": "shape",
           "shape": "ring",
-          "d": 160,
-          "thickness": 16,
+          "d": 220,
+          "thickness": 20,
           "fill": "accent",
           "progress": 1,
           "at": {
             "x": 0.5,
-            "y": 0.38
+            "y": 0.37
           },
           "in": {
             "preset": "pop",
@@ -1800,7 +1800,7 @@
           },
           "formats": {
             "vertical": {
-              "d": 140,
+              "d": 200,
               "at": {
                 "x": 0.5,
                 "y": 0.38
