@@ -97,7 +97,12 @@ const report = (film: MgFilm, path: string, dir: string, hint?: string) => {
   if (errors) process.exitCode = 2;
 };
 
-const groundBefore = (film: MgFilm, index: number): string | undefined => (index > 0 ? film.scenes[index - 1]?.ground : undefined);
+const groundBefore = (film: MgFilm, index: number): string | undefined => {
+  // a ground may be a gradient now; a template alternates on its first stop
+  const g = index > 0 ? film.scenes[index - 1]?.ground : undefined;
+  if (typeof g === "string") return g;
+  return g && Array.isArray((g as { gradient?: unknown[] }).gradient) ? String((g as { gradient: unknown[] }).gradient[0]) : undefined;
+};
 
 /** where the new scene lands: after --after, before --before, else the end */
 const insertIndex = (film: MgFilm, a: Args): number => {

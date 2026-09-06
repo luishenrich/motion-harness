@@ -877,6 +877,10 @@ type RawScene = Partial<MgScene> & { template?: string; params?: MgParams; layer
  * already has layers is left alone: after the first expansion the layers are
  * the truth.
  */
+/** a ground as one name: a gradient stands for its first stop, so light and dark keep alternating */
+const groundName = (g: unknown): string | undefined =>
+  typeof g === "string" ? g : g && typeof g === "object" && Array.isArray((g as { gradient?: unknown[] }).gradient) ? String((g as { gradient: unknown[] }).gradient[0]) : undefined;
+
 export const expandTemplates = <F extends { scenes?: unknown[] }>(film: F): F => {
   const design = (film as { design?: Design }).design;
   const raw = (Array.isArray(film.scenes) ? film.scenes : []) as RawScene[];
@@ -900,7 +904,7 @@ export const expandTemplates = <F extends { scenes?: unknown[] }>(film: F): F =>
     const scene = buildScene(s.template, params, { id, previousGround, design });
     if (typeof s.why === "string" && s.why.trim()) scene.why = s.why;
     if (typeof s.caption === "string" && s.caption.trim()) scene.caption = s.caption;
-    previousGround = scene.ground;
+    previousGround = groundName(scene.ground);
     return scene;
   });
   return { ...film, scenes };
