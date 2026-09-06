@@ -137,10 +137,22 @@ const lineHeightOf = (it: LayoutItem): number => {
 
 const isText = (it: LayoutItem) => it.kind === "text" || (it.kind === "probe" && !!it.text);
 
+/**
+ * `data-lint="none"` takes an element out of every rendered lint, and with it
+ * everything inside it: decoration a film marks as not-checked, and the copy of
+ * the previous scene a transition draws under the incoming one.
+ */
+const quietSet = (items: LayoutItem[]): Set<number | undefined> => {
+  const off = new Set(items.filter((i) => i.lint === "none").map((i) => i.id));
+  return new Set(items.filter((i) => i.lint === "none" || (i.ancestors ?? []).some((a) => off.has(a))).map((i) => i.id));
+};
+
 export const lintOverflow = (label: string, probe: ProbeResult): Finding[] => {
   const out: Finding[] = [];
   const { w: W, h: H } = probe.viewport;
+  const off = quietSet(probe.items as LayoutItem[]);
   for (const it of probe.items as LayoutItem[]) {
+    if (off.has(it.id)) continue;
     if (it.opacity <= 0.05 || it.w <= 0 || it.h <= 0) continue;
     const sides: string[] = [];
     if (it.x < -OVERFLOW_PX) sides.push(`left by ${-it.x}px`);
@@ -174,6 +186,7 @@ export const contrastRatio = (a: string, b: string) => {
 export const lintContrast = (label: string, probe: ProbeResult): Finding[] => {
   const out: Finding[] = [];
   const items = probe.items as LayoutItem[];
+  const off = quietSet(items);
   const byId = new Map(items.map((i) => [i.id, i]));
   const bgOf = (it: LayoutItem): string | null => {
     const eff = it.effBg ? parseCssColor(it.effBg) : null;
@@ -190,7 +203,7 @@ export const lintContrast = (label: string, probe: ProbeResult): Finding[] => {
     return d && d.alpha >= 0.9 ? d.hex : null;
   };
   for (const it of items) {
-    if (!it.visible || !isText(it) || it.opacity < 0.9) continue;
+    if (off.has(it.id) || !it.visible || !isText(it) || it.opacity < 0.9) continue;
     const fg = parseCssColor(it.color);
     if (!fg || fg.alpha < 0.9) continue;
     const bg = bgOf(it);
@@ -207,8 +220,9 @@ export const lintContrast = (label: string, probe: ProbeResult): Finding[] => {
 
 export const lintWrap = (label: string, probe: ProbeResult): Finding[] => {
   const out: Finding[] = [];
+  const off = quietSet(probe.items as LayoutItem[]);
   for (const it of probe.items as LayoutItem[]) {
-    if (!it.visible || !isText(it)) continue;
+    if (off.has(it.id) || !it.visible || !isText(it)) continue;
     const lh = lineHeightOf(it);
     if (!lh) continue;
     const declared = it.lines !== undefined && it.lines > 0;
@@ -230,7 +244,8 @@ const COLLISION_OPACITY = 0.6;
 
 export const lintCollision = (label: string, probe: ProbeResult): Finding[] => {
   const out: Finding[] = [];
-  const items = (probe.items as LayoutItem[]).filter((it) => it.visible && it.opacity >= COLLISION_OPACITY && it.w > 0 && it.h > 0 && (it.kind === "probe" || it.kind === "text") && it.lint !== "no-collision");
+  const off = quietSet(probe.items as LayoutItem[]);
+  const items = (probe.items as LayoutItem[]).filter((it) => it.visible && it.opacity >= COLLISION_OPACITY && it.w > 0 && it.h > 0 && (it.kind === "probe" || it.kind === "text") && it.lint !== "no-collision" && !off.has(it.id));
   for (let i = 0; i < items.length; i++) {
     for (let j = i + 1; j < items.length; j++) {
       const a = items[i], b = items[j];

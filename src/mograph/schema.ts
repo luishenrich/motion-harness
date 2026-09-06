@@ -160,10 +160,92 @@ export type ListLayer = LayerBase & {
   align?: "left" | "center";
 };
 
-export type Layer = TextLayer | ShapeLayer | ImageLayer | CounterLayer | BarsLayer | ListLayer;
+/**
+ * A box of `w` x `h` u pixels at its position. The children's `at` are
+ * fractions of that box, their sizes stay u pixels. The group's pose (opacity,
+ * x, y, scale, rotate, blur, wipe) applies to every child with the group's
+ * anchor as the transform origin; a `stagger` by item on the group's `in`
+ * delays the children by their index, and a child's own `in.at` counts from
+ * the group's in. Groups nest.
+ */
+export type GroupLayer = LayerBase & {
+  type: "group";
+  /** the box the children live in, u pixels */
+  w?: number;
+  h?: number;
+  layers: Layer[];
+};
+
+export type Layer = TextLayer | ShapeLayer | ImageLayer | CounterLayer | BarsLayer | ListLayer | GroupLayer;
 export type LayerType = Layer["type"];
 
+export const LAYER_TYPES: LayerType[] = ["text", "shape", "image", "counter", "bars", "list", "group"];
+
+/** the default box of a group, u pixels */
+export const GROUP_BOX = { w: 800, h: 450 };
+
+export const isGroup = (l: Layer): l is GroupLayer => l.type === "group";
+
+/** the layers inside a layer: a group's own, nothing for the rest */
+export const childrenOf = (l: Layer): Layer[] => (l.type === "group" ? l.layers ?? [] : []);
+
+/** the group's box in u pixels */
+export const groupBox = (l: GroupLayer): { w: number; h: number } => ({ w: l.w ?? GROUP_BOX.w, h: l.h ?? GROUP_BOX.h });
+
 export type SceneTransition = "cut" | "fade" | { type: string; dur?: number };
+
+/** what the camera animates over a scene; a track wins over the preset for its property */
+export type CameraProp = "zoom" | "x" | "y" | "rotate";
+export type CameraPreset = "push" | "pull" | "pan" | "tilt" | "drift" | "orbit" | "none";
+
+export type Camera = {
+  preset?: CameraPreset;
+  /** the preset's start and end: a zoom factor for push and pull, u pixels for pan and tilt, degrees for orbit */
+  from?: number;
+  to?: number;
+  /** the point of the frame the zoom and the rotation turn around (fractions), default the centre */
+  focus?: { x: number; y: number };
+  ease?: EaseRef;
+  /** local frames the move runs over; default the whole scene */
+  at?: number;
+  dur?: number;
+  /** zoom is a factor, x and y are u pixels of travel, rotate is degrees */
+  tracks?: Partial<Record<CameraProp, Keyframe[]>>;
+  /** a seeded, deterministic handheld wobble of `amount` u pixels */
+  shake?: { amount?: number; seed?: number };
+  /** move the ground with the layers (default: only the layers move) */
+  ground?: boolean;
+};
+
+export const CAMERA_PRESETS: CameraPreset[] = ["push", "pull", "pan", "tilt", "drift", "orbit", "none"];
+export const CAMERA_PROPS: CameraProp[] = ["zoom", "x", "y", "rotate"];
+
+/** how a scene arrives over the one before it; the incoming scene owns it */
+export type TransitionType =
+  | "cut"
+  | "dissolve"
+  | "dip"
+  | "push-left"
+  | "push-right"
+  | "push-up"
+  | "push-down"
+  | "wipe-left"
+  | "wipe-right"
+  | "wipe-up"
+  | "wipe-down"
+  | "zoom"
+  | "blur";
+
+export const TRANSITION_TYPES: TransitionType[] = ["cut", "dissolve", "dip", "push-left", "push-right", "push-up", "push-down", "wipe-left", "wipe-right", "wipe-up", "wipe-down", "zoom", "blur"];
+
+export type MgTransition = {
+  type: TransitionType;
+  /** frames the handover takes */
+  dur?: number;
+  ease?: EaseRef;
+  /** the previous scene keeps playing under the transition instead of holding its last frame */
+  continue?: boolean;
+};
 
 export type MgScene = {
   id: string;
@@ -172,7 +254,13 @@ export type MgScene = {
   ground?: ColorRef;
   enter?: SceneTransition;
   exit?: SceneTransition;
+  /** how this scene arrives over the previous one */
+  transition?: MgTransition;
+  /** one move over the whole scene, on the layers (and the ground when `ground` is true) */
+  camera?: Camera;
   layers: Layer[];
+  /** set by the film view while a following scene's transition keeps this one alive; not part of the file */
+  hold?: number;
   /** extra named moments beyond the layers' own <layer>In and <layer>Out */
   events?: Record<string, number>;
   /** the template this scene was made from (mh new --mograph); layers are the truth after that */

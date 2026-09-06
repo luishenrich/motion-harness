@@ -27,6 +27,20 @@ export const placement = (layer: Layer, fr: Frame): { left: number; top: number;
   return { left, top, translate: `translate(${tx}%, ${ty}%)`, textAlign };
 };
 
+/** the transform origin of a layer's anchor point, for a pose that must turn around where the layer sits */
+export const anchorOrigin = (anchor: Anchor = "center"): string => {
+  const x = anchor === "left" || anchor.includes("left") ? "0%" : anchor === "right" || anchor.includes("right") ? "100%" : "50%";
+  const y = anchor === "top" || anchor.includes("top") ? "0%" : anchor === "bottom" || anchor.includes("bottom") ? "100%" : "50%";
+  return `${x} ${y}`;
+};
+
+/**
+ * The frame a group's children live in: the group's box, in the same u. Their
+ * `at` are fractions of the box, their sizes stay u pixels, so one group works
+ * in wide and in vertical.
+ */
+export const boxFrame = (fr: Frame, w: number, h: number): Frame => ({ ...fr, width: w * fr.u, height: h * fr.u });
+
 /** the default width a text block may take, as a fraction of the frame */
 export const defaultMaxWidth = (fr: Frame) => (fr.width < fr.height ? 0.86 : 0.78);
 

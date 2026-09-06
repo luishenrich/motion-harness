@@ -9,10 +9,10 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { EaseRef, Keyframe, Layer, MgFilm, MgScene, TrackProp } from "./schema.ts";
-import { BUILTIN_COLORS, layerTiming, layerFor } from "./schema.ts";
+import type { Camera, EaseRef, GroupLayer, Keyframe, Layer, MgFilm, MgScene, TrackProp } from "./schema.ts";
+import { BUILTIN_COLORS, CAMERA_PRESETS, CAMERA_PROPS, TRANSITION_TYPES, childrenOf, groupBox, layerTiming, layerFor } from "./schema.ts";
 import { isKnownEase } from "./easing.ts";
-import { staggerDelay } from "./pose.ts";
+import { cameraSpan, staggerDelay, unitsOf, walkLayers } from "./pose.ts";
 
 export type MgFinding = { level: "error" | "warn"; rule: string; where: string; message: string };
 
@@ -39,7 +39,23 @@ export const parseValue = (raw: string): unknown => {
   return raw;
 };
 
-export type Target = { kind: "film" | "design" | "defaults" | "easings" | "audio" | "scene" | "layer"; object: Record<string, unknown>; path: string[]; scene?: MgScene; layer?: Layer; label: string };
+export type Target = {
+  kind: "film" | "design" | "defaults" | "easings" | "audio" | "scene" | "layer";
+  object: Record<string, unknown>;
+  path: string[];
+  scene?: MgScene;
+  layer?: Layer;
+  /** the list the layer sits in: a scene's layers, or a group's */
+  list?: Layer[];
+  /** the group above the layer, when it is inside one */
+  group?: GroupLayer;
+  /** `card.title`: the address after the scene id */
+  address?: string;
+  label: string;
+};
+
+/** names a group child may not shadow: an address segment that is one of these reads as a property, not as a layer */
+const LAYER_PROPS = new Set(["id", "type", "at", "anchor", "offset", "opacity", "scale", "rotate", "in", "out", "tracks", "span", "probe", "formats", "why", "layers", "w", "h", "d", "thickness", "radius", "fill", "stroke", "progress", "text", "role", "size", "weight", "color", "accent", "align", "lineHeight", "letterSpacing", "maxWidth", "uppercase", "lines", "src", "fit", "shadow", "from", "to", "format", "prefix", "suffix", "dur", "ease", "values", "max", "direction", "gap", "labelColor", "labelSize", "showValues", "items", "marker", "markerColor"]);
 
 /** what an address points at: the object that holds the value and the remaining path inside it */
 export const resolveAddress = (film: MgFilm, addr: string): Target => {
@@ -59,8 +75,23 @@ export const resolveAddress = (film: MgFilm, addr: string): Target => {
   const scene = film.scenes.find((s) => s.id === head);
   if (!scene) throw new Error(`no scene "${head}" (have: ${film.scenes.map((s) => s.id).join(", ")})`);
   if (parts.length === 1) return { kind: "scene", object: scene as unknown as Record<string, unknown>, path: [], scene, label: addr };
-  const layer = scene.layers.find((l) => l.id === parts[1]);
-  if (layer) return { kind: "layer", object: layer as unknown as Record<string, unknown>, path: parts.slice(2), scene, layer, label: addr };
+  // walk down the layer tree as far as the address names layers: scene.card.title.size
+  let list: Layer[] = scene.layers ?? [];
+  let layer: Layer | undefined;
+  let group: GroupLayer | undefined;
+  let holder: Layer[] = list;
+  let i = 1;
+  while (i < parts.length) {
+    if (i > 1 && LAYER_PROPS.has(parts[i])) break;
+    const next = list.find((l) => l.id === parts[i]);
+    if (!next) break;
+    if (layer?.type === "group") group = layer;
+    holder = list;
+    layer = next;
+    i++;
+    list = childrenOf(next);
+  }
+  if (layer) return { kind: "layer", object: layer as unknown as Record<string, unknown>, path: parts.slice(i), scene, layer, list: holder, group, address: parts.slice(1, i).join("."), label: addr };
   return { kind: "scene", object: scene as unknown as Record<string, unknown>, path: parts.slice(1), scene, label: addr };
 };
 
@@ -152,19 +183,33 @@ export const addScene = (film: MgFilm, scene: MgScene, opts: { after?: string; b
   place(film.scenes, scene, (s) => s.id, opts);
 };
 
-export const addLayer = (film: MgFilm, sceneId: string, layer: Layer, opts: { after?: string; before?: string } = {}) => {
-  const s = film.scenes.find((x) => x.id === sceneId);
-  if (!s) throw new Error(`no scene "${sceneId}"`);
+/** add a layer to a scene ("hook") or into a group ("hook.card") */
+export const addLayer = (film: MgFilm, where: string, layer: Layer, opts: { after?: string; before?: string } = {}) => {
   if (!layer.id) throw new Error("a layer needs an id");
-  if (!layer.type) throw new Error("a layer needs a type: text, shape, image, counter, bars, list");
-  if (s.layers.some((l) => l.id === layer.id)) throw new Error(`layer "${layer.id}" exists in ${sceneId}`);
-  place(s.layers, layer, (l) => l.id, opts);
+  if (!layer.type) throw new Error("a layer needs a type: text, shape, image, counter, bars, list, group");
+  let list: Layer[];
+  if (where.includes(".")) {
+    const t = resolveAddress(film, where);
+    if (t.kind !== "layer" || t.path.length || t.layer!.type !== "group") throw new Error(`"${where}" is not a group; a layer goes into a scene or a group`);
+    const g = t.layer as GroupLayer;
+    g.layers ??= [];
+    list = g.layers;
+  } else {
+    const s = film.scenes.find((x) => x.id === where);
+    if (!s) throw new Error(`no scene "${where}"`);
+    s.layers ??= [];
+    list = s.layers;
+  }
+  if (layer.type === "group") (layer as GroupLayer).layers ??= [];
+  if (list.some((l) => l.id === layer.id)) throw new Error(`layer "${layer.id}" exists in ${where}`);
+  place(list, layer, (l) => l.id, opts);
 };
 
 export const remove = (film: MgFilm, addr: string): "scene" | "layer" => {
   const t = resolveAddress(film, addr);
   if (t.kind === "layer" && !t.path.length) {
-    t.scene!.layers = t.scene!.layers.filter((l) => l !== t.layer);
+    const list = t.list!;
+    list.splice(list.indexOf(t.layer!), 1);
     return "layer";
   }
   if (t.kind === "scene" && !t.path.length) {
@@ -177,8 +222,9 @@ export const remove = (film: MgFilm, addr: string): "scene" | "layer" => {
 export const move = (film: MgFilm, addr: string, opts: { after?: string; before?: string }) => {
   const t = resolveAddress(film, addr);
   if (t.kind === "layer" && !t.path.length) {
-    t.scene!.layers = t.scene!.layers.filter((l) => l !== t.layer);
-    place(t.scene!.layers, t.layer!, (l) => l.id, opts);
+    const list = t.list!;
+    list.splice(list.indexOf(t.layer!), 1);
+    place(list, t.layer!, (l) => l.id, opts);
   } else if (t.kind === "scene" && !t.path.length) {
     film.scenes = film.scenes.filter((s) => s !== t.scene);
     place(film.scenes, t.scene!, (s) => s.id, opts);
@@ -189,11 +235,13 @@ export const duplicate = (film: MgFilm, addr: string, as?: string): string => {
   const t = resolveAddress(film, addr);
   if (t.kind === "layer" && !t.path.length) {
     const id = as ?? `${t.layer!.id}-2`;
-    if (t.scene!.layers.some((l) => l.id === id)) throw new Error(`layer "${id}" exists`);
+    const list = t.list!;
+    if (list.some((l) => l.id === id)) throw new Error(`layer "${id}" exists`);
     const copy = JSON.parse(JSON.stringify(t.layer)) as Layer;
     copy.id = id;
-    place(t.scene!.layers, copy, (l) => l.id, { after: t.layer!.id });
-    return `${t.scene!.id}.${id}`;
+    place(list, copy, (l) => l.id, { after: t.layer!.id });
+    const parent = t.address!.split(".").slice(0, -1);
+    return [t.scene!.id, ...parent, id].join(".");
   }
   if (t.kind === "scene" && !t.path.length) {
     const id = as ?? `${t.scene!.id}-2`;
@@ -210,7 +258,7 @@ export const rename = (film: MgFilm, addr: string, id: string) => {
   const t = resolveAddress(film, addr);
   if (!/^[a-z][a-z0-9-]*$/.test(id)) throw new Error("ids are kebab-case: letters, digits, dashes");
   if (t.kind === "layer" && !t.path.length) {
-    if (t.scene!.layers.some((l) => l.id === id)) throw new Error(`layer "${id}" exists`);
+    if (t.list!.some((l) => l.id === id)) throw new Error(`layer "${id}" exists`);
     t.layer!.id = id;
   } else if (t.kind === "scene" && !t.path.length) {
     if (film.scenes.some((s) => s.id === id)) throw new Error(`scene "${id}" exists`);
@@ -225,6 +273,41 @@ const readSeconds = (words: number) => 1.2 + Math.max(0, words - 4) * 0.25;
 
 const KNOWN_IN = ["cut", "fade", "rise", "drop", "pop", "slide", "wipe", "grow", "blur", "typewriter", "mask"];
 const KNOWN_OUT = ["cut", "fade", "sink", "lift", "shrink", "slide", "wipe", "blur"];
+
+/** the camera of one scene: a preset that exists, easings that resolve, tracks on properties that exist and keys inside the scene */
+const lintCamera = (film: MgFilm, s: MgScene, out: MgFinding[]) => {
+  const c: Camera | undefined = s.camera;
+  if (!c) return;
+  const w = `${s.id}.camera`;
+  if (c.preset && !CAMERA_PRESETS.includes(c.preset)) out.push({ level: "error", rule: "camera-preset", where: `${w}.preset`, message: `"${c.preset}" is not a camera preset (${CAMERA_PRESETS.join(", ")})` });
+  if (!isKnownEase(c.ease, film.easings ?? {})) out.push({ level: "error", rule: "ease", where: `${w}.ease`, message: `"${String(c.ease)}" is not an easing` });
+  for (const [prop, keys] of Object.entries(c.tracks ?? {})) {
+    if (!CAMERA_PROPS.includes(prop as never)) out.push({ level: "error", rule: "camera-track", where: `${w}.tracks.${prop}`, message: `"${prop}" is not a camera track (${CAMERA_PROPS.join(", ")})` });
+    for (const k of keys ?? []) {
+      if (!isKnownEase(k.ease, film.easings ?? {})) out.push({ level: "error", rule: "ease", where: `${w}.tracks.${prop}@${k.at}`, message: `"${String(k.ease)}" is not an easing` });
+      if (k.at > s.dur) out.push({ level: "warn", rule: "key-late", where: `${w}.tracks.${prop}@${k.at}`, message: `keyframe past the scene's ${s.dur} frames` });
+    }
+  }
+  if (c.focus && (c.focus.x < 0 || c.focus.x > 1 || c.focus.y < 0 || c.focus.y > 1)) out.push({ level: "warn", rule: "off-frame", where: `${w}.focus`, message: `focus ${c.focus.x},${c.focus.y} is outside the frame (0..1)` });
+  const span = cameraSpan(c, s.dur);
+  if (span.at >= s.dur) out.push({ level: "error", rule: "camera-late", where: `${w}.at`, message: `the move starts at ${span.at}, the scene is ${s.dur} frames` });
+  if (span.at + span.dur > s.dur && (c.preset ?? "none") !== "none") out.push({ level: "warn", rule: "camera-long", where: `${w}.dur`, message: `the move ends at ${span.at + span.dur}, the scene ends at ${s.dur}` });
+};
+
+/** the handover a scene declares: a type that exists, a length the two scenes can carry */
+const lintTransition = (film: MgFilm, s: MgScene, out: MgFinding[]) => {
+  const t = s.transition;
+  if (!t) return;
+  const w = `${s.id}.transition`;
+  if (!TRANSITION_TYPES.includes(t.type)) out.push({ level: "error", rule: "transition", where: `${w}.type`, message: `"${t.type}" is not a transition (${TRANSITION_TYPES.join(", ")})` });
+  if (!isKnownEase(t.ease, film.easings ?? {})) out.push({ level: "error", rule: "ease", where: `${w}.ease`, message: `"${String(t.ease)}" is not an easing` });
+  const i = film.scenes.indexOf(s);
+  const dur = t.dur ?? 12;
+  if (i === 0 && t.type !== "cut") out.push({ level: "warn", rule: "transition", where: w, message: "the first scene has nothing to come over; the transition is ignored" });
+  if (dur >= s.dur) out.push({ level: "error", rule: "transition-long", where: `${w}.dur`, message: `${dur} frames of handover in a ${s.dur} frame scene` });
+  const prev = i > 0 ? film.scenes[i - 1] : undefined;
+  if (prev && dur > prev.dur) out.push({ level: "warn", rule: "transition-long", where: `${w}.dur`, message: `${dur} frames, but "${prev.id}" is only ${prev.dur} frames long` });
+};
 
 export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
   const out: MgFinding[] = [];
@@ -242,20 +325,35 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
     if (s.dur < 20) out.push({ level: "warn", rule: "short-scene", where: w, message: `${s.dur} frames is under 20: a viewer cannot read it` });
     if (!colorOk(s.ground)) out.push({ level: "error", rule: "color", where: `${w}.ground`, message: `"${s.ground}" is not a design colour or a hex` });
     if (!s.layers?.length) out.push({ level: "warn", rule: "empty-scene", where: w, message: "no layers: a plain ground" });
+    lintCamera(film, s, out);
+    lintTransition(film, s, out);
     const lids = new Set<string>();
-    for (const l of s.layers ?? []) {
-      const lw = `${s.id}.${l.id}`;
-      if (lids.has(l.id)) out.push({ level: "error", rule: "duplicate-id", where: lw, message: "layer id used twice in this scene" });
+    for (const node of walkLayers(film, s)) {
+      const l = node.layer;
+      const lw = `${s.id}.${node.address}`;
+      if (lids.has(l.id)) out.push({ level: "error", rule: "duplicate-id", where: lw, message: "layer id used twice in this scene; ids name events and probes, a group's children included" });
       lids.add(l.id);
       if (!l.type) {
         out.push({ level: "error", rule: "type", where: lw, message: "a layer needs a type" });
         continue;
       }
       const t = layerTiming(film, s, l);
+      // inside a group the layer's own in counts from the group's in
+      const inAt = node.delay + t.inAt;
       const rawAt = l.in?.at ?? 0;
-      if (rawAt >= s.dur || t.inAt >= s.dur) out.push({ level: "error", rule: "in-late", where: `${lw}.in.at`, message: `in at ${rawAt} is past the scene's ${s.dur} frames` });
-      if (t.inAt + t.inDur > s.dur) out.push({ level: "warn", rule: "in-long", where: `${lw}.in`, message: `in ends at ${t.inAt + t.inDur}, the scene ends at ${s.dur}` });
-      if (t.outAt !== null && t.outAt < t.inAt + t.inDur) out.push({ level: "error", rule: "out-early", where: `${lw}.out.at`, message: `out at ${t.outAt} starts before the in has finished (${t.inAt + t.inDur})` });
+      if (rawAt >= s.dur || inAt >= s.dur) out.push({ level: "error", rule: "in-late", where: `${lw}.in.at`, message: `in at ${rawAt}${node.delay ? ` (frame ${inAt} after the group's ${node.delay})` : ""} is past the scene's ${s.dur} frames` });
+      if (inAt + t.inDur > s.dur) out.push({ level: "warn", rule: "in-long", where: `${lw}.in`, message: `in ends at ${inAt + t.inDur}, the scene ends at ${s.dur}` });
+      if (t.outAt !== null && t.outAt < inAt + t.inDur) out.push({ level: "error", rule: "out-early", where: `${lw}.out.at`, message: `out at ${t.outAt} starts before the in has finished (${inAt + t.inDur})` });
+      if (l.type === "group") {
+        const box = groupBox(l);
+        if (!(box.w > 0) || !(box.h > 0)) out.push({ level: "error", rule: "group-box", where: lw, message: "a group needs a box: w and h in u pixels" });
+        if (!childrenOf(l).length) out.push({ level: "warn", rule: "empty-group", where: lw, message: "no layers inside the group" });
+        for (const [fmt, size] of Object.entries(film.formats ?? {})) {
+          const u = Math.min(size.width, size.height) / 1080;
+          const b = groupBox(layerFor(l, fmt) as typeof l);
+          if (b.w * u > size.width + 1 || b.h * u > size.height + 1) out.push({ level: "warn", rule: "group-box", where: `${lw}.w`, message: `the ${b.w}x${b.h} u box does not fit the ${fmt} frame (${Math.round(size.width / u)}x${Math.round(size.height / u)} u)` });
+        }
+      }
       if (l.in?.preset && !KNOWN_IN.includes(l.in.preset)) out.push({ level: "error", rule: "preset", where: `${lw}.in.preset`, message: `"${l.in.preset}" is not an in preset (${KNOWN_IN.join(", ")})` });
       if (l.out?.preset && !KNOWN_OUT.includes(l.out.preset)) out.push({ level: "error", rule: "preset", where: `${lw}.out.preset`, message: `"${l.out.preset}" is not an out preset (${KNOWN_OUT.join(", ")})` });
       for (const [k, e] of [["in", l.in?.ease], ["out", l.out?.ease]] as const) if (!isKnownEase(e, film.easings ?? {})) out.push({ level: "error", rule: "ease", where: `${lw}.${k}.ease`, message: `"${String(e)}" is not an easing` });
@@ -268,8 +366,8 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
       }
       const st = l.in?.stagger;
       if (st) {
-        const n = l.type === "text" ? (st.by === "char" ? l.text.length : st.by === "line" ? l.text.split("\n").length : l.text.split(/\s+/).length) : l.type === "list" ? l.items.length : l.type === "bars" ? l.values.length : 1;
-        const last = t.inAt + staggerDelay(st, n - 1, n) + t.inDur;
+        const n = unitsOf(l, st);
+        const last = inAt + staggerDelay(st, n - 1, n) + t.inDur;
         if (last > s.dur) out.push({ level: "warn", rule: "stagger-long", where: `${lw}.in.stagger`, message: `the last of ${n} units arrives at ${last}, after the scene's ${s.dur} frames` });
       }
       if (l.at && (l.at.x < 0 || l.at.x > 1 || l.at.y < 0 || l.at.y > 1)) out.push({ level: "warn", rule: "off-frame", where: `${lw}.at`, message: `position ${l.at.x},${l.at.y} is outside the frame (0..1)` });
@@ -277,7 +375,7 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
       if (l.type === "text") {
         if (!l.text) out.push({ level: "warn", rule: "empty-text", where: lw, message: "no text" });
         const words = l.text.replace(/\*/g, "").split(/\s+/).filter(Boolean).length;
-        const settledAt = t.inAt + t.inDur + (st ? staggerDelay(st, (st.by === "char" ? l.text.length : st.by === "line" ? l.text.split("\n").length : words) - 1, 99) : 0);
+        const settledAt = inAt + t.inDur + (st ? staggerDelay(st, unitsOf(l, st) - 1, 99) : 0);
         const gone = t.outAt ?? s.dur;
         const secs = (gone - settledAt) / film.fps;
         if (secs < readSeconds(words)) out.push({ level: "warn", rule: "reading-time", where: lw, message: `${words} words hold ${secs.toFixed(2)} s once settled, ${readSeconds(words).toFixed(2)} s reads comfortably` });
@@ -292,14 +390,15 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
   return out;
 };
 
-/** one row per layer: what mh layers prints */
+/** one row per layer, a group's children indented under it: what mh layers prints */
 export const describe = (film: MgFilm): { scene: string; dur: number; layer: string; type: string; at: string; in: string; out: string; text: string }[] =>
   film.scenes.flatMap((s) =>
-    s.layers.map((l) => {
+    walkLayers(film, s).map((n) => {
+      const l = n.layer;
       const t = layerTiming(film, s, l);
       const inM = { ...(film.defaults?.layerIn ?? {}), ...(l.in ?? {}) };
-      const text = l.type === "text" ? l.text : l.type === "list" ? l.items.join(" | ") : l.type === "counter" ? `${l.prefix ?? ""}${l.from ?? 0}->${l.to}${l.suffix ?? ""}` : l.type === "bars" ? l.values.map((v) => `${v.label} ${v.value}`).join(", ") : l.type === "image" ? l.src : l.type === "shape" ? l.shape : "";
-      return { scene: s.id, dur: s.dur, layer: l.id, type: l.type, at: l.at ? `${l.at.x},${l.at.y}` : "0.5,0.5", in: `${inM.preset ?? "rise"} @${t.inAt} ${t.inDur}f${inM.stagger ? ` +${inM.stagger.each}/${inM.stagger.by}` : ""}`, out: t.outAt !== null ? `${l.out?.preset ?? "fade"} @${t.outAt} ${t.outDur}f` : "", text: text.replace(/\n/g, " / ").slice(0, 60) };
+      const text = l.type === "text" ? l.text : l.type === "list" ? l.items.join(" | ") : l.type === "counter" ? `${l.prefix ?? ""}${l.from ?? 0}->${l.to}${l.suffix ?? ""}` : l.type === "bars" ? l.values.map((v) => `${v.label} ${v.value}`).join(", ") : l.type === "image" ? l.src : l.type === "shape" ? l.shape : l.type === "group" ? `${groupBox(l).w}x${groupBox(l).h} u, ${childrenOf(l).length} inside` : "";
+      return { scene: s.id, dur: s.dur, layer: n.address, type: l.type, at: l.at ? `${l.at.x},${l.at.y}` : "0.5,0.5", in: `${inM.preset ?? "rise"} @${n.delay + t.inAt} ${t.inDur}f${inM.stagger ? ` +${inM.stagger.each}/${inM.stagger.by}` : ""}`, out: t.outAt !== null ? `${l.out?.preset ?? "fade"} @${t.outAt} ${t.outDur}f` : "", text: text.replace(/\n/g, " / ").slice(0, 60) };
     }),
   );
 
@@ -320,6 +419,8 @@ export const estimateHeight = (l: Layer, frameW: number, u: number): number => {
   if (l.type === "bars") return l.h ?? ((l.direction ?? "horizontal") === "horizontal" ? 60 * l.values.length : 420);
   if (l.type === "image") return l.h ?? (l.w ?? 480) * 0.75;
   if (l.type === "shape") return l.shape === "circle" || l.shape === "ring" ? (l.d ?? 120) : l.shape === "line" ? (l.thickness ?? 4) : (l.h ?? 200);
+  // a group is one block: its box, never its children
+  if (l.type === "group") return groupBox(l).h;
   return 0;
 };
 
@@ -339,6 +440,7 @@ const spanOf = (l: Layer, h: number, frameH: number, u: number): [number, number
  * are treated as a stack.
  */
 export const autoLayout = (film: MgFilm, sceneId?: string): { scene: string; layer: string; format: string; from: number; to: number }[] => {
+  // groups move as one block; what sits inside a group is the group's business
   const moved: { scene: string; layer: string; format: string; from: number; to: number }[] = [];
   for (const s of film.scenes) {
     if (sceneId && s.id !== sceneId) continue;
