@@ -1,43 +1,110 @@
 /**
- * From a brief to a project. A model turns the brief into a script (scenes with
- * a headline, a body line, a visual note, seconds); the scaffold turns the
- * script into a project the harness can check on the spot: timeline as data,
- * one component per scene, a Root, a config. Nothing timed anywhere else.
+ * From a brief to a project, for any film: a product film from text and
+ * plates, a cut from recorded footage, a slideshow from photos, a montage of
+ * generated clips. A model writes the script (scenes with a kind, an asset,
+ * a headline, seconds, and the design: palette and fonts); the scaffold turns
+ * it into a project the harness can check on the spot. Nothing timed anywhere
+ * else.
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chatJson } from "../ai/azure.ts";
+import type { Asset } from "../ingest/ingest.ts";
 
-export type ScriptScene = { id: string; seconds: number; ground: "dark" | "cream"; headline: string; body?: string; visual?: string; why?: string };
-export type Script = { title: string; audience?: string; job?: string; fps?: number; scenes: ScriptScene[] };
+export type SceneKind = "text" | "clip" | "image";
+export type ScriptScene = {
+  id: string;
+  seconds: number;
+  /** what fills the frame: a text card, a video asset, a still image */
+  kind: SceneKind;
+  ground: "dark" | "light";
+  headline: string;
+  body?: string;
+  /** clip and image scenes: the asset id from assets.json */
+  asset?: string;
+  /** clip scenes: seconds into the asset where the scene starts */
+  in?: number;
+  /** clip and image scenes: where the subject is, 0..1 from the left and the top, for a crop into another format */
+  focus?: [number, number];
+  visual?: string;
+  why?: string;
+};
+export type Design = { ink: string; paper: string; accent: string; muted?: string; fontDisplay?: string; fontBody?: string };
+/** a sound asset placed under the film: a voice note, a music bed */
+export type ScriptAudio = { asset: string; kind: "voice" | "music"; at: string; in?: number; gain?: number; loop?: boolean };
+export type Script = { title: string; audience?: string; job?: string; fps?: number; design?: Design; scenes: ScriptScene[]; audio?: ScriptAudio[] };
 
-const SYSTEM = `You write scripts for short product and launch films that are rendered from React components. A script is a list of scenes. Each scene has: id (short kebab-case, unique), seconds (2 to 8), ground ("dark" or "cream"), headline (the on-screen line, at most 8 words, plain human voice, no em dashes, no exclamation marks, no emojis), body (optional second line, at most 14 words), visual (one sentence: what is on screen besides the words, concrete), why (one sentence: what the scene does for the viewer). Open with the viewer's problem or the most characteristic thing, not with the product name. End with one call to action. Total length matches the requested seconds within 10 percent. Answer with JSON only: {"title": "...", "audience": "...", "job": "...", "scenes": [...]}.`;
+export const DEFAULT_DESIGN: Required<Design> = { ink: "#151515", paper: "#FFFFFF", accent: "#2F6FDE", muted: "#6B6B6B", fontDisplay: "", fontBody: "" };
 
-export const writeScript = async (brief: string, opts: { seconds?: number; model?: string; language?: string }): Promise<{ script: Script; provider: string; model: string; ms: number }> => {
+const SYSTEM = `You write scripts for short films that are rendered from React components: product and launch films, cuts from recorded footage, slideshows from photos, montages of generated clips, explainers. A script is a list of scenes plus a design.
+
+Each scene has: id (short kebab-case, unique), seconds (1.5 to 10), kind ("text" for a typographic card, "clip" for a video asset, "image" for a still), ground ("dark" or "light"; for clip and image scenes the ground is what shows behind letterboxing), headline (the on-screen line, at most 8 words, plain human voice, no em dashes, no exclamation marks, no emojis; may be empty for a clip that speaks for itself), body (optional second line, at most 14 words), asset (the id of a listed asset, only for clip and image scenes), in (seconds into the asset where the scene starts, only for clips; pick the moment the transcript or the shot changes point to), focus ([x, y] between 0 and 1 where the subject sits, for cropping into vertical), visual (one sentence: what is on screen besides the words, concrete), why (one sentence: what the scene does for the viewer).
+
+Sound: "audio" is a list of sound assets placed under the film: {asset, kind ("voice" for a spoken recording, "music" for a bed), at (the id of the scene where it starts), in (seconds into the asset to start from, optional), gain (0 to 1, voice about 1, music under voice about 0.25), loop (music only)}. Place a recorded voice so its sentences land on the scenes that show what they say; do not put a music bed and a voice at the same gain.
+
+The design has: ink (text colour hex), paper (light ground hex), accent (one accent hex), muted (secondary text hex), fontDisplay and fontBody (Google Fonts family names, or empty for the system sans). Derive the design from the brief's world and audience; if the brief names colours or fonts, use them exactly; do not default to warm cream with a serif, and do not default to Inter.
+
+Open with the viewer's problem or the most characteristic thing, not with the product name. End with one call to action. Use listed assets where they carry the story; a clip scene's seconds must not exceed what the asset has from its "in" point. Total length matches the requested seconds within 10 percent. Answer with JSON only: {"title":"...","audience":"...","job":"...","design":{...},"scenes":[...],"audio":[...]}.`;
+
+export const writeScript = async (brief: string, opts: { seconds?: number; model?: string; language?: string; assets?: Asset[]; assetsText?: string }): Promise<{ script: Script; provider: string; model: string; ms: number }> => {
   const seconds = opts.seconds ?? 30;
+  const assetsBlock = opts.assetsText ? `\n\nAssets available (id, kind, length, shot changes, transcript excerpts):\n${opts.assetsText}` : "";
   const r = await chatJson<Script>(
     [
       { role: "system", content: SYSTEM },
-      { role: "user", content: `Brief: ${brief}\n\nTarget length: ${seconds} seconds. Language of the on-screen lines: ${opts.language ?? "English"}.` },
+      { role: "user", content: `Brief: ${brief}\n\nTarget length: ${seconds} seconds. Language of the on-screen lines: ${opts.language ?? "English"}.${assetsBlock}` },
     ],
-    { model: opts.model, maxTokens: 3000 },
+    { model: opts.model, maxTokens: 4000 },
   );
   const s = r.data;
   if (!s || !Array.isArray(s.scenes) || !s.scenes.length) throw new Error("the model returned no scenes");
-  return { script: normalizeScript(s), provider: r.provider, model: r.model, ms: r.ms };
+  return { script: normalizeScript(s, opts.assets), provider: r.provider, model: r.model, ms: r.ms };
 };
 
-/** ids unique and kebab-case, seconds clamped, grounds valid */
-export const normalizeScript = (s: Script): Script => {
+const hex = (v: unknown, fallback: string) => (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v.trim()) ? v.trim().toUpperCase() : fallback);
+
+/** ids unique and kebab-case, seconds clamped, kinds and grounds valid, assets that exist, design filled in */
+export const normalizeScript = (s: Script, assets?: Asset[]): Script => {
   const seen = new Set<string>();
+  const known = new Set((assets ?? []).map((a) => a.id));
   const scenes = s.scenes.map((sc, i) => {
     let id = String(sc.id ?? `scene-${i + 1}`).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || `scene-${i + 1}`;
     if (/^\d/.test(id)) id = `s${id}`;
     while (seen.has(id)) id = `${id}-${i + 1}`;
     seen.add(id);
-    return { id, seconds: Math.max(1.5, Math.min(12, Number(sc.seconds) || 3)), ground: sc.ground === "cream" ? "cream" : "dark", headline: String(sc.headline ?? "").trim(), body: sc.body ? String(sc.body).trim() : undefined, visual: sc.visual ? String(sc.visual).trim() : undefined, why: sc.why ? String(sc.why).trim() : undefined } as ScriptScene;
+    let kind: SceneKind = sc.kind === "clip" || sc.kind === "image" ? sc.kind : "text";
+    let asset = sc.asset ? String(sc.asset) : undefined;
+    if (asset && assets && !known.has(asset)) {
+      const byFile = assets.find((a) => a.file.endsWith(asset!) || a.file.includes(asset!));
+      asset = byFile?.id;
+    }
+    if (kind !== "text" && !asset) kind = "text";
+    const a = asset ? assets?.find((k) => k.id === asset) : undefined;
+    if (a && a.kind === "image") kind = "image";
+    if (a && a.kind === "video") kind = "clip";
+    const ground: "dark" | "light" = (sc.ground as string) === "light" || (sc.ground as string) === "cream" ? "light" : "dark";
+    const focus = Array.isArray(sc.focus) && sc.focus.length === 2 ? ([Math.min(1, Math.max(0, Number(sc.focus[0]) || 0.5)), Math.min(1, Math.max(0, Number(sc.focus[1]) || 0.5))] as [number, number]) : undefined;
+    let seconds = Math.max(1.5, Math.min(12, Number(sc.seconds) || 3));
+    const inAt = kind === "clip" ? Math.max(0, Number(sc.in) || 0) : undefined;
+    if (a?.seconds && kind === "clip" && inAt !== undefined && inAt + seconds > a.seconds) seconds = Math.max(1.5, Math.floor((a.seconds - inAt) * 10) / 10);
+    return { id, seconds, kind, ground, headline: String(sc.headline ?? "").trim(), body: sc.body ? String(sc.body).trim() : undefined, asset, in: inAt, focus, visual: sc.visual ? String(sc.visual).trim() : undefined, why: sc.why ? String(sc.why).trim() : undefined } as ScriptScene;
   });
-  return { title: s.title ?? "Untitled", audience: s.audience, job: s.job, fps: s.fps ?? 30, scenes };
+  const sceneIds = new Set(scenes.map((x) => x.id));
+  const audio: ScriptAudio[] = (Array.isArray(s.audio) ? s.audio : [])
+    .map((x): ScriptAudio | null => {
+      let asset = x.asset ? String(x.asset) : "";
+      if (asset && assets && !known.has(asset)) asset = assets.find((a) => a.file.endsWith(asset) || a.file.includes(asset))?.id ?? "";
+      const a = asset ? assets?.find((k) => k.id === asset) : undefined;
+      if (assets && (!a || (a.kind !== "audio" && !(a.kind === "video" && a.hasAudio)))) return null;
+      let at = String(x.at ?? scenes[0]?.id ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      if (!sceneIds.has(at)) at = scenes[0]?.id ?? at;
+      const kind: "voice" | "music" = x.kind === "music" ? "music" : "voice";
+      return { asset, kind, at, in: x.in !== undefined ? Math.max(0, Number(x.in) || 0) : undefined, gain: x.gain !== undefined ? Math.min(1, Math.max(0, Number(x.gain) || 0)) : kind === "music" ? 0.25 : 1, loop: kind === "music" ? !!x.loop : false };
+    })
+    .filter((x): x is ScriptAudio => x !== null && !!x.asset);
+  const d = s.design ?? ({} as Design);
+  const design: Required<Design> = { ink: hex(d.ink, DEFAULT_DESIGN.ink), paper: hex(d.paper, DEFAULT_DESIGN.paper), accent: hex(d.accent, DEFAULT_DESIGN.accent), muted: hex(d.muted, DEFAULT_DESIGN.muted), fontDisplay: typeof d.fontDisplay === "string" ? d.fontDisplay.trim() : "", fontBody: typeof d.fontBody === "string" ? d.fontBody.trim() : "" };
+  return { title: s.title ?? "Untitled", audience: s.audience, job: s.job, fps: s.fps ?? 30, design, scenes, audio };
 };
 
 export const scriptMarkdown = (s: Script): string => {
@@ -45,21 +112,42 @@ export const scriptMarkdown = (s: Script): string => {
   const L = [`# ${s.title}`, ""];
   if (s.audience) L.push(`Audience: ${s.audience}`);
   if (s.job) L.push(`Job: ${s.job}`);
+  if (s.design) L.push(`Design: ink ${s.design.ink}, paper ${s.design.paper}, accent ${s.design.accent}${s.design.muted ? `, muted ${s.design.muted}` : ""}${s.design.fontDisplay ? `, display ${s.design.fontDisplay}` : ""}${s.design.fontBody ? `, body ${s.design.fontBody}` : ""}`);
   L.push(`Length: ${total.toFixed(1)} s, ${s.scenes.length} scenes`, "");
+  for (const a of s.audio ?? []) L.push(`Audio: ${a.asset} ${a.kind} at ${a.at}${a.in !== undefined ? ` @ ${a.in}s` : ""} gain ${a.gain ?? 1}${a.loop ? " loop" : ""}`);
+  if (s.audio?.length) L.push("");
   s.scenes.forEach((sc, i) => {
-    L.push(`## ${i + 1}. ${sc.id} (${sc.seconds}s, ${sc.ground})`, "", sc.headline);
+    L.push(`## ${i + 1}. ${sc.id} (${sc.seconds}s, ${sc.kind}, ${sc.ground})`, "");
+    if (sc.headline) L.push(sc.headline);
     if (sc.body) L.push(sc.body);
-    if (sc.visual) L.push("", `Visual: ${sc.visual}`);
+    if (sc.asset) L.push("", `Asset: ${sc.asset}${sc.in !== undefined ? ` @ ${sc.in}s` : ""}${sc.focus ? ` focus ${sc.focus[0]},${sc.focus[1]}` : ""}`);
+    if (sc.visual) L.push(sc.asset ? `Visual: ${sc.visual}` : "", ...(sc.asset ? [] : [`Visual: ${sc.visual}`]));
     if (sc.why) L.push(`Why: ${sc.why}`);
     L.push("");
   });
-  return L.join("\n");
+  return L.join("\n").replace(/\n{3,}/g, "\n\n");
 };
 
 /** the inverse: a script.md written or edited by hand back into data */
-export const parseScriptMarkdown = (md: string): Script => {
+export const parseScriptMarkdown = (md: string, assets?: Asset[]): Script => {
   const lines = md.split("\n");
   const title = (lines.find((l) => l.startsWith("# ")) ?? "# Untitled").slice(2).trim();
+  const designLine = lines.find((l) => l.startsWith("Design:"));
+  const design: Design | undefined = designLine
+    ? {
+        ink: designLine.match(/ink (#[0-9a-fA-F]{6})/)?.[1] ?? DEFAULT_DESIGN.ink,
+        paper: designLine.match(/paper (#[0-9a-fA-F]{6})/)?.[1] ?? DEFAULT_DESIGN.paper,
+        accent: designLine.match(/accent (#[0-9a-fA-F]{6})/)?.[1] ?? DEFAULT_DESIGN.accent,
+        muted: designLine.match(/muted (#[0-9a-fA-F]{6})/)?.[1],
+        fontDisplay: designLine.match(/display ([^,]+)/)?.[1]?.trim(),
+        fontBody: designLine.match(/body ([^,]+)$/)?.[1]?.trim(),
+      }
+    : undefined;
+  const audio: ScriptAudio[] = [];
+  for (const l of lines) {
+    const m = l.match(/^Audio:\s*([\w.-]+)\s+(voice|music)\s+at\s+([\w-]+)(?:\s*@\s*([\d.]+)s)?(?:\s+gain\s+([\d.]+))?(\s+loop)?/);
+    if (m) audio.push({ asset: m[1], kind: m[2] as "voice" | "music", at: m[3], in: m[4] ? parseFloat(m[4]) : undefined, gain: m[5] ? parseFloat(m[5]) : undefined, loop: !!m[6] });
+  }
   const scenes: ScriptScene[] = [];
   let cur: ScriptScene | null = null;
   let textLines: string[] = [];
@@ -73,39 +161,71 @@ export const parseScriptMarkdown = (md: string): Script => {
     textLines = [];
   };
   for (const raw of lines) {
-    const h = raw.match(/^## \d+\.\s*([\w-]+)\s*\((\d+(?:\.\d+)?)s,\s*(dark|cream)\)/);
+    const h = raw.match(/^## \d+\.\s*([\w-]+)\s*\((\d+(?:\.\d+)?)s(?:,\s*(text|clip|image))?,\s*(dark|light|cream)\)/);
     if (h) {
       flush();
-      cur = { id: h[1], seconds: parseFloat(h[2]), ground: h[3] as "dark" | "cream", headline: "" };
+      cur = { id: h[1], seconds: parseFloat(h[2]), kind: (h[3] as SceneKind) ?? "text", ground: h[4] === "dark" ? "dark" : "light", headline: "" };
       continue;
     }
     if (!cur) continue;
-    if (raw.startsWith("Visual:")) cur.visual = raw.slice(7).trim();
+    if (raw.startsWith("Asset:")) {
+      const m = raw.slice(6).trim().match(/^([\w.-]+)(?:\s*@\s*([\d.]+)s)?(?:\s*focus\s*([\d.]+),([\d.]+))?/);
+      if (m) {
+        cur.asset = m[1];
+        if (m[2]) cur.in = parseFloat(m[2]);
+        if (m[3] && m[4]) cur.focus = [parseFloat(m[3]), parseFloat(m[4])];
+      }
+    } else if (raw.startsWith("Visual:")) cur.visual = raw.slice(7).trim();
     else if (raw.startsWith("Why:")) cur.why = raw.slice(4).trim();
     else if (raw.trim()) textLines.push(raw);
   }
   flush();
-  return normalizeScript({ title, scenes });
+  return normalizeScript({ title, design, scenes, audio }, assets);
 };
 
 /* ---------- scaffold ---------- */
 
 const ts = (s: string) => JSON.stringify(s);
 
-export const scaffoldFiles = (script: Script, opts: { harnessImport: string; formats: string[]; fps?: number }): Record<string, string> => {
+const fontImport = (d: Required<Design>) => {
+  const fams = [d.fontDisplay, d.fontBody].filter(Boolean).map((f) => `family=${encodeURIComponent(f).replace(/%20/g, "+")}:wght@400;500;600;700`);
+  return fams.length ? `https://fonts.googleapis.com/css2?${[...new Set(fams)].join("&")}&display=swap` : "";
+};
+
+export const scaffoldFiles = (script: Script, opts: { harnessImport: string; formats: string[]; fps?: number; assets?: Asset[] }): Record<string, string> => {
   const fps = opts.fps ?? script.fps ?? 30;
   const formats = opts.formats.length ? opts.formats : ["wide"];
   const sizes: Record<string, { width: number; height: number }> = { wide: { width: 1920, height: 1080 }, vertical: { width: 1080, height: 1920 }, square: { width: 1080, height: 1080 } };
   const film = script.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "film";
-  const sceneLines = script.scenes.map((sc) => `  ${ts(sc.id)}: { dur: ${Math.round(sc.seconds * fps)}, ground: ${ts(sc.ground)}, headline: ${ts(sc.headline)}, body: ${ts(sc.body ?? "")}, visual: ${ts(sc.visual ?? "")}, why: ${ts(sc.why ?? "")} },`).join("\n");
+  const d = { ...DEFAULT_DESIGN, ...(script.design ?? {}) } as Required<Design>;
+  const assets = (opts.assets ?? []).filter((a) => script.scenes.some((s) => s.asset === a.id) || (script.audio ?? []).some((x) => x.asset === a.id));
+  const cueLines = (script.audio ?? [])
+    .map((x) => {
+      const a = assets.find((k) => k.id === x.asset);
+      if (!a) return null;
+      const file = a.file.startsWith("public/") ? a.file : `public/${a.file}`;
+      return `    { id: ${ts(x.asset)}, kind: ${ts(x.kind)}, file: ${ts(file)}, at: ${ts(x.at)}, gain: ${x.gain ?? 1}${x.in ? `, trim: [${x.in}, ${a.seconds ?? 600}]` : ""}${x.loop ? ", loop: true" : ""}${x.kind === "music" ? ", fadeOut: 1.5" : ""} },`;
+    })
+    .filter(Boolean)
+    .join("\n");
+  const assetLines = assets.map((a) => `  ${ts(a.id)}: { file: ${ts(a.file.replace(/^public\//, ""))}, kind: ${ts(a.kind)}, seconds: ${a.seconds ?? 0}, width: ${a.width ?? 0}, height: ${a.height ?? 0} },`).join("\n");
+  const sceneLines = script.scenes.map((sc) => `  ${ts(sc.id)}: { dur: ${Math.round(sc.seconds * fps)}, kind: ${ts(sc.kind)}, ground: ${ts(sc.ground)}, headline: ${ts(sc.headline)}, body: ${ts(sc.body ?? "")}, asset: ${ts(sc.asset ?? "")}, inAt: ${sc.in ?? 0}, focus: [${sc.focus ? sc.focus.join(", ") : "0.5, 0.5"}], visual: ${ts(sc.visual ?? "")}, why: ${ts(sc.why ?? "")} },`).join("\n");
   const timeline = `/**
- * ${script.title}: the timeline as data. Generated by mh script from the brief; edit here, never in the components.
+ * ${script.title}: the timeline as data. Generated by mh new from the brief; edit here, never in the components.
  */
 import { defineTimeline } from ${ts(opts.harnessImport + "/timeline/schema.ts")};
 
 export const FPS = ${fps};
 
-export type SceneSpec = { dur: number; ground: "dark" | "cream"; headline: string; body: string; visual: string; why: string };
+/** the design the script chose: change here, every scene follows */
+export const DESIGN = { ink: ${ts(d.ink)}, paper: ${ts(d.paper)}, accent: ${ts(d.accent)}, muted: ${ts(d.muted)}, fontDisplay: ${ts(d.fontDisplay)}, fontBody: ${ts(d.fontBody)} };
+
+export type AssetSpec = { file: string; kind: "video" | "audio" | "image"; seconds: number; width: number; height: number };
+export const ASSETS: Record<string, AssetSpec> = {
+${assetLines}
+};
+
+export type SceneSpec = { dur: number; kind: "text" | "clip" | "image"; ground: "dark" | "light"; headline: string; body: string; asset: string; inAt: number; focus: [number, number]; visual: string; why: string };
 
 export const SCENES: Record<string, SceneSpec> = {
 ${sceneLines}
@@ -130,29 +250,37 @@ export const timeline = defineTimeline({
         enter: i === 0 ? "cut" : "fade",
         exit: FADE,
         ground: SCENES[id].ground,
-        text: SCENES[id].body ? [SCENES[id].headline, SCENES[id].body] : SCENES[id].headline,
-        probes: ["headline"],
+        stage: SCENES[id].kind,
+        text: SCENES[id].headline ? (SCENES[id].body ? [SCENES[id].headline, SCENES[id].body] : SCENES[id].headline) : undefined,
+        caption: SCENES[id].headline ? undefined : SCENES[id].visual || undefined,
+        probes: SCENES[id].headline ? ["headline"] : [],
+        clip: SCENES[id].kind === "clip" ? SCENES[id].asset : undefined,
         why: SCENES[id].why || undefined,
       })),
     },
   ],
+  audio: [
+${cueLines}
+  ],
   rules: { minSceneDur: 24, maxEnterFrames: 14, safeZone: { vertical: { top: 220, bottom: 320, x: 60 } } },
 });
 `;
+  const fonts = fontImport(d);
   const filmTsx = `/**
- * ${script.title}. One component per scene, all reading the timeline. The Scene
- * component is the starting point: replace its visual with the real thing scene
- * by scene (the timeline's "visual" note says what belongs there).
+ * ${script.title}. One component per scene kind (text card, clip, image), all
+ * reading the timeline. Replace a text scene's dashed visual with the real
+ * thing; the timeline's "visual" note says what belongs there.
  */
 import React from "react";
-import { AbsoluteFill, Easing, Sequence, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Easing, Img, OffthreadVideo, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { compile } from ${ts(opts.harnessImport + "/timeline/schema.ts")};
-import { timeline, SCENES, FADE, type SceneId } from "./timeline.ts";
+import { timeline, SCENES, ASSETS, DESIGN, FADE, FPS, type SceneId } from "./timeline.ts";
 
 const c = compile(timeline);
 
-export const INK = "#1C1A17", CREAM = "#F7F4E3", GOLD = "#FFBC14", MUTED = "#6B6459", MUTED_ON_DARK = "#A39C8F";
-const SANS = "-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif";
+const DISPLAY = DESIGN.fontDisplay ? \`'\${DESIGN.fontDisplay}', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif\` : "-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif";
+const BODY = DESIGN.fontBody ? \`'\${DESIGN.fontBody}', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif\` : DISPLAY;
+const FONTS_URL = ${ts(fonts)};
 
 const rise = (frame: number, at: number, dur = 14) => {
   const p = interpolate(frame, [at, at + dur], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
@@ -165,25 +293,77 @@ const Fade: React.FC<{ dur: number; children: React.ReactNode }> = ({ dur, child
   return <AbsoluteFill style={{ opacity: o }}>{children}</AbsoluteFill>;
 };
 
-const Scene: React.FC<{ id: SceneId; story: boolean }> = ({ id, story }) => {
+const Lines: React.FC<{ id: SceneId; story: boolean; onMedia?: boolean }> = ({ id, story, onMedia }) => {
+  const f = useCurrentFrame();
+  const s = SCENES[id];
+  const dark = onMedia || s.ground === "dark";
+  const color = dark ? DESIGN.paper : DESIGN.ink;
+  const muted = dark ? "rgba(255,255,255,0.78)" : DESIGN.muted;
+  if (!s.headline) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: onMedia ? "flex-start" : "center", textAlign: onMedia ? "left" : "center", gap: 20, maxWidth: story ? 860 : onMedia ? 1100 : 1500 }}>
+      <div data-probe="headline" data-lines={story ? 3 : 2} style={{ ...rise(f, 4), fontFamily: DISPLAY, fontSize: story ? 60 : onMedia ? 64 : 72, lineHeight: 1.15, letterSpacing: -1, color, textShadow: onMedia ? "0 2px 24px rgba(0,0,0,0.45)" : undefined }}>
+        {s.headline}
+      </div>
+      {s.body ? (
+        <div data-probe="body" data-lines={story ? 3 : 2} style={{ ...rise(f, 16), fontFamily: BODY, fontSize: story ? 34 : 36, lineHeight: 1.35, color: muted, textShadow: onMedia ? "0 2px 18px rgba(0,0,0,0.5)" : undefined }}>
+          {s.body}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const TextScene: React.FC<{ id: SceneId; story: boolean }> = ({ id, story }) => {
   const f = useCurrentFrame();
   const s = SCENES[id];
   const dark = s.ground === "dark";
   return (
-    <AbsoluteFill style={{ backgroundColor: dark ? INK : CREAM, color: dark ? CREAM : INK, fontFamily: SANS, justifyContent: "center", alignItems: "center", padding: story ? "0 110px" : "0 200px", boxSizing: "border-box" }}>
+    <AbsoluteFill style={{ backgroundColor: dark ? DESIGN.ink : DESIGN.paper, justifyContent: "center", alignItems: "center", padding: story ? "0 110px" : "0 200px", boxSizing: "border-box", gap: 40 }}>
       {s.visual ? (
-        <div data-probe="visual" data-lines={4} data-lint="no-collision" style={{ ...rise(f, 2), width: story ? 760 : 900, height: story ? 400 : 380, borderRadius: 18, border: \`2px dashed \${dark ? "rgba(247,244,227,0.3)" : "rgba(28,26,23,0.25)"}\`, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 32, fontSize: 26, lineHeight: 1.3, color: dark ? MUTED_ON_DARK : MUTED, marginBottom: 40 }}>
+        <div data-probe="visual" data-lines={4} data-lint="no-collision" style={{ ...rise(f, 2), width: story ? 760 : 900, height: story ? 400 : 380, borderRadius: 18, border: \`2px dashed \${dark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.25)"}\`, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 32, fontFamily: BODY, fontSize: 26, lineHeight: 1.3, color: dark ? "rgba(255,255,255,0.7)" : DESIGN.muted }}>
           {s.visual}
         </div>
       ) : null}
-      <div data-probe="headline" data-lines={story ? 3 : 2} style={{ ...rise(f, 4), fontSize: story ? 60 : 72, lineHeight: 1.15, textAlign: "center", maxWidth: story ? 860 : 1500, letterSpacing: -1 }}>
-        {s.headline}
-      </div>
-      {s.body ? (
-        <div data-probe="body" data-lines={story ? 3 : 2} style={{ ...rise(f, 16), marginTop: 24, fontSize: story ? 34 : 36, lineHeight: 1.35, textAlign: "center", maxWidth: story ? 820 : 1300, color: dark ? MUTED_ON_DARK : MUTED }}>
-          {s.body}
-        </div>
+      <Lines id={id} story={story} />
+    </AbsoluteFill>
+  );
+};
+
+/** a video asset filling the frame, the subject kept in view through the focus point; a slow push keeps a static shot alive */
+const ClipScene: React.FC<{ id: SceneId; story: boolean }> = ({ id, story }) => {
+  const f = useCurrentFrame();
+  const { width, height } = useVideoConfig();
+  const s = SCENES[id];
+  const a = ASSETS[s.asset];
+  const push = 1 + Math.min(0.06, f / (s.dur * 12));
+  return (
+    <AbsoluteFill style={{ backgroundColor: DESIGN.ink }}>
+      {a ? (
+        <OffthreadVideo src={staticFile(a.file)} muted startFrom={Math.round(s.inAt * FPS)} style={{ position: "absolute", inset: 0, width, height, objectFit: "cover", objectPosition: \`\${s.focus[0] * 100}% \${s.focus[1] * 100}%\`, transform: \`scale(\${push})\` }} />
       ) : null}
+      {s.headline ? <AbsoluteFill style={{ background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.0) 55%)" }} /> : null}
+      <AbsoluteFill style={{ justifyContent: "flex-end", padding: story ? "0 90px 360px" : "0 140px 110px", boxSizing: "border-box" }}>
+        <Lines id={id} story={story} onMedia />
+      </AbsoluteFill>
+    </AbsoluteFill>
+  );
+};
+
+/** a still with a slow scale, the subject kept in view */
+const ImageScene: React.FC<{ id: SceneId; story: boolean }> = ({ id, story }) => {
+  const f = useCurrentFrame();
+  const { width, height } = useVideoConfig();
+  const s = SCENES[id];
+  const a = ASSETS[s.asset];
+  const zoom = interpolate(f, [0, s.dur], [1.0, 1.08], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return (
+    <AbsoluteFill style={{ backgroundColor: DESIGN.ink }}>
+      {a ? <Img src={staticFile(a.file)} style={{ position: "absolute", inset: 0, width, height, objectFit: "cover", objectPosition: \`\${s.focus[0] * 100}% \${s.focus[1] * 100}%\`, transform: \`scale(\${zoom})\`, transformOrigin: \`\${s.focus[0] * 100}% \${s.focus[1] * 100}%\` }} /> : null}
+      {s.headline ? <AbsoluteFill style={{ background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.0) 55%)" }} /> : null}
+      <AbsoluteFill style={{ justifyContent: "flex-end", padding: story ? "0 90px 360px" : "0 140px 110px", boxSizing: "border-box" }}>
+        <Lines id={id} story={story} onMedia />
+      </AbsoluteFill>
     </AbsoluteFill>
   );
 };
@@ -192,14 +372,19 @@ export const Film: React.FC<{ story?: boolean }> = ({ story = false }) => {
   const { width } = useVideoConfig();
   const s = story || width < 1200;
   return (
-    <AbsoluteFill style={{ backgroundColor: INK }}>
-      {c.scenes.map((sc) => (
-        <Sequence key={sc.id} from={sc.start} durationInFrames={sc.dur}>
-          <Fade dur={sc.dur}>
-            <Scene id={sc.id as SceneId} story={s} />
-          </Fade>
-        </Sequence>
-      ))}
+    <AbsoluteFill style={{ backgroundColor: DESIGN.ink }}>
+      {FONTS_URL ? <style>{\`@import url("\${FONTS_URL}");\`}</style> : null}
+      {c.scenes.map((sc) => {
+        const kind = SCENES[sc.id as SceneId].kind;
+        const C = kind === "clip" ? ClipScene : kind === "image" ? ImageScene : TextScene;
+        return (
+          <Sequence key={sc.id} from={sc.start} durationInFrames={sc.dur}>
+            <Fade dur={sc.dur}>
+              <C id={sc.id as SceneId} story={s} />
+            </Fade>
+          </Sequence>
+        );
+      })}
     </AbsoluteFill>
   );
 };
@@ -217,9 +402,9 @@ ${formats.map((f) => `    <Composition id=${ts(`${film}-${f}`)} component={Film}
   </>
 );
 `;
-  const config = `/** generated by mh script; the native engine needs no Remotion install */
+  const config = `/** generated by mh new; the native engine needs no Remotion install */
 import { defineConfig } from ${ts(opts.harnessImport + "/config.ts")};
-import { timeline } from "./src/timeline.ts";
+import { timeline, DESIGN } from "./src/timeline.ts";
 
 export default defineConfig({
   root: "./src/Root.tsx",
@@ -234,7 +419,8 @@ export default defineConfig({
       defaultFormat: ${ts(formats[0])},
     },
   },
-  tokens: { colors: ["#1C1A17", "#F7F4E3", "#FFBC14", "#6B6459", "#A39C8F"], sources: ["src/**/*.tsx"] },
+  tokens: { colors: [DESIGN.ink, DESIGN.paper, DESIGN.accent, DESIGN.muted, "#FFFFFF", "#000000"], sources: ["src/**/*.tsx"] },
+  captions: { bottom: { wide: 70, vertical: 340 } },
 });
 `;
   const shimPath = `${opts.harnessImport}/engine/shim/remotion.tsx`;

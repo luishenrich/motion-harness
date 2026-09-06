@@ -88,8 +88,19 @@ export const addClip = async (cfg: LoadedConfig, file: string, meta: Partial<Pic
 };
 
 /** colour drift between consecutive clips in film order (scenes that name a clip), and clips the timeline names but the registry lacks */
+/** ingested footage (assets.json) as clips: same id space, luma only for the colour check */
+const assetsAsClips = (cfg: LoadedConfig): Clip[] => {
+  const p = join(cfg.projectDir, "assets.json");
+  if (!existsSync(p)) return [];
+  const list = JSON.parse(readFileSync(p, "utf8")) as { id: string; file: string; kind: string; seconds?: number; width?: number; height?: number; fps?: number; bytes?: number; colour?: { first: { luma: number }; mid: { luma: number }; last: { luma: number } }; license?: string; addedAt?: string }[];
+  const grey = (l: number): ClipColour => ({ r: l, g: l, b: l, luma: l });
+  return list
+    .filter((a) => a.kind === "video" || a.kind === "image")
+    .map((a) => ({ id: a.id, file: a.file, width: a.width ?? 0, height: a.height ?? 0, fps: a.fps ?? 0, seconds: a.seconds ?? Infinity, bytes: a.bytes ?? 0, colour: { first: grey(a.colour?.first.luma ?? 128), mid: grey(a.colour?.mid.luma ?? 128), last: grey(a.colour?.last.luma ?? 128) }, addedAt: a.addedAt ?? "", license: a.license }));
+};
+
 export const lintClips = (cfg: LoadedConfig, c: Compiled, opts: { lumaDelta?: number; chromaDelta?: number } = {}): Finding[] => {
-  const clips = loadClips(cfg);
+  const clips = [...assetsAsClips(cfg), ...loadClips(cfg)];
   const byId = new Map(clips.map((k) => [k.id, k]));
   const out: Finding[] = [];
   const lumaDelta = opts.lumaDelta ?? 24, chromaDelta = opts.chromaDelta ?? 18;
@@ -98,7 +109,7 @@ export const lintClips = (cfg: LoadedConfig, c: Compiled, opts: { lumaDelta?: nu
     if (!s.clip) continue;
     const clip = byId.get(s.clip);
     if (!clip) {
-      out.push({ level: "error", rule: "clip-registered", where: s.id, message: `names clip "${s.clip}" which clips.json does not have (mh clips add <file> --id ${s.clip})` });
+      out.push({ level: "error", rule: "clip-registered", where: s.id, message: `names clip "${s.clip}" which neither clips.json nor assets.json has (mh clips add <file> --id ${s.clip}, or mh ingest <file>)` });
       continue;
     }
     if (!existsSync(resolve(cfg.projectDir, clip.file))) out.push({ level: "error", rule: "clip-file", where: s.id, message: `clip "${clip.id}" file is missing: ${clip.file}` });

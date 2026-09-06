@@ -36,6 +36,8 @@ import { addClip, loadClips, lintClips, clipCost } from "./clips/clips.ts";
 import { judgeClip, judgePrompt, DEFAULT_CHECKLIST } from "./judge/judge.ts";
 import { measureReference, compareCurves } from "./motion/metrics.ts";
 import { writeScript, parseScriptMarkdown, scriptMarkdown, scaffoldFiles, writeScaffold } from "./script/script.ts";
+import { ingestFiles, loadAssets, assetsForModel, spokenSpans, type Asset } from "./ingest/ingest.ts";
+import { transcribeFile, saveTranscript, transcriptSrt } from "./transcribe/transcribe.ts";
 import { makeImage, loadImages } from "./image/image.ts";
 import { otioDocument } from "./otio/otio.ts";
 import { segmentKey } from "./film/film.ts";
@@ -1567,7 +1569,13 @@ const cmdScript = async (args: Args) => {
   const brief = str(args, "brief") ?? args._.join(" ");
   if (!brief) die('usage: mh script --brief "..." [--seconds 30] [--language English] [--out script.md] [--model m]');
   const t0 = performance.now();
-  const r = await writeScript(brief, { seconds: num(args, "seconds", 30), model: str(args, "model"), language: str(args, "language") });
+  let assets: Asset[] | undefined;
+  try {
+    assets = loadAssets((await ctx(args)).cfg);
+  } catch {
+    assets = undefined;
+  }
+  const r = await writeScript(brief, { seconds: num(args, "seconds", 30), model: str(args, "model"), language: str(args, "language"), assets, assetsText: assets?.length ? assetsForModel(assets) : undefined });
   const md = scriptMarkdown(r.script);
   const out = str(args, "out");
   if (out) {
@@ -1583,17 +1591,31 @@ const cmdNew = async (args: Args) => {
   if (!dir) die('usage: mh new <dir> (--brief "..." | --script script.md) [--seconds 30] [--formats wide,vertical] [--language English] [--force]');
   const target = resolvePath(dir);
   const scriptFile = str(args, "script");
+  // footage first: copied into public/assets, probed (shots, silences, loudness, transcript on request), listed for the model
+  const assetArgs = list(args, "assets") ?? [];
+  const assetFiles = assetArgs.flatMap((a) => {
+    const p = resolvePath(a);
+    if (existsSync(p) && statSync(p).isDirectory()) return readdirSync(p).filter((n) => !n.startsWith(".")).map((n) => join(p, n));
+    return [p];
+  });
+  const stub = { projectDir: target, cachePath: join(target, ".harness"), publicPath: join(target, "public"), configPath: join(target, "harness.config.ts"), rootPath: join(target, "src/Root.tsx"), root: "./src/Root.tsx", films: {} } as unknown as LoadedConfig;
+  let assets: Asset[] = [];
+  if (assetFiles.length) {
+    ensureDir(target);
+    assets = await ingestFiles(stub, assetFiles, { copyTo: "public/assets", transcribe: flag(args, "transcribe"), language: str(args, "language"), log });
+    log(`${assets.length} asset${assets.length === 1 ? "" : "s"} -> ${join(target, "assets.json")}`);
+  } else if (existsSync(join(target, "assets.json"))) assets = loadAssets(stub);
   let script;
-  if (scriptFile) script = parseScriptMarkdown(readFileSync(resolvePath(scriptFile), "utf8"));
+  if (scriptFile) script = parseScriptMarkdown(readFileSync(resolvePath(scriptFile), "utf8"), assets);
   else {
     const brief = str(args, "brief");
     if (!brief) die("mh new needs --brief or --script");
     const t0 = performance.now();
-    const r = await writeScript(brief!, { seconds: num(args, "seconds", 30), model: str(args, "model"), language: str(args, "language") });
-    log(`script: ${r.script.scenes.length} scenes, ${r.script.scenes.reduce((a, b) => a + b.seconds, 0).toFixed(1)}s from ${r.provider} ${r.model} in ${ms(t0)}`);
+    const r = await writeScript(brief!, { seconds: num(args, "seconds", 30), model: str(args, "model"), language: str(args, "language"), assets, assetsText: assets.length ? assetsForModel(assets) : undefined });
+    log(`script: ${r.script.scenes.length} scenes, ${r.script.scenes.reduce((a, b) => a + b.seconds, 0).toFixed(1)}s from ${r.provider} ${r.model} in ${ms(t0)}${r.script.design ? `; design ink ${r.script.design.ink} paper ${r.script.design.paper} accent ${r.script.design.accent}${r.script.design.fontDisplay ? ` ${r.script.design.fontDisplay}` : ""}` : ""}`);
     script = r.script;
   }
-  const files = scaffoldFiles(script, { harnessImport: str(args, "harness-import") ?? harnessImportFor(target), formats: list(args, "formats") ?? ["wide", "vertical"] });
+  const files = scaffoldFiles(script, { harnessImport: str(args, "harness-import") ?? harnessImportFor(target), formats: list(args, "formats") ?? ["wide", "vertical"], assets });
   const written = writeScaffold(target, files, { force: flag(args, "force") });
   for (const f of written) produced(f);
   log(written.map((f) => `  ${f.replace(target + "/", "")}`).join("\n"));
@@ -1603,6 +1625,46 @@ const cmdNew = async (args: Args) => {
     log(r.code === 0 ? `bun install in ${ms(t1)} (react, react-dom, typescript)` : `bun install failed: ${r.err.slice(-300)}; run it in ${target}`);
   }
   log(`project -> ${target}\nnext: mh check --project ${dir} --format all --scene ${script.scenes.map((s) => s.id).join(",")}`);
+};
+
+/** footage in, facts out: assets.json with streams, shots, silences, loudness, colour, transcript */
+const cmdIngest = async (args: Args) => {
+  const x = await ctx(args);
+  if (!args._.length) {
+    const list = loadAssets(x.cfg);
+    if (!list.length) return log("usage: mh ingest <file|dir...> [--copy public/assets] [--transcribe] [--language de] [--license ...]");
+    return log(table(list.map((a) => [a.id, a.kind, a.file, a.seconds !== undefined ? `${a.seconds.toFixed(1)}s` : "", a.width ? `${a.width}x${a.height}` : "", a.loudness ? `${a.loudness.lufs} LUFS` : "", a.shots?.length ?? "", a.silences?.length ?? "", a.transcript ? "yes" : "", (a.summary ?? "").slice(0, 60)]), ["asset", "kind", "file", "length", "size", "loudness", "shots", "silences", "transcript", "summary"]));
+  }
+  const files = args._.flatMap((a) => {
+    const p = resolvePath(a);
+    if (existsSync(p) && statSync(p).isDirectory()) return readdirSync(p).filter((n) => !n.startsWith(".")).map((n) => join(p, n));
+    return [p];
+  });
+  const res = await ingestFiles(x.cfg, files, { copyTo: str(args, "copy"), transcribe: flag(args, "transcribe"), language: str(args, "language"), license: str(args, "license"), log });
+  for (const a of res) if (a.transcript) produced(a.transcript);
+  produced(join(x.cfg.projectDir, "assets.json"));
+  log(`${res.length} asset${res.length === 1 ? "" : "s"} -> assets.json`);
+  if (flag(args, "json")) out2(JSON.stringify(res));
+};
+
+/** words with times from a recording (Gemini listens, ffmpeg's silences sharpen the edges); an srt or the spoken spans */
+const cmdTranscribe = async (args: Args) => {
+  const x = await ctx(args);
+  const file = args._[0];
+  if (!file) die("usage: mh transcribe <file> [--from 0 --to 60] [--language de] [--out transcript.json] [--srt out.srt] [--spans]");
+  const t = await transcribeFile(resolvePath(file), join(ensureDir(join(x.cfg.cachePath, "transcribe")), `${basename(file)}.wav`), { from: str(args, "from") ? num(args, "from", 0) : undefined, to: str(args, "to") ? num(args, "to", 0) : undefined, language: str(args, "language"), model: str(args, "model"), log });
+  const outFile = str(args, "out") ?? join(ensureDir(join(x.cfg.cachePath, "transcribe")), `${basename(file)}.transcript.json`);
+  saveTranscript(t, outFile);
+  produced(outFile);
+  log(`${t.segments.length} sentences, ${t.words.length} words, ${t.silences.length} silences (${t.model}) -> ${outFile}`);
+  if (str(args, "srt")) {
+    writeFileSync(resolvePath(str(args, "srt")!), transcriptSrt(t.segments));
+    produced(resolvePath(str(args, "srt")!));
+    log(`srt -> ${str(args, "srt")}`);
+  }
+  if (flag(args, "spans")) log(table(spokenSpans(t).map((s, i) => [i + 1, `${s.start.toFixed(2)}s`, `${s.end.toFixed(2)}s`, `${(s.end - s.start).toFixed(2)}s`, s.text.slice(0, 90)]), ["#", "from", "to", "length", "spoken"]));
+  else log(table(t.segments.map((s, i) => [i + 1, `${s.start.toFixed(2)}s`, `${s.end.toFixed(2)}s`, s.text.slice(0, 100)]), ["#", "from", "to", "text"]));
+  if (flag(args, "json")) out2(JSON.stringify(t));
 };
 
 /** an image from a prompt through the configured provider, fitted to the size, registered in images.json */
@@ -1727,8 +1789,13 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
                                     --upload puts every file on S3/R2 (MH_S3_* or CLOUDFLARE_* env) and records the urls
   script --brief "..." [--seconds 30] [--out script.md]
                                     a model writes the script (scenes with headline, body, visual, seconds); Azure, OpenRouter or OpenAI from the environment
-  new <dir> (--brief "..." | --script script.md) [--formats wide,vertical]
-                                    a project the harness can check right away: timeline as data, one component per scene, Root, config
+  new <dir> (--brief "..." | --script script.md) [--assets dir|files] [--transcribe] [--formats wide,vertical]
+                                    a project the harness can check right away: footage ingested and listed for the model, the script (kinds text, clip, image;
+                                    a design of palette and fonts), timeline as data, one component per scene kind, Root, config, react installed
+  ingest <file|dir...> [--copy public/assets] [--transcribe] [--language de]
+                                    footage in, facts out: streams, length, loudness, shot changes, silences, colour, transcript into assets.json
+  transcribe <file> [--srt out.srt] [--spans] [--from --to] [--language de]
+                                    words with times (Gemini listens, silences sharpen the edges); --spans lists the spoken spans a silence cut would keep
   image "<prompt>" [--width --height] [--provider azure-mai|azure-flux|openai] [--out file]
                                     an image plate from a prompt (config.imageStyle appended, no text asked of the model), fitted to the size, registered in images.json
   otio [--out film.otio] [--no-audio]
@@ -1780,6 +1847,8 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   mcp: cmdMcp,
   script: cmdScript,
   new: cmdNew,
+  ingest: cmdIngest,
+  transcribe: cmdTranscribe,
   image: cmdImage,
   otio: cmdOtio,
 };

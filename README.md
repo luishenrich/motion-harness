@@ -112,6 +112,25 @@ mh deliver --out docs/.../deliverables --stills all
                                             # films, stills, srt, manifest (sizes, sha1, chapters), .gitignore for the mp4
 ```
 
+## Any film, not one kind of film
+
+The harness does not know what a "product film" is. A film is a timeline of scenes; a scene
+is a text card, a clip of footage, a still, or whatever a component renders. From the top:
+
+```bash
+mh ingest footage/ --transcribe             # every file probed: streams, length, loudness, shot changes, silences, colour,
+                                            # a transcript with word times (Gemini listens, ffmpeg's silences sharpen the edges)
+mh transcribe interview.mp4 --spans         # the spoken spans a silence cut would keep
+mh new my-film --brief "..." --assets footage/ --transcribe
+                                            # the script model sees the footage and its words, writes scenes (text, clip, image),
+                                            # places the voice note and a music bed as cues, picks a palette and Google fonts from the
+                                            # brief; the scaffold writes a project the harness checks on the spot
+```
+
+The scaffold's components are starting points: a text card, a clip with a focus point for the
+vertical crop and a headline over a scrim, a still with a slow zoom. Everything after that is
+the same loop as for any other film: `mh check`, `mh frame`, `mh render`, `mh deliver`.
+
 From nothing to a checkable project, and out of the harness into an editor:
 
 ```bash
