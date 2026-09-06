@@ -17,9 +17,9 @@ export type SoundRef = string | { name: string; gain?: number; /** frames after 
 /** name -> ffmpeg lavfi source and filter chain; every sound is short, mono, 48 kHz */
 export const SOUND_BANK: Record<string, { source: string; filters: string; seconds: number; what: string }> = {
   pop: { source: "aevalsrc='0.7*sin(2*PI*(520+260*exp(-t*40))*t)*exp(-t*22)':d=0.3:s=48000", filters: "highpass=f=120,alimiter=limit=0.9", seconds: 0.3, what: "a soft pop for something that arrives with a scale" },
-  tick: { source: "aevalsrc='0.9*(random(0)-0.5)*exp(-t*350)':d=0.08:s=48000", filters: "highpass=f=1800,lowpass=f=9000,alimiter=limit=0.9", seconds: 0.08, what: "a dry tick for a counter step or a list item" },
+  tick: { source: "aevalsrc='2.4*(random(0)-0.5)*exp(-t*300)':d=0.08:s=48000", filters: "highpass=f=1800,lowpass=f=9000,volume=8dB,alimiter=limit=0.9", seconds: 0.08, what: "a dry tick for a counter step or a list item" },
   click: { source: "aevalsrc='0.8*sin(2*PI*1400*t)*exp(-t*140)':d=0.06:s=48000", filters: "highpass=f=400,alimiter=limit=0.9", seconds: 0.06, what: "a small click for a cursor or a toggle" },
-  whoosh: { source: "anoisesrc=d=0.55:c=pink:a=0.8:r=48000", filters: "highpass=f=250,lowpass=f=5000,afade=t=in:st=0:d=0.12:curve=qsin,afade=t=out:st=0.22:d=0.33:curve=qsin,alimiter=limit=0.8", seconds: 0.55, what: "air moving, for a slide or a wipe" },
+  whoosh: { source: "anoisesrc=d=0.55:c=pink:a=1:r=48000", filters: "highpass=f=250,lowpass=f=5000,volume=9dB,afade=t=in:st=0:d=0.12:curve=qsin,afade=t=out:st=0.22:d=0.33:curve=qsin,alimiter=limit=0.85", seconds: 0.55, what: "air moving, for a slide or a wipe" },
   rise: { source: "aevalsrc='0.45*sin(2*PI*(180+700*t*t)*t)*min(1,t*3)':d=0.7:s=48000", filters: "afade=t=out:st=0.45:d=0.25,alimiter=limit=0.9", seconds: 0.7, what: "a sweep up, for a reveal that builds" },
   thud: { source: "aevalsrc='0.95*sin(2*PI*(64+40*exp(-t*30))*t)*exp(-t*10)':d=0.45:s=48000", filters: "lowpass=f=300,alimiter=limit=0.95", seconds: 0.45, what: "a low landing, for a drop or a heavy word" },
   ding: { source: "aevalsrc='0.45*(sin(2*PI*880*t)+0.5*sin(2*PI*1760*t)+0.2*sin(2*PI*2637*t))*exp(-t*3.5)':d=1.3:s=48000", filters: "alimiter=limit=0.9", seconds: 1.3, what: "a bell, for a result or a check mark" },
