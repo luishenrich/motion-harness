@@ -11,7 +11,7 @@
 import React from "react";
 import type { CounterLayer, LineChartLayer, MgFilm, MgScene, ParticlesLayer, ShapeLayer, TextLayer, Layer, RingsLayer } from "./schema.ts";
 import { colorOf, layerTiming } from "./schema.ts";
-import { backgroundStyle, flatOf, isGradient, layerPaint, paintOf, textStyle, type ColorValue, type Gradient, type Paint } from "./colour.ts";
+import { flatOf, isGradient, layerPaint, paintOf, textStyle, type ColorValue, type Gradient, type Paint } from "./colour.ts";
 import { effectStyle, gradientTextOf, inProgress, scrambleText } from "./effects.ts";
 import { arrowBox, arrowPath, chartGeometry, drawnProgress, odometerCells, padDigits, polygonPath, ringGeometry, starPath } from "./shapes.ts";
 import { particlesAt, MAX_PARTICLES } from "./particles.ts";
@@ -158,7 +158,7 @@ export const ShapeSvg: React.FC<{ ctx: VCtx; layer: ShapeLayer; pose: Pose; fill
   const size = dia + (layer.thickness ?? 6);
   w = size * u;
   h = size * u;
-  d = layer.shape === "star" ? starPath(size / 2, size / 2, dia / 2, layer.sides ?? 5, layer.inner ?? 0.44, layer.rotate ? 0 : 0) : polygonPath(size / 2, size / 2, dia / 2, layer.sides ?? 6);
+  d = layer.shape === "star" ? starPath(size / 2, size / 2, dia / 2, layer.sides ?? 5, layer.inner ?? 0.44) : polygonPath(size / 2, size / 2, dia / 2, layer.sides ?? 6);
   const outline = layer.draw === true;
   return (
     <svg width={w} height={h} viewBox={`0 0 ${size} ${size}`} style={{ display: "block", overflow: "visible" }}>
@@ -193,7 +193,7 @@ export const LineChartView: React.FC<{ ctx: VCtx; layer: LineChartLayer; pose: P
   const axis = layer.axis ? colorOf(film.design, layer.axis, film.design.muted ?? "#6B6B6B") : null;
   const th = (layer.thickness ?? 8) * u;
   const labelSize = (layer.labelSize ?? 26) * u;
-  const shown = Math.max(0, Math.min(geom.points.length, Math.round(drawn * geom.points.length)));
+  const shown = drawn <= 0 ? 0 : Math.min(geom.points.length, Math.floor(drawn * (geom.points.length - 1) + 0.000001) + 1);
   return (
     <div style={{ width: w }}>
       <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: "block", overflow: "visible" }}>
@@ -232,8 +232,8 @@ export const RingsView: React.FC<{ ctx: VCtx; layer: RingsLayer; pose: Pose }> =
         <defs>{layer.values.map((v, i) => svgPaint(film, v.color, paintOf(film.design, v.color ?? "accent", film.design.accent), film.design.accent, `${scene.id}-${layer.id}-${i}`).def)}</defs>
         {layer.values.map((v, i) => {
           const { r, c } = ringGeometry(i, dia, th, gap);
-          const p = poseAt(film, scene, layer, frame, staggerDelay(st, i, layer.values.length));
-          const drawn = layer.tracks?.progress ? pose.progress : p.opacity;
+          const delay = staggerDelay(st, i, layer.values.length);
+          const drawn = drawnProgress(undefined, !!layer.tracks?.progress, pose.progress, inProgress(film, scene, layer, frame, delay));
           const frac = Math.max(0, Math.min(1, v.value / max)) * drawn;
           return (
             <g key={i}>
@@ -324,4 +324,3 @@ export const ParticlesView: React.FC<{ ctx: VCtx; layer: ParticlesLayer }> = ({ 
   );
 };
 
-export { backgroundStyle, mark as markText };

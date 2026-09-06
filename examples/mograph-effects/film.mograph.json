@@ -160,6 +160,7 @@
           "d": 150,
           "sides": 5,
           "inner": 0.46,
+          "rotate": -8,
           "fill": { "gradient": ["accent", "rose"], "angle": 120 },
           "at": { "x": 0.78, "y": 0.44 },
           "in": { "preset": "pop", "at": 44, "dur": 16, "ease": "back" },
