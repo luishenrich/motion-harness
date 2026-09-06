@@ -325,6 +325,7 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
         if (!KNOWN_SHAPES.includes(l.shape)) out.push({ level: "error", rule: "shape", where: `${lw}.shape`, message: `"${l.shape}" is not a shape (${KNOWN_SHAPES.join(", ")})` });
         if (l.shape === "path" && typeof l.d !== "string") out.push({ level: "error", rule: "shape", where: `${lw}.d`, message: "a path needs its data in d (\"M12 4 L40 30 ...\")" });
         if (l.shape === "path" && !l.viewBox) out.push({ level: "warn", rule: "shape", where: `${lw}.viewBox`, message: "a path without a viewBox is drawn in a 100x100 box" });
+        if (l.viewBox && l.viewBox.length !== 2) out.push({ level: "error", rule: "shape", where: `${lw}.viewBox`, message: "a viewBox is [width, height]" });
         if (l.shape !== "path" && typeof l.d === "string") out.push({ level: "error", rule: "shape", where: `${lw}.d`, message: `d is the diameter of a ${l.shape}, a number` });
         if ((l.shape === "polygon" || l.shape === "star") && (l.sides ?? 0) < 3 && l.sides !== undefined) out.push({ level: "error", rule: "shape", where: `${lw}.sides`, message: "three sides at least" });
       }

@@ -108,8 +108,8 @@ export type ShapeLayer = LayerBase & {
   stroke?: ColorValue;
   /** ring and path: how much of the outline is drawn, 0..1 (animate with a progress track or the grow preset) */
   progress?: number;
-  /** path: the coordinate box the path was written in */
-  viewBox?: [number, number];
+  /** path: the coordinate box the path was written in, [width, height] */
+  viewBox?: number[];
   /** polygon: sides; star: spikes */
   sides?: number;
   /** star: the inner radius as a fraction of the outer one (0.44) */
