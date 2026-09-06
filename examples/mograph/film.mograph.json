@@ -38,12 +38,8 @@
   "scenes": [
     {
       "id": "hook",
-      "dur": 96,
+      "dur": 98,
       "ground": "ink",
-      "exit": {
-        "type": "fade",
-        "dur": 8
-      },
       "why": "the claim, one word at a time",
       "layers": [
         {
@@ -98,16 +94,22 @@
             }
           }
         }
-      ]
+      ],
+      "camera": {
+        "preset": "push",
+        "from": 1,
+        "to": 1.06,
+        "focus": {
+          "x": 0.5,
+          "y": 0.47
+        },
+        "ease": "linear"
+      }
     },
     {
       "id": "stat",
       "dur": 96,
       "ground": "paper",
-      "exit": {
-        "type": "fade",
-        "dur": 8
-      },
       "why": "one number that says how fast a look is",
       "layers": [
         {
@@ -171,6 +173,139 @@
             "at": 24,
             "dur": 10,
             "ease": "bouncy"
+          }
+        }
+      ],
+      "transition": {
+        "type": "push-up",
+        "dur": 14,
+        "ease": "inOut"
+      }
+    },
+    {
+      "id": "card",
+      "dur": 120,
+      "ground": "ink",
+      "transition": {
+        "type": "wipe-left",
+        "dur": 14,
+        "ease": "inOut"
+      },
+      "why": "one group: the card moves, everything inside moves with it",
+      "layers": [
+        {
+          "id": "panel",
+          "type": "group",
+          "w": 880,
+          "h": 440,
+          "fill": "paper",
+          "radius": 32,
+          "at": {
+            "x": 0.5,
+            "y": 0.47
+          },
+          "anchor": "center",
+          "in": {
+            "preset": "pop",
+            "at": 16,
+            "dur": 16,
+            "ease": "back",
+            "stagger": {
+              "by": "item",
+              "each": 5
+            }
+          },
+          "layers": [
+            {
+              "id": "card-title",
+              "type": "text",
+              "text": "One card",
+              "size": 62,
+              "color": "ink",
+              "at": {
+                "x": 0.5,
+                "y": 0.26
+              },
+              "in": {
+                "preset": "rise",
+                "at": 4,
+                "dur": 12
+              }
+            },
+            {
+              "id": "card-rule",
+              "type": "shape",
+              "shape": "line",
+              "w": 160,
+              "thickness": 5,
+              "fill": "accent",
+              "at": {
+                "x": 0.5,
+                "y": 0.45
+              },
+              "in": {
+                "preset": "grow",
+                "at": 8,
+                "dur": 12
+              }
+            },
+            {
+              "id": "card-n",
+              "type": "counter",
+              "from": 0,
+              "to": 3,
+              "suffix": " layers",
+              "dur": 26,
+              "size": 92,
+              "color": "ink",
+              "at": {
+                "x": 0.5,
+                "y": 0.7
+              },
+              "in": {
+                "preset": "pop",
+                "at": 12,
+                "dur": 12,
+                "ease": "back"
+              }
+            }
+          ],
+          "formats": {
+            "vertical": {
+              "w": 900,
+              "h": 480,
+              "at": {
+                "x": 0.5,
+                "y": 0.48
+              }
+            }
+          }
+        },
+        {
+          "id": "card-note",
+          "type": "text",
+          "text": "the group moves, they move with it",
+          "role": "body",
+          "size": 36,
+          "weight": 500,
+          "color": "muted",
+          "at": {
+            "x": 0.5,
+            "y": 0.78
+          },
+          "in": {
+            "preset": "fade",
+            "at": 46,
+            "dur": 12
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.5,
+                "y": 0.72
+              },
+              "size": 34
+            }
           }
         }
       ]
@@ -249,16 +384,17 @@
             }
           }
         }
-      ]
+      ],
+      "transition": {
+        "type": "zoom",
+        "dur": 12,
+        "ease": "out"
+      }
     },
     {
       "id": "speed",
       "dur": 120,
       "ground": "paper",
-      "exit": {
-        "type": "fade",
-        "dur": 8
-      },
       "why": "the benchmark as bars",
       "layers": [
         {
@@ -356,6 +492,206 @@
               }
             }
           }
+        }
+      ]
+    },
+    {
+      "id": "travel",
+      "dur": 120,
+      "ground": "ink",
+      "transition": {
+        "type": "dissolve",
+        "dur": 12,
+        "ease": "inOut"
+      },
+      "exit": {
+        "type": "fade",
+        "dur": 8
+      },
+      "camera": {
+        "tracks": {
+          "x": [
+            {
+              "at": 0,
+              "v": 70
+            },
+            {
+              "at": 54,
+              "v": 0,
+              "ease": "inOut"
+            },
+            {
+              "at": 108,
+              "v": -70,
+              "ease": "inOut"
+            }
+          ]
+        }
+      },
+      "why": "a travelling shot: the camera crosses the three frames",
+      "layers": [
+        {
+          "id": "strip-title",
+          "type": "text",
+          "text": "One film, three frames",
+          "size": 58,
+          "color": "paper",
+          "at": {
+            "x": 0.5,
+            "y": 0.2
+          },
+          "in": {
+            "preset": "rise",
+            "at": 12,
+            "dur": 12
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.5,
+                "y": 0.3
+              },
+              "size": 52
+            }
+          }
+        },
+        {
+          "id": "wide-box",
+          "type": "shape",
+          "shape": "rect",
+          "w": 260,
+          "h": 146,
+          "radius": 12,
+          "fill": "teal",
+          "at": {
+            "x": 0.28,
+            "y": 0.5
+          },
+          "in": {
+            "preset": "pop",
+            "at": 24,
+            "dur": 12,
+            "ease": "back"
+          }
+        },
+        {
+          "id": "wide-label",
+          "type": "text",
+          "text": "16:9",
+          "role": "mono",
+          "size": 32,
+          "weight": 500,
+          "color": "paper",
+          "at": {
+            "x": 0.28,
+            "y": 0.66
+          },
+          "in": {
+            "preset": "fade",
+            "at": 32,
+            "dur": 10
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.28,
+                "y": 0.62
+              }
+            }
+          },
+          "maxWidth": 0.14
+        },
+        {
+          "id": "square-box",
+          "type": "shape",
+          "shape": "rect",
+          "w": 190,
+          "h": 190,
+          "radius": 12,
+          "fill": "accent",
+          "at": {
+            "x": 0.5,
+            "y": 0.5
+          },
+          "in": {
+            "preset": "pop",
+            "at": 32,
+            "dur": 12,
+            "ease": "back"
+          }
+        },
+        {
+          "id": "square-label",
+          "type": "text",
+          "text": "1:1",
+          "role": "mono",
+          "size": 32,
+          "weight": 500,
+          "color": "paper",
+          "at": {
+            "x": 0.5,
+            "y": 0.66
+          },
+          "in": {
+            "preset": "fade",
+            "at": 40,
+            "dur": 10
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.5,
+                "y": 0.62
+              }
+            }
+          },
+          "maxWidth": 0.14
+        },
+        {
+          "id": "tall-box",
+          "type": "shape",
+          "shape": "rect",
+          "w": 130,
+          "h": 230,
+          "radius": 12,
+          "fill": "rose",
+          "at": {
+            "x": 0.72,
+            "y": 0.5
+          },
+          "in": {
+            "preset": "pop",
+            "at": 40,
+            "dur": 12,
+            "ease": "back"
+          }
+        },
+        {
+          "id": "tall-label",
+          "type": "text",
+          "text": "9:16",
+          "role": "mono",
+          "size": 32,
+          "weight": 500,
+          "color": "paper",
+          "at": {
+            "x": 0.72,
+            "y": 0.66
+          },
+          "in": {
+            "preset": "fade",
+            "at": 48,
+            "dur": 10
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.72,
+                "y": 0.62
+              }
+            }
+          },
+          "maxWidth": 0.14
         }
       ]
     },
