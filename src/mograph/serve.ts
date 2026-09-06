@@ -279,6 +279,9 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
   <aside aria-label="Layers and inspector">
     <section><h2>Layers</h2><ul class="layers" id="layers" role="listbox" aria-label="Layers of the current scene"></ul>
       <div class="row"><button type="button" id="addText">+ text</button><button type="button" id="addShape">+ shape</button><button type="button" id="addCounter">+ counter</button><button type="button" id="addList">+ list</button><button type="button" id="addGroup">+ group</button><button type="button" id="layout">layout</button></div></section>
+    <section><h2 id="selHead">Selection</h2><div class="loc" id="selList">none</div>
+      <div class="row" role="group" aria-label="Align the selection"><button type="button" id="al-left" aria-label="Align left">left</button><button type="button" id="al-centre" aria-label="Align centre">centre</button><button type="button" id="al-right" aria-label="Align right">right</button><button type="button" id="al-top" aria-label="Align top">top</button><button type="button" id="al-middle" aria-label="Align middle">middle</button><button type="button" id="al-bottom" aria-label="Align bottom">bottom</button></div>
+      <div class="row" role="group" aria-label="Distribute the selection"><button type="button" id="al-dist-h" aria-label="Distribute horizontally">distribute across</button><button type="button" id="al-dist-v" aria-label="Distribute vertically">distribute down</button><button type="button" id="selAll" aria-label="Select every layer of the scene">all</button><button type="button" id="selClear" aria-label="Clear the selection">none</button></div></section>
     <section><h2>Scene</h2><div class="grid" id="sceneForm"></div></section>
     <section><h2 id="selTitle">Layer</h2><div class="grid" id="quick"></div>
       <label class="sr" for="json">Layer as JSON</label><textarea id="json" spellcheck="false" placeholder="select a layer"></textarea>
@@ -351,6 +354,8 @@ function locate(){const ts=tScene();const local=frame;const ev=ts.events.filter(
 /* ---------- render ---------- */
 function render(){const L=locate();const s=scene();$("scrub").max=s.dur-1;$("scrub").value=frame;$("loc").textContent=s.id+"+"+frame+"  film f"+L.filmFrame+" "+fmt(L.seconds)+(L.event?"  after "+L.event:"");
   const sc=$("scenes");sc.innerHTML="";F.scenes.forEach(x=>{const b=document.createElement("button");b.type="button";b.textContent=x.id+" "+x.dur+"f";b.className=x.id===s.id?"cur":"";b.setAttribute("aria-label","Scene "+x.id+", "+x.dur+" frames");b.setAttribute("aria-current",x.id===s.id?"true":"false");b.onclick=()=>{sceneId=x.id;frame=0;sel=[];paint();show()};sc.appendChild(b)});
+  $("selHead").textContent="Selection"+(sel.length?" ("+sel.length+")":"");
+  $("selList").textContent=sel.length?sel.map(p=>s.id+"."+p).join("  "):"none";
   drawLayers();drawStrip();sceneForm();inspector();drawFindings();$("mh-state").textContent=JSON.stringify(state(),null,1);
   if(lastFocus&&(document.activeElement===document.body||document.activeElement===null)){const el=document.querySelector('[data-fk="'+lastFocus+'"]');if(el)el.focus()}}
 function drawLayers(){const ul=$("layers");ul.innerHTML="";rows().forEach(r=>{const li=document.createElement("li");li.setAttribute("role","option");li.setAttribute("aria-selected",sel.indexOf(r.path)>=0?"true":"false");li.tabIndex=0;li.dataset.fk="li:"+r.path;li.style.paddingLeft=(6+r.depth*14)+"px";
@@ -421,6 +426,17 @@ function setOutAt(path,at){const l=layerAt(path);const ops=[{op:"set",addr:addrO
 function nudge(dx,dy){if(!sel.length)return;post(()=>{const ops=sel.map(p=>{const l=viewLayer(p);if(!l)return null;const at=l.at||{x:0.5,y:0.5};return {op:"set",addr:writeAddr(p,"at"),value:{x:Math.round((at.x+dx)*1000)/1000,y:Math.round((at.y+dy)*1000)/1000}}}).filter(Boolean);return ops.length===1?ops[0]:{op:"batch",ops:ops,name:"at"}},"nudge")}
 function resize(d){if(!sel.length)return;post(()=>{const ops=sel.map(p=>{const l=layerAt(p);if(!l)return null;const cur=l.size||(l.type==="counter"?160:l.type==="list"?48:72);return {op:"set",addr:addrOf(p,"size"),value:Math.max(8,cur+d)}}).filter(Boolean);return ops.length===1?ops[0]:{op:"batch",ops:ops,name:"size"}},"size "+(d>0?"+":"")+d)}
 function pick(path,add){if(add){const i=sel.indexOf(path);if(i>=0)sel.splice(i,1);else sel.push(path)}else sel=[path];kfSel=null;paint();render()}
+/** every selected layer's at, written in one batch: one save, one undo step */
+function alignSel(mode){if(sel.length<2){$("save").textContent="align needs two or more layers selected (shift-click)";$("save").className="save err";return}
+  post(()=>{const items=sel.map(p=>{const at=((viewLayer(p)||{}).at)||{x:0.5,y:0.5};return {p:p,x:at.x,y:at.y}});
+    const xs=items.map(i=>i.x),ys=items.map(i=>i.y);
+    const minX=Math.min.apply(null,xs),maxX=Math.max.apply(null,xs),minY=Math.min.apply(null,ys),maxY=Math.max.apply(null,ys);
+    const r=n=>Math.round(n*1000)/1000;let next;
+    if(mode==="dist-h"){const s=items.slice().sort((a,b)=>a.x-b.x);const step=(maxX-minX)/(s.length-1);next=i=>({x:r(minX+step*s.indexOf(i)),y:i.y})}
+    else if(mode==="dist-v"){const s=items.slice().sort((a,b)=>a.y-b.y);const step=(maxY-minY)/(s.length-1);next=i=>({x:i.x,y:r(minY+step*s.indexOf(i))})}
+    else{const v=mode==="left"?minX:mode==="right"?maxX:mode==="centre"?(minX+maxX)/2:mode==="top"?minY:mode==="bottom"?maxY:(minY+maxY)/2;
+      const horiz=mode==="left"||mode==="right"||mode==="centre";next=i=>horiz?{x:r(v),y:i.y}:{x:i.x,y:r(v)}}
+    return {op:"batch",name:mode,ops:items.map(i=>({op:"set",addr:writeAddr(i.p,"at"),value:next(i)}))}},"align "+mode)}
 function seek(d){frame=clampF(frame+d);show()}
 function togglePlay(){if(playing){clearInterval(playing);playing=null;$("play").setAttribute("aria-pressed","false");$("play").textContent="play";return}$("play").setAttribute("aria-pressed","true");$("play").textContent="pause";playing=setInterval(()=>{frame=(frame+1)%scene().dur;show()},1000/F.fps)}
 
@@ -520,6 +536,9 @@ $("apply").onclick=()=>{const l=layer();if(!l)return;let v;try{v=JSON.parse($("j
 $("dup").onclick=()=>{if(sel.length)post({op:"dup",addr:addrOf(sel[0])},"duplicate")};
 $("remove").onclick=()=>{if(!sel.length)return;const ops=sel.map(p=>({op:"remove",addr:addrOf(p)}));post(ops.length===1?ops[0]:{op:"batch",ops:ops,name:"remove"},"remove");sel=[]};
 $("layout").onclick=()=>post({op:"layout",scene:scene().id},"layout");
+["left","centre","right","top","middle","bottom","dist-h","dist-v"].forEach(m=>{$("al-"+m).onclick=()=>alignSel(m)});
+$("selAll").onclick=()=>{sel=rows().map(r=>r.path);paint();render()};
+$("selClear").onclick=()=>{sel=[];kfSel=null;paint();render()};
 const newId=p=>{let i=1;while(scene().layers.some(l=>l.id===p+"-"+i))i++;return p+"-"+i};
 const addLayerOp=l=>post({op:"add-layer",scene:scene().id,layer:l},"add "+l.type).then(()=>{sel=[l.id];paint();render()});
 $("addText").onclick=()=>addLayerOp({id:newId("text"),type:"text",text:"New line",size:72,color:scene().ground==="paper"?"ink":"paper",at:{x:0.5,y:0.5},in:{preset:"rise",at:0,dur:14}});
