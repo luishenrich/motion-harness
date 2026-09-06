@@ -1,0 +1,28 @@
+# motion-harness
+
+> Eyes and hands for AI agents that make videos. A CLI (`mh`) next to a React video project: the timeline as data, check frames in seconds, a DOM probe, lints before and after rendering, motion and audio as numbers, a native renderer that needs no Remotion, stills, subtitles, per-platform deliveries, and a review player whose comments come back as scene and frame.
+
+## Start
+
+- [README](README.md): what it is, install, the loop
+- [The skill](skills/motion-harness/SKILL.md): how an agent works on a film with it
+- [Feedback skill](skills/motion-harness-feedback/SKILL.md): a human's comment to a verified edit
+- [Sound skill](skills/motion-harness-sound/SKILL.md): music, sfx, voice, loudness
+- [Deliver skill](skills/motion-harness-deliver/SKILL.md): the handover
+- [AGENTS.md](AGENTS.md): working in this repository
+
+## Reference
+
+- `mh help`: every command with its flags
+- [Config template](templates/harness.config.ts): what a project declares
+- [Timeline schema](src/timeline/schema.ts): parts, scenes, events, audio cues, rules, i18n
+- [Engine interface](src/render/engine.ts): remotion or native
+- [Example project](examples/basic): a film that runs through every command
+
+## Rules an agent should know
+
+- Addresses, not guesses: `scene+local`, `20.5s`, `f616`, `probe.pick1`; `mh resolve` translates
+- Never claim a visual change without a frame or a sheet from `mh frame` or `mh check`
+- Timing lives in the timeline, sound in its cues, cursor targets in `mh cursor`
+- `--json` on stdout is for machines, everything else is on stderr
+- Receipts in `<cache>/receipts/` say what a command produced and from which sources

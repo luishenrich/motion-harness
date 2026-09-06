@@ -1,11 +1,12 @@
 {
   "name": "motion-harness",
-  "version": "0.1.0",
-  "description": "Agent-first harness around Remotion: timeline as data, scene renders in seconds, contact sheets with scene knowledge, DOM probes, design lint, motion and audio metrics, review player with scene-addressed feedback.",
+  "version": "0.2.0",
+  "description": "Eyes and hands for AI agents that make videos: timeline as data, frames in seconds, DOM probe, lints, motion and audio numbers, a native renderer (no Remotion needed), stills, subtitles, deliveries. CLI first, skills for Claude Code, Codex and Cursor, MCP for the outer loop.",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "mh": "./bin/mh"
+    "mh": "./bin/mh",
+    "motion-harness": "./bin/mh"
   },
   "exports": {
     ".": "./src/index.ts",
@@ -16,7 +17,9 @@
     "mh": "bun run src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "example": "bun run src/cli.ts --project examples/basic"
+    "example": "bun run src/cli.ts --project examples/basic",
+    "mcp": "bun run src/mcp/server.ts",
+    "pack:check": "npm pack --dry-run"
   },
   "peerDependencies": {
     "@remotion/bundler": "4.0.475",
@@ -25,10 +28,12 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1127.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@vitejs/plugin-react": "^6.1.1",
     "playwright-core": "1.57.0",
     "sharp": "^0.34.3",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@remotion/bundler": "4.0.475",
@@ -41,5 +46,47 @@
     "react-dom": "19.1.2",
     "remotion": "4.0.475",
     "typescript": "^5.9.3"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "templates",
+    "README.md",
+    "LICENSE",
+    "llms.txt",
+    "AGENTS.md"
+  ],
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "keywords": [
+    "video",
+    "remotion",
+    "agents",
+    "claude-code",
+    "codex",
+    "cursor",
+    "mcp",
+    "motion",
+    "render",
+    "ffmpeg",
+    "subtitles"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luishenrich/motion-harness"
+  },
+  "homepage": "https://github.com/luishenrich/motion-harness",
+  "peerDependenciesMeta": {
+    "remotion": {
+      "optional": true
+    },
+    "@remotion/bundler": {
+      "optional": true
+    },
+    "@remotion/renderer": {
+      "optional": true
+    }
   }
 }

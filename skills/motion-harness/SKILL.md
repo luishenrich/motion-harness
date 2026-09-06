@@ -1,14 +1,22 @@
 ---
 name: motion-harness
-description: Work on a Remotion film with eyes and hands. Use whenever you edit, review, or verify a Remotion composition that has a harness.config.ts: resolve feedback like "second 21" or "the check button clicks too late" to a scene and frame, render check frames and contact sheets in seconds instead of full renders, read element boxes and painted colors from the DOM, measure motion, mix the film from the timeline, and read comments from the review player. Triggers: remotion, mh, motion-harness, launch film, scene, beat, contact sheet, timeline, review comments, too fast, too slow, frame.
+description: Work on a React video (Remotion API, rendered by the native engine or Remotion) with eyes and hands. Use whenever you edit, review, or verify a film that has a harness.config.ts: resolve feedback like "second 21" or "the check button clicks too late" to a scene and frame, render exact frames and contact sheets in seconds instead of full renders, read element boxes and painted colors from the DOM, measure motion, mix the film from the timeline, render both formats, and read comments from the review player. Triggers: remotion, mh, motion-harness, launch film, product video, scene, beat, contact sheet, timeline, review comments, too fast, too slow, frame, render.
 ---
 
 # motion-harness for agents
 
-You are working on a Remotion project that carries a `harness.config.ts`. The CLI is `mh`
-(run `bun run <harness repo>/src/cli.ts <cmd>` or the `mh` bin; pass `--project <dir>` when
-you are not inside the project). Everything below is fast: check frames take about 0.3 s each,
-a scene segment renders in seconds, and the bundle is cached.
+You are working on a video project that carries a `harness.config.ts`: React components with
+the Remotion API (`useCurrentFrame`, `Sequence`, `interpolate`, `spring`) and a timeline as
+data. The CLI is `mh` (`npx mh`, the `mh` bin, or `bun run <harness repo>/src/cli.ts <cmd>`);
+the project is `--project <dir>`, `$MH_PROJECT`, the cwd, or the last one used. Two engines
+render it: `native` (Vite + Playwright, no Remotion install, a frame in about 40 ms, a
+60 second film in about a minute) and `remotion` (the project's Remotion). Prefer
+`--engine native` (or `engine: "native"` in the config); the frames are the same pixels.
+
+The commands that make up one edit round, in order: `mh resolve` (what is at that moment),
+`mh frame` (look at it), edit, `mh check --scene <id> --format all` (typecheck, lint, doctor,
+cursor targets, sheets, rendered lint), `mh diff` (what else moved), `mh render --format all`.
+Every command leaves a receipt in `<cache>/receipts/` with its outputs and their sha1.
 
 ## The one rule
 

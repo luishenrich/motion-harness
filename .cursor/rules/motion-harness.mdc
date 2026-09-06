@@ -1,0 +1,11 @@
+---
+description: Working on a video project with motion-harness (mh)
+globs: ["**/harness.config.ts", "**/src/**/*.tsx"]
+alwaysApply: false
+---
+
+Read skills/motion-harness/SKILL.md before editing a film. The loop is: `mh resolve` for any
+moment a human names, `mh check --scene <id> --format all` after every edit, `mh frame <addr>`
+to look at one moment, `mh diff` to see what else moved, `mh render --engine native` for the
+film. Timing belongs in the timeline, sound in its cues, cursor targets in `mh cursor`. Never
+report a visual change without a frame or a sheet. Use `--json` when you need to parse output.

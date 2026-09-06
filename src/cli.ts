@@ -43,6 +43,7 @@ import { resolveUnclamped, locate } from "./timeline/resolve.ts";
 import { renderSegments, renderPartAudio, concatParts, concatScenes, mixFilm, partDurationCheck, picturePath, FULL, DRAFT } from "./film/film.ts";
 import { cpus } from "node:os";
 import { startReviewServer, loadComments, feedbackMarkdown, commentsPath } from "./review/server.ts";
+import { reviewPage } from "./review/export.ts";
 import { ensureDir, readJson, writeJson, stamp, table, ms, run, dirSize, mb, withLock, ffprobeDuration, mediaStats, statsLine } from "./util.ts";
 
 /* ---------- args ---------- */
@@ -1380,6 +1381,28 @@ const cmdClean = async (args: Args) => {
 const cmdReview = async (args: Args) => {
   const x = await ctx(args);
   const video = args._[0] ?? str(args, "video") ?? join(x.cfg.cachePath, "out", `${x.filmName}-${x.format}.mp4`);
+  const exportTo = str(args, "export");
+  if (exportTo) {
+    // one standalone page: the film by url, or embedded (a 960 px copy when the master is heavy)
+    const url = str(args, "url");
+    let src = url ?? video;
+    if (!url) {
+      if (!existsSync(video)) die(`no film at ${video}, run "mh render" or pass a file`);
+      const bytes = statSync(video).size;
+      if (flag(args, "embed") && bytes > 6 * 1024 * 1024 && !flag(args, "full")) {
+        const small = join(ensureDir(join(x.cfg.cachePath, "review")), `${x.filmName}-${x.format}-960.mp4`);
+        if (!existsSync(small) || statSync(small).mtimeMs < statSync(video).mtimeMs) {
+          log(`embedding a 960 px copy (${mb(bytes)} master), --full embeds the master`);
+          await run(["ffmpeg", "-y", "-v", "error", "-i", video, "-vf", "scale=960:-2", "-c:v", "libx264", "-preset", "medium", "-crf", "26", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", small]);
+        }
+        src = small;
+      }
+    }
+    const html = reviewPage({ film: x.filmName, format: x.format, c: x.c, video: src, embed: flag(args, "embed") && !url, title: str(args, "title"), fragment: flag(args, "artifact") });
+    writeFileSync(resolvePath(exportTo), html);
+    produced(resolvePath(exportTo));
+    return log(`review page -> ${exportTo} (${mb(Buffer.byteLength(html))}${url ? `, film from ${url}` : flag(args, "embed") ? ", film embedded" : `, film by path ${src}`})`);
+  }
   if (!existsSync(video)) die(`no film at ${video}, run "mh render" or pass a file`);
   const port = num(args, "port", 4848);
   startReviewServer(x.cfg, x.c, x.filmName, x.format, resolvePath(video), port);
@@ -1492,6 +1515,12 @@ const cmdBundle = async (args: Args) => {
   log(`bundle: ${b.serveUrl} (${b.hash.slice(0, 12)})`);
 };
 
+/** the outer loop: mh as an MCP server on stdio (claude mcp add motion-harness -- mh mcp) */
+const cmdMcp = async () => {
+  await import("./mcp/server.ts");
+  await new Promise(() => {});
+};
+
 const cmdInit = async (args: Args) => {
   const projectDir = resolvePath(str(args, "project") ?? process.env.MH_PROJECT ?? process.cwd());
   const file = join(projectDir, "harness.config.ts");
@@ -1545,6 +1574,9 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
   clean [--older-than days] [--keep-approved=false] [--all] [--verbose]
                                     empty the cache (frames, motion, segments, film, out); keeps approved runs and review comments
   review [file] [--port 4848]       the player with the scene bar, comments land as scene+frame
+  review --export page.html [--embed | --url https://...] [--title t] [--artifact]
+                                    the player as one standalone page: accessibility tree, keyboard for every gesture, state read-back (#mh-state, window.mhState()),
+                                    comments in a shared db when published as a claude.ai artifact, else in the browser; --embed inlines the film
   feedback [--all] [--json] [--clear]
                                     the comments as an agent-readable list, grouped by scene
   feedback --from <file|->          free text ("bei 1:09", "Sekunde 19-21", "beim Klicken") turned into scene addresses
@@ -1561,6 +1593,7 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
                                     films per format, stills as jpg, the srt, per-platform loudness copies, burned captions, a manifest (sizes, sha1, loudness, chapters, urls) and a .gitignore for the mp4;
                                     --upload puts every file on S3/R2 (MH_S3_* or CLOUDFLARE_* env) and records the urls
   init [--force]                    write a harness.config.ts template into the project
+  mcp                               serve mh as an MCP server on stdio (typed tools mh_timeline, mh_frame, mh_check, mh_render, mh_deliver, ... plus a raw "mh" tool)
 
   engine: --engine remotion|native (or config.engine): remotion uses the project's Remotion install, native runs Vite + shim + Playwright without it
   project: --project dir, else $MH_PROJECT, else the cwd when it holds harness.config.ts, else the project used last (~/.mh/last)
@@ -1603,6 +1636,7 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   review: cmdReview,
   feedback: cmdFeedback,
   init: cmdInit,
+  mcp: cmdMcp,
 };
 
 const main = async () => {
