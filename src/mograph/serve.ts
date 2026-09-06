@@ -1,9 +1,9 @@
 /**
  * The editor: the film's data with hands, in a browser. The native engine's
  * host page renders any frame of the film on a stage; this page wraps it with a
- * scrubber, a layer list, an inspector and a keyboard, and every change is
- * written to film.mograph.json at once, linted, and re-rendered without a
- * reload (the stage is remounted with the new data as input props). A
+ * scrubber, a timeline strip, a layer list, an inspector and a keyboard, and
+ * every change is written to film.mograph.json at once, linted, and re-rendered
+ * without a reload (the stage is remounted with the new data as input props). A
  * computer-use agent gets labels on everything, a text read-back of the whole
  * state (#mh-state, window.mhEdit.state()) and a keyboard path for each gesture.
  */
@@ -12,14 +12,15 @@ import type { LoadedConfig } from "../config.ts";
 import { compile } from "../timeline/schema.ts";
 import { timelineJson } from "../timeline/docs.ts";
 import { mographTimeline } from "./timeline.ts";
-import type { MgFilm } from "./schema.ts";
-import { loadFilm, saveFilm, setValue, unsetValue, setKey, unsetKey, addLayer, addScene, remove, move, duplicate, rename, lintFilm, autoLayout, type MgFinding } from "./edit.ts";
+import type { Keyframe, Layer, MgFilm, TrackProp } from "./schema.ts";
+import { loadFilm, saveFilm, setValue, unsetValue, setKey, unsetKey, addLayer, addScene, remove, move, duplicate, rename, lintFilm, autoLayout, resolveAddress, type MgFinding } from "./edit.ts";
 
 type Op =
   | { op: "set"; addr: string; value: unknown }
   | { op: "unset"; addr: string }
   | { op: "key"; addr: string; at: number; v: number; ease?: string }
   | { op: "unkey"; addr: string; at: number }
+  | { op: "move-key"; addr: string; from: number; to: number }
   | { op: "add-layer"; scene: string; layer: Record<string, unknown>; after?: string; before?: string }
   | { op: "add-scene"; scene: Record<string, unknown>; after?: string; before?: string }
   | { op: "remove"; addr: string }
@@ -27,22 +28,70 @@ type Op =
   | { op: "dup"; addr: string; as?: string }
   | { op: "rename"; addr: string; id: string }
   | { op: "layout"; scene?: string }
+  | { op: "batch"; ops: Op[]; name?: string }
   | { op: "replace"; film: MgFilm };
 
+type Nested = Layer & { layers?: Layer[] };
+
+/**
+ * A layer inside a group is addressed `scene.group.child.prop`; edit.ts digs
+ * plain properties, so the address is rewritten to the index path it can dig
+ * (`scene.group.layers.0.prop`). A normal address comes back unchanged.
+ */
+export const resolveNested = (film: MgFilm, addr: string): string => {
+  const p = addr.split(".");
+  if (p.length < 3) return addr;
+  const scene = film.scenes.find((s) => s.id === p[0]);
+  if (!scene) return addr;
+  let layer = scene.layers.find((l) => l.id === p[1]) as Nested | undefined;
+  if (!layer) return addr;
+  const out = [p[0], p[1]];
+  let i = 2;
+  while (i < p.length && Array.isArray(layer?.layers)) {
+    const j = layer!.layers!.findIndex((c) => c.id === p[i]);
+    if (j < 0) break;
+    out.push("layers", String(j));
+    layer = layer!.layers![j] as Nested;
+    i++;
+  }
+  return [...out, ...p.slice(i)].join(".");
+};
+
+/** the keyframes of a track, whatever the address depth */
+const keysOf = (film: MgFilm, addr: string): Keyframe[] => {
+  const t = resolveAddress(film, addr);
+  if (t.kind !== "layer" || t.path.length !== 1) throw new Error("a keyframe address is scene.layer.prop");
+  return t.layer!.tracks?.[t.path[0] as TrackProp] ?? [];
+};
+
+/**
+ * The ops. Beyond what edit.ts offers the editor needs three things, built here
+ * from the same functions: `batch` (many ops, one save and one undo step, what
+ * align and a multi-selection nudge send), `move-key` (a keyframe dragged to
+ * another frame keeps its value and its easing) and the nested addresses above.
+ */
 export const applyOp = (film: MgFilm, o: Op): MgFilm => {
+  const addr = "addr" in o && typeof o.addr === "string" ? resolveNested(film, o.addr) : "";
   switch (o.op) {
     case "set":
-      setValue(film, o.addr, o.value);
+      setValue(film, addr, o.value);
       return film;
     case "unset":
-      unsetValue(film, o.addr);
+      unsetValue(film, addr);
       return film;
     case "key":
-      setKey(film, o.addr, o.at, o.v, o.ease);
+      setKey(film, addr, o.at, o.v, o.ease);
       return film;
     case "unkey":
-      unsetKey(film, o.addr, o.at);
+      unsetKey(film, addr, o.at);
       return film;
+    case "move-key": {
+      const k = keysOf(film, addr).find((x) => x.at === o.from);
+      if (!k) throw new Error(`no keyframe at ${o.from} on ${o.addr}`);
+      unsetKey(film, addr, o.from);
+      setKey(film, addr, o.to, k.v, k.ease);
+      return film;
+    }
     case "add-layer":
       addLayer(film, o.scene, o.layer as never, { after: o.after, before: o.before });
       return film;
@@ -50,20 +99,27 @@ export const applyOp = (film: MgFilm, o: Op): MgFilm => {
       addScene(film, o.scene as never, { after: o.after, before: o.before });
       return film;
     case "remove":
-      remove(film, o.addr);
+      // a group child is a member of its parent's layers array, not a scene layer
+      if (/\.layers\.\d+$/.test(addr)) unsetValue(film, addr);
+      else remove(film, addr);
       return film;
     case "move":
-      move(film, o.addr, { after: o.after, before: o.before });
+      move(film, addr, { after: o.after, before: o.before });
       return film;
     case "dup":
-      duplicate(film, o.addr, o.as);
+      duplicate(film, addr, o.as);
       return film;
     case "rename":
-      rename(film, o.addr, o.id);
+      rename(film, addr, o.id);
       return film;
     case "layout":
       autoLayout(film, o.scene);
       return film;
+    case "batch": {
+      let f = film;
+      for (const x of o.ops) f = applyOp(f, x);
+      return f;
+    }
     case "replace":
       return o.film;
   }
@@ -83,6 +139,12 @@ const json = (res: ServerResponse, code: number, body: unknown) => {
   res.end(JSON.stringify(body));
 };
 
+/** what the log line for an op says */
+export const opLabel = (o: Op): string =>
+  o.op === "batch"
+    ? `batch ${o.name ?? ""}(${o.ops.length})`
+    : `${o.op}${"addr" in o && typeof o.addr === "string" ? ` ${o.addr}` : "scene" in o && typeof o.scene === "string" ? ` ${o.scene}` : ""}${"value" in o ? ` = ${JSON.stringify(o.value)}` : ""}`;
+
 export type EditServer = { film: () => MgFilm; findings: () => MgFinding[]; log: string[] };
 
 /** GET /__mh/film (the film, its compiled timeline), POST /__mh/film (an op), GET /__mh/edit (the page) */
@@ -91,7 +153,7 @@ export const editMiddleware = (cfg: LoadedConfig, filmName: string, filmPath: st
   let film = loadFilm(filmPath);
   let findings = lintFilm(film, cfg.projectDir);
   const history: string[] = [];
-  const snapshot = () => ({ film, timeline: JSON.parse(timelineJson(compile(mographTimeline(film, { film: filmName })))), findings, path: filmPath, name: filmName, formats: film.formats, fps: film.fps });
+  const snapshot = () => ({ film, timeline: JSON.parse(timelineJson(compile(mographTimeline(film, { film: filmName })))), findings, path: filmPath, name: filmName, formats: film.formats, fps: film.fps, ops: history.length });
   const handler = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     const url = (req.url ?? "").split("?")[0];
     if (url === "/__mh/edit" || url === "/__mh/edit/") {
@@ -111,7 +173,7 @@ export const editMiddleware = (cfg: LoadedConfig, filmName: string, filmPath: st
         saveFilm(filmPath, film);
         history.push(before);
         if (history.length > 200) history.shift();
-        log(`${o.op}${"addr" in o ? ` ${o.addr}` : "scene" in o && typeof o.scene === "string" ? ` ${o.scene}` : ""}${"value" in o ? ` = ${JSON.stringify(o.value)}` : ""}  (${findings.filter((f) => f.level === "error").length} errors)`);
+        log(`${opLabel(o)}  (${findings.filter((f) => f.level === "error").length} errors)`);
         return json(res, 200, { ok: true, ...snapshot() });
       } catch (e) {
         return json(res, 400, { ok: false, error: String((e as Error).message ?? e), ...snapshot() });
@@ -133,11 +195,15 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
   header h1{font-size:15px;margin:0}header .meta{color:#666}header .save{color:#2c7a3f}header .save.err{color:var(--err)}
   main{display:grid;grid-template-columns:minmax(0,1fr) 400px;flex:1;min-height:0}
   .stage{display:flex;flex-direction:column;min-width:0;padding:12px 16px;gap:10px;overflow:hidden}
-  .view{flex:1;min-height:240px;position:relative;background:#111;border-radius:8px;overflow:hidden}
+  .view{flex:1;min-height:200px;display:flex;gap:10px}
+  .pane{position:relative;flex:1;min-width:0;background:#111;border-radius:8px;overflow:hidden}
+  .pane[hidden]{display:none}
+  .pane.act{outline:2px solid var(--acc)}
+  .pane .tag{position:absolute;left:6px;top:6px;z-index:2;background:rgba(0,0,0,.55);color:#fff;font-size:11px;padding:1px 6px;border-radius:4px}
   @media (max-width:900px){main{grid-template-columns:1fr;overflow:auto}aside{border-left:0;border-top:1px solid var(--line)}}
-  .view iframe{position:absolute;left:0;top:0;border:0;transform-origin:0 0;background:#000}
+  .pane iframe{position:absolute;left:0;top:0;border:0;transform-origin:0 0;background:#000}
   .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .bar button,.bar select,aside button,aside select,aside input{font:inherit}
+  .bar button,.bar select,.bar input,aside button,aside select,aside input,aside textarea{font:inherit}
   .bar button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 10px;cursor:pointer}
   .bar button[aria-pressed="true"]{background:var(--ink);color:#fff;border-color:var(--ink)}
   .bar input[type=range]{flex:1;min-width:160px}
@@ -153,14 +219,36 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
   .layers li[aria-selected="true"]{background:#fdf1cf}
   .layers li .t{color:#888;font-size:11px;min-width:52px}.layers li .a{font-family:ui-monospace,Menlo,monospace;font-size:12px}
   .grid{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center}
-  .grid label{color:#555}.grid input,.grid select{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;padding:4px 6px}
-  textarea{width:100%;box-sizing:border-box;min-height:140px;border:1px solid var(--line);border-radius:6px;padding:6px;font:12px/1.4 ui-monospace,Menlo,monospace}
+  .grid label{color:#555}.grid input,.grid select,.grid textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+  textarea{width:100%;box-sizing:border-box;min-height:120px;border:1px solid var(--line);border-radius:6px;padding:6px;font:12px/1.4 ui-monospace,Menlo,monospace}
   .row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
   .row button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 10px;cursor:pointer}
   .row button.primary{background:var(--acc);border-color:var(--acc);font-weight:600}
   .findings{margin:0;padding:0;list-style:none;font-size:12px}.findings li{padding:2px 0}.findings .error{color:var(--err)}.findings .warn{color:var(--warn)}
   pre{margin:0;max-height:220px;overflow:auto;background:#faf8f1;border:1px solid var(--line);border-radius:6px;padding:8px;font-size:11px;white-space:pre-wrap}
   .sr{position:absolute;left:-9999px}
+  .strip{position:relative;border:1px solid var(--line);background:var(--card);border-radius:8px;max-height:210px;overflow:auto}
+  .strip .head,.strip .row2{display:grid;grid-template-columns:132px minmax(0,1fr);align-items:stretch}
+  .strip .head{position:sticky;top:0;z-index:3;background:var(--card);border-bottom:1px solid var(--line)}
+  .strip .head .name{color:#666;font-size:11px;padding:2px 6px;font-family:inherit}
+  .strip .ruler{position:relative;height:18px}
+  .strip .ruler i{position:absolute;top:0;bottom:0;border-left:1px solid var(--line);padding-left:3px;font-size:10px;color:#999;font-style:normal}
+  .strip .name{font-family:ui-monospace,Menlo,monospace;font-size:11px;padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;background:none;border:0;text-align:left;color:var(--ink)}
+  .strip .row2.sel .name{background:#fdf1cf;font-weight:600}
+  .strip .track{position:relative;height:22px;border-top:1px solid #f4f1e9;cursor:crosshair}
+  .strip .lbar{position:absolute;top:3px;height:16px;background:#cfc9b8;border-radius:4px;cursor:grab;min-width:5px;border:0;padding:0}
+  .strip .row2.sel .lbar{background:var(--acc)}
+  .strip .seg{position:absolute;top:0;bottom:0;background:rgba(255,255,255,.6);pointer-events:none}
+  .strip .seg.o{border-radius:0 4px 4px 0}.strip .seg.i{border-radius:4px 0 0 4px}
+  .strip .edge{position:absolute;top:1px;height:20px;width:10px;margin-left:-5px;background:transparent;border:0;padding:0;cursor:ew-resize}
+  .strip .edge::after{content:"";position:absolute;left:4px;top:3px;width:2px;height:16px;background:#6f6a5c;border-radius:1px}
+  .strip .kf{position:absolute;top:6px;width:9px;height:9px;margin-left:-5px;background:#fff;border:1.5px solid var(--ink);transform:rotate(45deg);padding:0;cursor:ew-resize;border-radius:1px}
+  .strip .kf.sel{background:var(--acc)}
+  .strip .phWrap{position:absolute;left:132px;right:0;top:0;bottom:0;pointer-events:none;z-index:2}
+  .strip .ph{position:absolute;top:0;bottom:0;width:1px;background:var(--err)}
+  .strip .ph::before{content:"";position:absolute;left:-4px;top:0;border:4px solid transparent;border-top-color:var(--err)}
+  :focus-visible{outline:2px solid #1f6feb;outline-offset:1px}
+  .strip .kf:focus-visible{outline-offset:2px}
 </style></head><body>
 <header><h1 id="title">${esc(o.title)}</h1><span class="meta" id="path"></span><span class="save" id="save" aria-live="polite">loaded</span></header>
 <main>
@@ -169,7 +257,7 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
       <label>Format <select id="format" aria-label="Format"></select></label>
       <div class="scenes" id="scenes" role="group" aria-label="Scenes"></div>
     </div>
-    <div class="view" id="view"><iframe id="stage" title="The film at the current frame" src="/__mh/"></iframe></div>
+    <div class="view" id="view"></div>
     <div class="bar">
       <button id="play" type="button" aria-pressed="false" aria-label="Play or pause">play</button>
       <button id="prev" type="button" aria-label="One frame back">&lt;</button>
@@ -177,7 +265,8 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
       <button id="next" type="button" aria-label="One frame forward">&gt;</button>
       <span class="loc" id="loc" aria-live="off"></span>
     </div>
-    <div class="keys"><kbd>click</kbd> select a layer <kbd>arrows</kbd> nudge (<kbd>shift</kbd> coarse) <kbd>[</kbd> <kbd>]</kbd> in earlier/later <kbd>-</kbd> <kbd>=</kbd> smaller/larger <kbd>,</kbd> <kbd>.</kbd> frame <kbd>j</kbd> <kbd>l</kbd> second <kbd>space</kbd> play <kbd>d</kbd> duplicate <kbd>Backspace</kbd> remove <kbd>z</kbd> undo <kbd>Esc</kbd> deselect</div>
+    <div class="strip" id="strip" aria-label="Timeline of the current scene"></div>
+    <div class="keys"><kbd>click</kbd> select <kbd>arrows</kbd> nudge (<kbd>shift</kbd> coarse) <kbd>[</kbd> <kbd>]</kbd> in earlier/later <kbd>{</kbd> <kbd>}</kbd> out earlier/later <kbd>-</kbd> <kbd>=</kbd> smaller/larger <kbd>,</kbd> <kbd>.</kbd> frame <kbd>j</kbd> <kbd>l</kbd> second <kbd>space</kbd> play <kbd>d</kbd> duplicate <kbd>Backspace</kbd> remove <kbd>z</kbd> undo <kbd>Esc</kbd> deselect. In the strip: <kbd>tab</kbd> to a bar, edge or keyframe, then <kbd>arrows</kbd> move it.</div>
   </section>
   <aside aria-label="Layers and inspector">
     <section><h2>Layers</h2><ul class="layers" id="layers" role="listbox" aria-label="Layers of the current scene"></ul>
@@ -192,32 +281,142 @@ export const editorPage = (o: { title: string }): string => `<!doctype html>
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let F=null, T=null, findings=[], format=null, sceneId=null, frame=0, selected=null, playing=null, comps=[], compId=null, undo=[], busy=Promise.resolve();
-const stage=$("stage"); let W=null;
+const TRACKS=["opacity","x","y","scale","rotate","blur","progress","wipe","w","h"];
+let F=null,T=null,findings=[],format=null,sceneId=null,frame=0,sel=[],playing=null,comps=[],undo=[],busy=Promise.resolve(),lastFocus=null,kfSel=null;
+const stages=[];
 const fmt=s=>{const m=Math.floor(s/60),r=s-m*60;return (m?m+":":"")+r.toFixed(2)+"s"};
 const scene=()=>F.scenes.find(s=>s.id===sceneId)||F.scenes[0];
 const tScene=()=>T.scenes.find(s=>s.id===scene().id);
-const layer=()=>selected?scene().layers.find(l=>l.id===selected):null;
-async function load(){const r=await fetch("/__mh/film");const j=await r.json();F=j.film;T=j.timeline;findings=j.findings;$("path").textContent=j.path;if(!format)format=Object.keys(F.formats)[0];if(!sceneId)sceneId=F.scenes[0].id;}
-async function stageReady(){W=stage.contentWindow;await W.__mh.ready;comps=W.__mh.compositions();}
-function compFor(){const s=F.formats[format];return (comps.find(c=>c.width===s.width&&c.height===s.height)||comps[0]).id}
-async function mount(){compId=compFor();await W.__mh.select(compId,{film:F,format});fitStage();injectStyle();await show();}
-function fitStage(){const s=F.formats[format];const box=$("view").getBoundingClientRect();const k=Math.min(box.width/s.width,box.height/s.height);stage.style.width=s.width+"px";stage.style.height=s.height+"px";stage.style.transform="scale("+k+")";stage.style.left=((box.width-s.width*k)/2)+"px";stage.style.top=((box.height-s.height*k)/2)+"px";}
-function injectStyle(){const d=stage.contentDocument;let st=d.getElementById("mh-edit-style");if(!st){st=d.createElement("style");st.id="mh-edit-style";d.head.appendChild(st);d.addEventListener("click",e=>{const el=e.target.closest&&e.target.closest("[data-mg]");if(!el){selected=null;injectStyle();render();return}const [sc,l]=el.dataset.mg.split(".");sceneId=sc;select(l);});d.addEventListener("keydown",onKey);}
-  st.textContent=selected?'[data-mg="'+scene().id+"."+selected+'"]{outline:3px solid #F2B441;outline-offset:6px}':"";}
-async function show(){const ts=tScene();const abs=ts.start+Math.max(0,Math.min(scene().dur-1,frame));await W.__mh.frame(abs,0);render();}
-function locate(){const ts=tScene();const local=frame;const ev=ts.events.filter(e=>e.local<=local).sort((a,b)=>b.local-a.local)[0];return {scene:ts.id,local,filmFrame:ts.filmStart+local,seconds:(ts.filmStart+local)/F.fps,event:ev?ev.name+"+"+(local-ev.local):null}}
+const clampF=n=>Math.max(0,Math.min(scene().dur-1,n));
+
+/* ---------- the layers of the scene, groups and all ---------- */
+function rows(){const out=[];const walk=(list,prefix,depth)=>{(list||[]).forEach(l=>{const path=prefix?prefix+"."+l.id:l.id;out.push({l:l,path:path,depth:depth});if(Array.isArray(l.layers))walk(l.layers,path,depth+1)})};walk(scene().layers,"",0);return out}
+function layerAt(path){if(!path)return null;const p=path.split(".");let list=scene().layers,l=null;for(let i=0;i<p.length;i++){if(!Array.isArray(list))return null;l=list.find(x=>x.id===p[i]);if(!l)return null;list=l.layers}return l}
+function parentOf(path){const p=path.split(".");return p.length>1?layerAt(p.slice(0,-1).join(".")):null}
+const layer=()=>sel.length?layerAt(sel[0]):null;
+const addrOf=(path,prop)=>scene().id+"."+path+(prop?"."+prop:"");
+
+/* ---------- timing, the same rules layerTiming applies ---------- */
+function localFrame(at,dur,fb){const v=at===undefined||at===null?fb:at;return v<0?Math.max(0,dur+v):Math.min(dur-1,v)}
+function timingOf(path){const l=layerAt(path);const s=scene();if(!l)return {inAt:0,inDur:0,outAt:null,outDur:0,end:s.dur};
+  const dIn=Object.assign({preset:"rise",at:0,dur:14},(F.defaults&&F.defaults.layerIn)||{},l.in||{});
+  const from=(l.span&&l.span[0])||0,to=(l.span&&l.span[1])!==undefined?l.span[1]:s.dur;
+  let base=0;const p=path.split(".");if(p.length>1)base=timingOf(p.slice(0,-1).join(".")).inAt;
+  const inAt=base+from+localFrame(dIn.at,to-from,0);
+  const inDur=dIn.preset==="cut"?0:Math.max(0,dIn.dur===undefined?14:dIn.dur);
+  const hasOut=!!l.out||!!(F.defaults&&F.defaults.layerOut);
+  const dOut=Object.assign({preset:"fade",dur:8},(F.defaults&&F.defaults.layerOut)||{},l.out||{});
+  const outDur=dOut.preset==="cut"?0:Math.max(0,dOut.dur===undefined?8:dOut.dur);
+  const outAt=hasOut?base+from+localFrame(dOut.at===undefined?-outDur:dOut.at,to-from,to-from-outDur):null;
+  return {inAt:inAt,inDur:inDur,outAt:outAt,outDur:outDur,end:outAt!==null?Math.min(s.dur,outAt+outDur):s.dur}}
+
+/* ---------- load, stages ---------- */
+async function load(){const r=await fetch("/__mh/film");const j=await r.json();F=j.film;T=j.timeline;findings=j.findings;$("path").textContent=j.path;if(!format)format=Object.keys(F.formats)[0];if(!sceneId||!F.scenes.some(s=>s.id===sceneId))sceneId=F.scenes[0].id}
+function buildStages(){const view=$("view");view.innerHTML="";stages.length=0;
+  const pane=document.createElement("div");pane.className="pane act";pane.id="pane-0";
+  const tag=document.createElement("span");tag.className="tag";tag.id="tag-0";tag.textContent=format;
+  const f=document.createElement("iframe");f.id="stage-0";f.title="The film at the current frame";f.src="/__mh/";
+  pane.append(tag,f);view.appendChild(pane);stages.push({pane:pane,tag:tag,iframe:f,win:null,compId:null,format:format})}
+async function stageReady(st){st.win=st.iframe.contentWindow;await st.win.__mh.ready;if(!comps.length)comps=st.win.__mh.compositions()}
+function compFor(fmtName){const s=F.formats[fmtName];return (comps.find(c=>c.width===s.width&&c.height===s.height)||comps[0]).id}
+async function mount(){for(const st of stages){if(st.pane.hidden)continue;st.compId=compFor(st.format);st.tag.textContent=st.format;await st.win.__mh.select(st.compId,{film:F,format:st.format});wireStage(st)}fitStages();await show()}
+async function remount(){for(const st of stages){if(st.pane.hidden||!st.win)continue;await st.win.__mh.select(st.compId,{film:F,format:st.format});wireStage(st)}}
+function fitStages(){for(const st of stages){if(st.pane.hidden)continue;const s=F.formats[st.format];const box=st.pane.getBoundingClientRect();const k=Math.min(box.width/s.width,box.height/s.height);const f=st.iframe;f.style.width=s.width+"px";f.style.height=s.height+"px";f.style.transform="scale("+k+")";f.style.left=((box.width-s.width*k)/2)+"px";f.style.top=((box.height-s.height*k)/2)+"px"}}
+function wireStage(st){const d=st.iframe.contentDocument;let style=d.getElementById("mh-edit-style");
+  if(!style){style=d.createElement("style");style.id="mh-edit-style";d.head.appendChild(style);
+    d.addEventListener("click",e=>{const el=e.target.closest&&e.target.closest("[data-mg]");if(!el){if(!e.shiftKey){sel=[];paint();render()}return}const parts=el.dataset.mg.split(".");if(parts[0]!==sceneId&&F.scenes.some(s=>s.id===parts[0])){sceneId=parts[0];frame=0}const path=pathFromMg(el.dataset.mg);pick(path,e.shiftKey)});
+    d.addEventListener("keydown",onKey)}
+  st.style=style;paintStage(st)}
+function pathFromMg(mg){const parts=mg.split(".");const direct=parts.slice(1).join(".");if(layerAt(direct))return direct;const last=parts[parts.length-1];const hit=rows().find(r=>r.l.id===last);return hit?hit.path:direct}
+function paintStage(st){if(!st.style)return;st.style.textContent=sel.map(p=>'[data-mg="'+scene().id+"."+p.split(".").pop()+'"]{outline:3px solid #F2B441;outline-offset:6px}').join("\\n")}
+function paint(){stages.forEach(paintStage)}
+
+async function show(){const ts=tScene();const abs=ts.start+clampF(frame);for(const st of stages){if(st.pane.hidden||!st.win)continue;await st.win.__mh.frame(abs,0)}render()}
+function locate(){const ts=tScene();const local=frame;const ev=ts.events.filter(e=>e.local<=local).sort((a,b)=>b.local-a.local)[0];return {scene:ts.id,local:local,filmFrame:ts.filmStart+local,seconds:(ts.filmStart+local)/F.fps,event:ev?ev.name+"+"+(local-ev.local):null}}
+
+/* ---------- render ---------- */
 function render(){const L=locate();const s=scene();$("scrub").max=s.dur-1;$("scrub").value=frame;$("loc").textContent=s.id+"+"+frame+"  film f"+L.filmFrame+" "+fmt(L.seconds)+(L.event?"  after "+L.event:"");
-  const sc=$("scenes");sc.innerHTML="";F.scenes.forEach(x=>{const b=document.createElement("button");b.type="button";b.textContent=x.id+" "+x.dur+"f";b.className=x.id===s.id?"cur":"";b.setAttribute("aria-current",x.id===s.id?"true":"false");b.onclick=()=>{sceneId=x.id;frame=0;selected=null;injectStyle();show();};sc.appendChild(b)});
-  const ul=$("layers");ul.innerHTML="";s.layers.forEach(l=>{const li=document.createElement("li");li.setAttribute("role","option");li.setAttribute("aria-selected",l.id===selected?"true":"false");li.tabIndex=0;li.innerHTML='<span class="t">'+l.type+'</span><span class="a">'+s.id+"."+l.id+'</span><span style="color:#888;font-size:11px;margin-left:auto">in @'+(l.in&&l.in.at!==undefined?l.in.at:0)+"</span>";li.onclick=()=>select(l.id);li.onkeydown=e=>{if(e.key==="Enter")select(l.id)};ul.appendChild(li)});
-  sceneForm();inspector();drawFindings();$("mh-state").textContent=JSON.stringify(state(),null,1);}
-function state(){const l=layer();return {film:F.title,path:$("path").textContent,format,scene:scene().id,frame,address:scene().id+"+"+frame,locate:locate(),selected:l?scene().id+"."+l.id:null,layer:l||null,errors:findings.filter(f=>f.level==="error").length,findings}}
-function field(id,label,value,type,opts){const l=document.createElement("label");l.htmlFor=id;l.textContent=label;let i;if(opts){i=document.createElement("select");opts.forEach(o=>{const op=document.createElement("option");op.value=o;op.textContent=o;if(o===value)op.selected=true;i.appendChild(op)})}else{i=document.createElement("input");i.type=type||"text";if(type==="number")i.step="any";i.value=value===undefined||value===null?"":value}i.id=id;return [l,i]}
-function sceneForm(){const s=scene();const g=$("sceneForm");g.innerHTML="";const add=(id,label,val,type,opts,path)=>{const [l,i]=field(id,label,val,type,opts);i.onchange=()=>post({op:"set",addr:s.id+"."+path,value:type==="number"?parseFloat(i.value):i.value});g.append(l,i)};
+  const sc=$("scenes");sc.innerHTML="";F.scenes.forEach(x=>{const b=document.createElement("button");b.type="button";b.textContent=x.id+" "+x.dur+"f";b.className=x.id===s.id?"cur":"";b.setAttribute("aria-label","Scene "+x.id+", "+x.dur+" frames");b.setAttribute("aria-current",x.id===s.id?"true":"false");b.onclick=()=>{sceneId=x.id;frame=0;sel=[];paint();show()};sc.appendChild(b)});
+  drawLayers();drawStrip();sceneForm();inspector();drawFindings();$("mh-state").textContent=JSON.stringify(state(),null,1);
+  if(lastFocus&&(document.activeElement===document.body||document.activeElement===null)){const el=document.querySelector('[data-fk="'+lastFocus+'"]');if(el)el.focus()}}
+function drawLayers(){const ul=$("layers");ul.innerHTML="";rows().forEach(r=>{const li=document.createElement("li");li.setAttribute("role","option");li.setAttribute("aria-selected",sel.indexOf(r.path)>=0?"true":"false");li.tabIndex=0;li.dataset.fk="li:"+r.path;li.style.paddingLeft=(6+r.depth*14)+"px";
+  const t=timingOf(r.path);
+  li.innerHTML='<span class="t">'+r.l.type+'</span><span class="a">'+scene().id+"."+r.path+'</span><span style="color:#888;font-size:11px;margin-left:auto">in @'+t.inAt+"</span>";
+  li.setAttribute("aria-label","Layer "+scene().id+"."+r.path+", "+r.l.type+", in at "+t.inAt);
+  li.onclick=e=>pick(r.path,e.shiftKey);li.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();pick(r.path,e.shiftKey)}};ul.appendChild(li)})}
+
+function drawStrip(){const s=scene(),el=$("strip"),dur=s.dur;el.innerHTML="";
+  const head=document.createElement("div");head.className="head";
+  const hn=document.createElement("div");hn.className="name";hn.textContent=s.id+"  "+dur+"f";
+  const ruler=document.createElement("div");ruler.className="ruler";
+  const step=dur>240?60:dur>120?30:dur>60?15:10;
+  for(let f=0;f<dur;f+=step){const i=document.createElement("i");i.style.left=(f/dur*100)+"%";i.textContent=f;ruler.appendChild(i)}
+  head.append(hn,ruler);el.appendChild(head);
+  rows().forEach(r=>{const t=timingOf(r.path);const row=document.createElement("div");row.className="row2"+(sel.indexOf(r.path)>=0?" sel":"");
+    const nm=document.createElement("button");nm.type="button";nm.className="name";nm.style.paddingLeft=(6+r.depth*12)+"px";nm.textContent=(r.depth?"\\u2514 ":"")+r.path.split(".").pop();nm.setAttribute("aria-label","Select layer "+scene().id+"."+r.path);nm.dataset.fk="name:"+r.path;nm.onclick=e=>pick(r.path,e.shiftKey);
+    const track=document.createElement("div");track.className="track";track.dataset.path=r.path;
+    track.onpointerdown=e=>{if(e.target!==track)return;const box=track.getBoundingClientRect();frame=clampF(Math.round((e.clientX-box.left)/box.width*dur));show()};
+    const end=t.end;const bar=document.createElement("button");bar.type="button";bar.className="lbar";bar.dataset.path=r.path;bar.dataset.fk="bar:"+r.path;
+    bar.style.left=(t.inAt/dur*100)+"%";bar.style.width=(Math.max(1,end-t.inAt)/dur*100)+"%";
+    bar.setAttribute("aria-label","Layer "+r.path+", in at "+t.inAt+(t.outAt!==null?", out at "+t.outAt:", to the end of the scene")+". Arrow keys move it, shift for five frames");
+    const segI=document.createElement("span");segI.className="seg i";segI.style.left="0";segI.style.width=(t.inDur/Math.max(1,end-t.inAt)*100)+"%";bar.appendChild(segI);
+    if(t.outAt!==null){const segO=document.createElement("span");segO.className="seg o";segO.style.right="0";segO.style.width=(t.outDur/Math.max(1,end-t.inAt)*100)+"%";bar.appendChild(segO)}
+    bar.onpointerdown=e=>startDrag(e,"bar",r.path,track,bar);
+    bar.onclick=e=>{if(bar.dataset.moved==="1"){bar.dataset.moved="";return}pick(r.path,e.shiftKey)};
+    bar.onkeydown=e=>barKeys(e,r.path,"in");
+    track.appendChild(bar);
+    const edge=document.createElement("button");edge.type="button";edge.className="edge";edge.dataset.fk="edge:"+r.path;edge.style.left=(end/dur*100)+"%";
+    edge.setAttribute("aria-label","Out edge of "+r.path+(t.outAt!==null?" at "+t.outAt:" (no out yet)")+". Arrow keys move it");
+    edge.onpointerdown=e=>startDrag(e,"edge",r.path,track,edge);edge.onkeydown=e=>barKeys(e,r.path,"out");
+    track.appendChild(edge);
+    const tr=r.l.tracks||{};Object.keys(tr).forEach(prop=>{(tr[prop]||[]).forEach(k=>{const d=document.createElement("button");d.type="button";d.className="kf"+(kfSel&&kfSel.path===r.path&&kfSel.prop===prop&&kfSel.at===k.at?" sel":"");d.style.left=(k.at/dur*100)+"%";d.dataset.fk="kf:"+r.path+":"+prop+":"+k.at;
+      d.setAttribute("aria-label","Keyframe "+prop+" = "+k.v+" at frame "+k.at+" on "+r.path+". Arrow keys move it");
+      d.onpointerdown=e=>startDrag(e,"kf",r.path,track,d,{prop:prop,at:k.at});
+      d.onclick=e=>{e.stopPropagation();kfSel={path:r.path,prop:prop,at:k.at};pick(r.path,false)};
+      d.onkeydown=e=>kfKeys(e,r.path,prop,k.at);track.appendChild(d)})});
+    row.append(nm,track);el.appendChild(row)});
+  const w=document.createElement("div");w.className="phWrap";const ph=document.createElement("div");ph.className="ph";ph.style.left=(frame/dur*100)+"%";w.appendChild(ph);el.appendChild(w)}
+
+/* ---------- dragging in the strip ---------- */
+function startDrag(e,kind,path,track,el,extra){e.preventDefault();e.stopPropagation();const box=track.getBoundingClientRect();const dur=scene().dur;const x0=e.clientX;const t=timingOf(path);const left0=parseFloat(el.style.left);let d=0;
+  const mv=ev=>{d=Math.round((ev.clientX-x0)/box.width*dur);if(!d)return;el.dataset.moved="1";
+    if(kind==="bar")el.style.left=((t.inAt+d)/dur*100)+"%";
+    else if(kind==="edge")el.style.left=(Math.max(0,(t.end+d))/dur*100)+"%";
+    else el.style.left=(left0+d/dur*100)+"%"};
+  const up=()=>{window.removeEventListener("pointermove",mv);window.removeEventListener("pointerup",up);if(!d){render();return}
+    if(kind==="bar")shiftIn(d,[path]);
+    else if(kind==="edge")setOutAt(path,t.outAt===null?Math.max(t.inAt+t.inDur,t.end+d-t.outDur):t.outAt+d);
+    else post({op:"move-key",addr:addrOf(path,extra.prop),from:extra.at,to:Math.max(0,extra.at+d)},"move-key "+extra.prop).then(()=>{kfSel={path:path,prop:extra.prop,at:Math.max(0,extra.at+d)};render()})};
+  window.addEventListener("pointermove",mv);window.addEventListener("pointerup",up)}
+function barKeys(e,path,which){const d=e.key==="ArrowLeft"?-1:e.key==="ArrowRight"?1:0;if(!d)return;e.preventDefault();e.stopPropagation();const n=d*(e.shiftKey?5:1);
+  if(which==="in")shiftIn(n,[path]);else{const t=timingOf(path);setOutAt(path,(t.outAt===null?Math.max(t.inAt+t.inDur,scene().dur-8):t.outAt)+n)}}
+function kfKeys(e,path,prop,at){const d=e.key==="ArrowLeft"?-1:e.key==="ArrowRight"?1:0;if(!d)return;e.preventDefault();e.stopPropagation();const to=Math.max(0,at+d*(e.shiftKey?5:1));lastFocus="kf:"+path+":"+prop+":"+to;post({op:"move-key",addr:addrOf(path,prop),from:at,to:to},"move-key "+prop).then(()=>{kfSel={path:path,prop:prop,at:to};render()})}
+
+/* ---------- ops ---------- */
+async function post(opOrFn,name){busy=busy.then(async()=>{const op=typeof opOrFn==="function"?opOrFn():opOrFn;if(!op)return;const prev=JSON.stringify(F);$("save").textContent="saving";
+  const r=await fetch("/__mh/film",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(op)});const j=await r.json();
+  if(!j.ok){$("save").textContent=j.error;$("save").className="save err";return}
+  undo.push({film:prev,name:name||op.op});F=j.film;T=j.timeline;findings=j.findings;
+  const errs=findings.filter(f=>f.level==="error").length;
+  $("save").textContent="saved "+new Date().toLocaleTimeString()+(errs?" with errors":"");$("save").className="save"+(errs?" err":"");
+  if(!F.scenes.some(s=>s.id===sceneId))sceneId=F.scenes[0].id;
+  sel=sel.filter(p=>layerAt(p));
+  await remount();paint();await show()});return busy}
+function shiftIn(d,paths){const ps=paths||sel;if(!ps.length)return;post(()=>{const ops=[];ps.forEach(p=>{const l=layerAt(p);if(!l)return;const cur=(l.in&&l.in.at)||0;const to=Math.max(0,cur+d);ops.push({op:"set",addr:addrOf(p,"in.at"),value:to});if(l.out&&l.out.at!==undefined)ops.push({op:"set",addr:addrOf(p,"out.at"),value:l.out.at+(to-cur)})});return ops.length===1?ops[0]:{op:"batch",ops:ops,name:"in.at"}},"in.at "+(d>0?"+":"")+d)}
+function setOutAt(path,at){const l=layerAt(path);const ops=[{op:"set",addr:addrOf(path,"out.at"),value:Math.round(at)}];if(!l.out)ops.push({op:"set",addr:addrOf(path,"out.dur"),value:8});post(ops.length===1?ops[0]:{op:"batch",ops:ops,name:"out.at"},"out.at "+Math.round(at))}
+function nudge(dx,dy){if(!sel.length)return;post(()=>{const ops=sel.map(p=>{const l=layerAt(p);if(!l)return null;const at=l.at||{x:0.5,y:0.5};return {op:"set",addr:addrOf(p,"at"),value:{x:Math.round((at.x+dx)*1000)/1000,y:Math.round((at.y+dy)*1000)/1000}}}).filter(Boolean);return ops.length===1?ops[0]:{op:"batch",ops:ops,name:"at"}},"nudge")}
+function resize(d){if(!sel.length)return;post(()=>{const ops=sel.map(p=>{const l=layerAt(p);if(!l)return null;const cur=l.size||(l.type==="counter"?160:l.type==="list"?48:72);return {op:"set",addr:addrOf(p,"size"),value:Math.max(8,cur+d)}}).filter(Boolean);return ops.length===1?ops[0]:{op:"batch",ops:ops,name:"size"}},"size "+(d>0?"+":"")+d)}
+function pick(path,add){if(add){const i=sel.indexOf(path);if(i>=0)sel.splice(i,1);else sel.push(path)}else sel=[path];kfSel=null;paint();render()}
+function seek(d){frame=clampF(frame+d);show()}
+function togglePlay(){if(playing){clearInterval(playing);playing=null;$("play").setAttribute("aria-pressed","false");$("play").textContent="play";return}$("play").setAttribute("aria-pressed","true");$("play").textContent="pause";playing=setInterval(()=>{frame=(frame+1)%scene().dur;show()},1000/F.fps)}
+
+/* ---------- forms ---------- */
+function field(id,label,value,type,opts){const l=document.createElement("label");l.htmlFor=id;l.textContent=label;let i;if(opts){i=document.createElement("select");opts.forEach(o=>{const op=document.createElement("option");op.value=o;op.textContent=o===""?"(none)":o;if(o===value)op.selected=true;i.appendChild(op)})}else{i=document.createElement("input");i.type=type||"text";if(type==="number")i.step="any";i.value=value===undefined||value===null?"":value}i.id=id;i.setAttribute("aria-label",label);return [l,i]}
+function sceneForm(){const s=scene();const g=$("sceneForm");g.innerHTML="";const add=(id,label,val,type,opts,path)=>{const [l,i]=field(id,label,val,type,opts);i.onchange=()=>post({op:"set",addr:s.id+"."+(path||id.slice(2)),value:type==="number"?parseFloat(i.value):i.value},"scene."+(path||id.slice(2)));g.append(l,i)};
   add("s-dur","dur (frames)",s.dur,"number");add("s-ground","ground",s.ground||"ink","text");add("s-exit","exit fade (frames)",s.exit&&s.exit.dur!==undefined?s.exit.dur:(s.exit==="fade"?8:0),"number",null,"exit.dur");
-  const [l1,i1]=field("s-why","why",s.why||"","text");i1.onchange=()=>post({op:"set",addr:s.id+".why",value:i1.value});g.append(l1,i1);}
-function inspector(){const l=layer();const q=$("quick");q.innerHTML="";$("selTitle").textContent=l?"Layer "+scene().id+"."+l.id+" ("+l.type+")":"Layer (none selected)";$("json").value=l?JSON.stringify(l,null,2):"";if(!l)return;
-  const at=l.at||{x:0.5,y:0.5};const put=(id,label,val,type,opts,path,parse)=>{const [a,i]=field(id,label,val,type,opts);i.onchange=()=>post({op:"set",addr:scene().id+"."+l.id+"."+path,value:parse?parse(i.value):i.value});q.append(a,i)};
+  add("s-why","why",s.why||"","text")}
+function inspector(){const l=layer();const q=$("quick");q.innerHTML="";$("selTitle").textContent=l?"Layer "+scene().id+"."+sel[0]+" ("+l.type+")":"Layer (none selected)";$("json").value=l?JSON.stringify(l,null,2):"";if(!l)return;
+  const path=sel[0];const at=l.at||{x:0.5,y:0.5};const put=(id,label,val,type,opts,prop,parse)=>{const [a,i]=field(id,label,val,type,opts);i.onchange=()=>post({op:"set",addr:addrOf(path,prop),value:parse?parse(i.value):i.value},prop);q.append(a,i)};
   const num=v=>parseFloat(v);
   put("q-x","x",at.x,"number",null,"at.x",num);put("q-y","y",at.y,"number",null,"at.y",num);
   if("size" in l||l.type==="text"||l.type==="counter"||l.type==="list")put("q-size","size (u)",l.size||"","number",null,"size",num);
@@ -226,36 +425,50 @@ function inspector(){const l=layer();const q=$("quick");q.innerHTML="";$("selTit
   put("q-inat","in at",(l.in&&l.in.at)||0,"number",null,"in.at",num);put("q-indur","in dur",(l.in&&l.in.dur)||14,"number",null,"in.dur",num);put("q-inease","in ease",(l.in&&l.in.ease)||"out","text",null,"in.ease");
   put("q-outp","out preset",(l.out&&l.out.preset)||"","text",["","fade","sink","lift","shrink","slide","wipe","blur","cut"],"out.preset");put("q-outat","out at (neg = from end)",l.out&&l.out.at!==undefined?l.out.at:"","number",null,"out.at",num);
   if(l.type==="text"||l.type==="counter"||l.type==="list")put("q-color","color",l.color||"","text",null,"color");
-  if(l.type==="shape")put("q-fill","fill",l.fill||"","text",null,"fill");}
+  if(l.type==="shape")put("q-fill","fill",l.fill||"","text",null,"fill")}
 function drawFindings(){const ul=$("findings");ul.innerHTML="";if(!findings.length){ul.innerHTML="<li>clean</li>";return}findings.forEach(f=>{const li=document.createElement("li");li.className=f.level;li.textContent=f.level+" "+f.rule+" at "+f.where+": "+f.message;ul.appendChild(li)})}
-function select(id){selected=id;injectStyle();render();}
-async function post(opOrFn){busy=busy.then(async()=>{const op=typeof opOrFn==="function"?opOrFn():opOrFn;if(!op)return;const prev=JSON.stringify(F);$("save").textContent="saving";const r=await fetch("/__mh/film",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(op)});const j=await r.json();if(!j.ok){$("save").textContent=j.error;$("save").className="save err";return}undo.push(prev);F=j.film;T=j.timeline;findings=j.findings;$("save").textContent="saved "+new Date().toLocaleTimeString()+(findings.filter(f=>f.level==="error").length?" with errors":"");$("save").className="save"+(findings.some(f=>f.level==="error")?" err":"");if(!F.scenes.some(s=>s.id===sceneId))sceneId=F.scenes[0].id;if(selected&&!scene().layers.some(l=>l.id===selected))selected=null;await W.__mh.select(compId,{film:F,format});injectStyle();await show();});return busy}
-function nudge(dx,dy){post(()=>{const l=layer();if(!l)return null;const at=l.at||{x:0.5,y:0.5};const x=Math.round((at.x+dx)*1000)/1000,y=Math.round((at.y+dy)*1000)/1000;return {op:"set",addr:scene().id+"."+l.id+".at",value:{x,y}}})}
-function shiftIn(d){post(()=>{const l=layer();if(!l)return null;return {op:"set",addr:scene().id+"."+l.id+".in.at",value:Math.max(0,((l.in&&l.in.at)||0)+d)}})}
-function resize(d){post(()=>{const l=layer();if(!l)return null;const cur=l.size||(l.type==="counter"?160:l.type==="list"?48:72);return {op:"set",addr:scene().id+"."+l.id+".size",value:Math.max(8,cur+d)}})}
-function seek(d){frame=Math.max(0,Math.min(scene().dur-1,frame+d));show()}
-function togglePlay(){if(playing){clearInterval(playing);playing=null;$("play").setAttribute("aria-pressed","false");$("play").textContent="play";return}$("play").setAttribute("aria-pressed","true");$("play").textContent="pause";playing=setInterval(()=>{frame=(frame+1)%scene().dur;show()},1000/F.fps)}
+function state(){const l=layer();return {film:F.title,path:$("path").textContent,format:format,scene:scene().id,frame:frame,address:scene().id+"+"+frame,locate:locate(),selection:sel.map(p=>scene().id+"."+p),selected:sel.length?scene().id+"."+sel[0]:null,layer:l||null,timing:sel.length?timingOf(sel[0]):null,ops:undo.length,errors:findings.filter(f=>f.level==="error").length,findings:findings}}
+
+/* ---------- wiring ---------- */
 $("scrub").oninput=()=>{frame=parseInt($("scrub").value,10);show()};$("prev").onclick=()=>seek(-1);$("next").onclick=()=>seek(1);$("play").onclick=togglePlay;
-$("format").onchange=()=>{format=$("format").value;mount()};
-$("apply").onclick=()=>{const l=layer();if(!l)return;let v;try{v=JSON.parse($("json").value)}catch(e){$("save").textContent="json: "+e.message;$("save").className="save err";return}post({op:"remove",addr:scene().id+"."+l.id}).then(()=>post({op:"add-layer",scene:scene().id,layer:v})).then(()=>select(v.id))};
-$("dup").onclick=()=>{const l=layer();if(l)post({op:"dup",addr:scene().id+"."+l.id})};$("remove").onclick=()=>{const l=layer();if(l){post({op:"remove",addr:scene().id+"."+l.id});selected=null}};
-$("layout").onclick=()=>post({op:"layout",scene:scene().id});
+$("format").onchange=()=>{format=$("format").value;stages[0].format=format;mount()};
+$("apply").onclick=()=>{const l=layer();if(!l)return;let v;try{v=JSON.parse($("json").value)}catch(e){$("save").textContent="json: "+e.message;$("save").className="save err";return}
+  const path=sel[0];post({op:"batch",ops:[{op:"remove",addr:addrOf(path)},{op:"add-layer",scene:scene().id,layer:v}],name:"json"},"apply json").then(()=>{sel=[v.id];paint();render()})};
+$("dup").onclick=()=>{if(sel.length)post({op:"dup",addr:addrOf(sel[0])},"duplicate")};
+$("remove").onclick=()=>{if(!sel.length)return;const ops=sel.map(p=>({op:"remove",addr:addrOf(p)}));post(ops.length===1?ops[0]:{op:"batch",ops:ops,name:"remove"},"remove");sel=[]};
+$("layout").onclick=()=>post({op:"layout",scene:scene().id},"layout");
 const newId=p=>{let i=1;while(scene().layers.some(l=>l.id===p+"-"+i))i++;return p+"-"+i};
-$("addText").onclick=()=>{const id=newId("text");post({op:"add-layer",scene:scene().id,layer:{id,type:"text",text:"New line",size:72,color:scene().ground==="paper"?"ink":"paper",at:{x:0.5,y:0.5},in:{preset:"rise",at:0,dur:14}}}).then(()=>select(id))};
-$("addShape").onclick=()=>{const id=newId("shape");post({op:"add-layer",scene:scene().id,layer:{id,type:"shape",shape:"line",w:220,thickness:6,fill:"accent",at:{x:0.5,y:0.6},in:{preset:"grow",at:0,dur:14}}}).then(()=>select(id))};
-$("addCounter").onclick=()=>{const id=newId("counter");post({op:"add-layer",scene:scene().id,layer:{id,type:"counter",from:0,to:100,size:200,color:scene().ground==="paper"?"ink":"paper",at:{x:0.5,y:0.45},in:{preset:"pop",at:0,dur:14}}}).then(()=>select(id))};
-$("addList").onclick=()=>{const id=newId("list");post({op:"add-layer",scene:scene().id,layer:{id,type:"list",items:["one","two","three"],marker:"dot",size:52,color:scene().ground==="paper"?"ink":"paper",at:{x:0.5,y:0.5},in:{preset:"rise",at:0,dur:14,stagger:{by:"item",each:6}}}}).then(()=>select(id))};
+const addLayerOp=l=>post({op:"add-layer",scene:scene().id,layer:l},"add "+l.type).then(()=>{sel=[l.id];paint();render()});
+$("addText").onclick=()=>addLayerOp({id:newId("text"),type:"text",text:"New line",size:72,color:scene().ground==="paper"?"ink":"paper",at:{x:0.5,y:0.5},in:{preset:"rise",at:0,dur:14}});
+$("addShape").onclick=()=>addLayerOp({id:newId("shape"),type:"shape",shape:"line",w:220,thickness:6,fill:"accent",at:{x:0.5,y:0.6},in:{preset:"grow",at:0,dur:14}});
+$("addCounter").onclick=()=>addLayerOp({id:newId("counter"),type:"counter",from:0,to:100,size:200,color:scene().ground==="paper"?"ink":"paper",at:{x:0.5,y:0.45},in:{preset:"pop",at:0,dur:14}});
+$("addList").onclick=()=>addLayerOp({id:newId("list"),type:"list",items:["one","two","three"],marker:"dot",size:52,color:scene().ground==="paper"?"ink":"paper",at:{x:0.5,y:0.5},in:{preset:"rise",at:0,dur:14,stagger:{by:"item",each:6}}});
 function onKey(e){const tag=e.target&&e.target.tagName;if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT"){if(e.key==="Escape")e.target.blur();return}
+  if(e.target&&e.target.dataset&&e.target.dataset.fk&&/^(bar|edge|kf):/.test(e.target.dataset.fk)&&/^Arrow(Left|Right)$/.test(e.key))return;
   const k=e.key,c=e.shiftKey?0.02:0.005;
   if(k==="ArrowLeft"){e.preventDefault();nudge(-c,0)}else if(k==="ArrowRight"){e.preventDefault();nudge(c,0)}else if(k==="ArrowUp"){e.preventDefault();nudge(0,-c)}else if(k==="ArrowDown"){e.preventDefault();nudge(0,c)}
-  else if(k==="[")shiftIn(-2);else if(k==="]")shiftIn(2);else if(k==="-")resize(-4);else if(k==="=")resize(4);
+  else if(k==="[")shiftIn(-2);else if(k==="]")shiftIn(2);
+  else if(k==="{"||k==="}"){const d=k==="{"?-2:2;sel.forEach(p=>{const t=timingOf(p);setOutAt(p,(t.outAt===null?Math.max(t.inAt+t.inDur,scene().dur-8):t.outAt)+d)})}
+  else if(k==="-")resize(-4);else if(k==="=")resize(4);
   else if(k===",")seek(-1);else if(k===".")seek(1);else if(k==="j")seek(-F.fps);else if(k==="l")seek(F.fps);else if(k===" "){e.preventDefault();togglePlay()}
-  else if(k==="d"){const l=layer();if(l)post({op:"dup",addr:scene().id+"."+l.id})}
-  else if(k==="Backspace"||k==="Delete"){const l=layer();if(l){post({op:"remove",addr:scene().id+"."+l.id});selected=null}}
-  else if(k==="z"){const p=undo.pop();if(p)post({op:"replace",film:JSON.parse(p)})}
-  else if(k==="Escape"){selected=null;injectStyle();render()}}
+  else if(k==="d"){if(sel.length)post({op:"dup",addr:addrOf(sel[0])},"duplicate")}
+  else if(k==="Backspace"||k==="Delete"){if(!sel.length)return;const ops=sel.map(p=>({op:"remove",addr:addrOf(p)}));post(ops.length===1?ops[0]:{op:"batch",ops:ops,name:"remove"},"remove");sel=[]}
+  else if(k==="z"){const p=undo.pop();if(p)post({op:"replace",film:JSON.parse(p.film)},"undo "+p.name).then(()=>{undo.pop()})}
+  else if(k==="Escape"){sel=[];kfSel=null;paint();render()}}
 document.addEventListener("keydown",onKey);
-window.addEventListener("resize",()=>F&&fitStage());
-window.mhEdit={state,select:(addr)=>{const [s,l]=addr.split(".");if(s!==sceneId){sceneId=s;frame=0}select(l);return show()},set:(addr,value)=>post({op:"set",addr,value}),op:post,frame:(n)=>{frame=n;return show()},play:togglePlay,reload:async()=>{await load();await mount()}};
-(async()=>{await load();const fs=$("format");Object.keys(F.formats).forEach(f=>{const o=document.createElement("option");o.value=f;o.textContent=f;fs.appendChild(o)});fs.value=format;await new Promise(r=>{if(stage.contentWindow&&stage.contentWindow.__mh)r();else stage.addEventListener("load",r,{once:true})});await stageReady();await mount();})();
+document.addEventListener("focusin",e=>{const fk=e.target&&e.target.dataset&&e.target.dataset.fk;if(fk)lastFocus=fk});
+window.addEventListener("resize",()=>{if(F)fitStages()});
+window.mhEdit={state:state,
+  select:a=>{const p=a.split(".");let path=a;if(F.scenes.some(s=>s.id===p[0])){if(p[0]!==sceneId){sceneId=p[0];frame=0}path=p.slice(1).join(".")}pick(path,false);return show()},
+  set:(addr,value)=>post({op:"set",addr:addr,value:value},"set "+addr),
+  op:(o,name)=>post(o,name),
+  frame:n=>{frame=clampF(n);return show()},
+  play:togglePlay,
+  reload:async()=>{await load();await mount()},
+  selection:()=>sel.map(p=>scene().id+"."+p)};
+(async()=>{await load();const fs=$("format");Object.keys(F.formats).forEach(f=>{const o=document.createElement("option");o.value=f;o.textContent=f;fs.appendChild(o)});fs.value=format;
+  buildStages();
+  await Promise.all(stages.map(st=>new Promise(r=>{if(st.iframe.contentWindow&&st.iframe.contentWindow.__mh)r();else st.iframe.addEventListener("load",r,{once:true})})));
+  for(const st of stages)await stageReady(st);
+  await mount()})();
 </script></body></html>`;
