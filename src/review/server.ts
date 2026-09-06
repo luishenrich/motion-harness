@@ -47,7 +47,7 @@ const page = (title: string) => `<!doctype html>
   video{width:100%;max-height:62vh;background:#000;border-radius:10px;display:block}
   .bar{position:relative;height:44px;margin-top:10px;background:#dcd6c6;border-radius:6px;overflow:hidden;cursor:pointer}
   .bar .scene{position:absolute;top:0;bottom:0;border-right:1px solid rgba(0,0,0,.25);font-size:11px;padding:3px 4px;overflow:hidden;white-space:nowrap;color:#222}
-  .bar .scene.dark{background:#5b5348;color:#fff}.bar .scene.cream{background:#efe9d6}
+  .bar .scene.dark{background:#5b5348;color:#fff}.bar .scene.cream,.bar .scene.light{background:#efe9d6}
   .bar .scene .ev{position:absolute;bottom:2px;width:2px;height:8px;background:var(--ev)}
   .bar .head{position:absolute;top:0;bottom:0;width:2px;background:var(--acc);pointer-events:none}
   .bar .pin{position:absolute;top:0;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:#c0392b;pointer-events:none}

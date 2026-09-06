@@ -35,7 +35,7 @@ export const reviewPage = (o: ExportOpts): string => {
   video{width:100%;max-height:60vh;background:#000;border-radius:10px;display:block}
   .bar{position:relative;display:flex;height:44px;margin-top:10px;background:#dcd6c6;border-radius:6px;overflow:hidden}
   .bar button.scene{position:absolute;top:0;bottom:0;border:0;border-right:1px solid rgba(0,0,0,.25);font:11px/1.2 inherit;padding:3px 4px;overflow:hidden;white-space:nowrap;color:#222;background:#efe9d6;cursor:pointer;text-align:left}
-  .bar button.scene.dark{background:#5b5348;color:#fff}.bar button.scene:focus-visible{outline:3px solid var(--acc);outline-offset:-3px}
+  .bar button.scene.dark{background:#5b5348;color:#fff}.bar button.scene.light,.bar button.scene.cream{background:#efe9d6;color:#222}.bar button.scene:focus-visible{outline:3px solid var(--acc);outline-offset:-3px}
   .bar .ev{position:absolute;bottom:2px;width:2px;height:8px;background:var(--ev);pointer-events:none}
   .bar .head{position:absolute;top:0;bottom:0;width:2px;background:var(--acc);pointer-events:none}
   .bar .pin{position:absolute;top:0;width:6px;height:6px;margin-left:-3px;border-radius:50%;background:#c0392b;pointer-events:none}

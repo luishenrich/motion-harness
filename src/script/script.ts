@@ -26,6 +26,10 @@ export type ScriptScene = {
   in?: number;
   /** clip and image scenes: where the subject is, 0..1 from the left and the top, for a crop into another format */
   focus?: [number, number];
+  /** clip and image scenes: "cover" fills the frame (default), "contain" letterboxes on the ground (a wide screen recording in a vertical film) */
+  fit?: "cover" | "contain";
+  /** clip and image scenes: extra scale, 1 = none; hides a source's own bars or tightens on the subject */
+  zoom?: number;
   visual?: string;
   why?: string;
 };
@@ -38,7 +42,7 @@ export const DEFAULT_DESIGN: Required<Design> = { ink: "#151515", paper: "#FFFFF
 
 const SYSTEM = `You write scripts for short films that are rendered from React components: product and launch films, cuts from recorded footage, slideshows from photos, montages of generated clips, explainers. A script is a list of scenes plus a design.
 
-Each scene has: id (short kebab-case, unique), seconds (1.5 to 10), kind ("text" for a typographic card, "clip" for a video asset, "image" for a still), ground ("dark" or "light"; for clip and image scenes the ground is what shows behind letterboxing), headline (the on-screen line, at most 8 words, plain human voice, no em dashes, no exclamation marks, no emojis; may be empty for a clip that speaks for itself), body (optional second line, at most 14 words), asset (the id of a listed asset, only for clip and image scenes), in (seconds into the asset where the scene starts, only for clips; pick the moment the transcript or the shot changes point to), focus ([x, y] between 0 and 1 where the subject sits, for cropping into vertical), visual (one sentence: what is on screen besides the words, concrete), why (one sentence: what the scene does for the viewer).
+Each scene has: id (short kebab-case, unique), seconds (1.5 to 10), kind ("text" for a typographic card, "clip" for a video asset, "image" for a still), ground ("dark" or "light"; for clip and image scenes the ground is what shows behind letterboxing), headline (the on-screen line, at most 8 words, plain human voice, no em dashes, no exclamation marks, no emojis; may be empty for a clip that speaks for itself), body (optional second line, at most 14 words), asset (the id of a listed asset, only for clip and image scenes), in (seconds into the asset where the scene starts, only for clips; pick the moment the transcript or the shot changes point to), focus ([x, y] between 0 and 1 where the subject sits, for cropping into vertical), fit ("cover" fills the frame, "contain" letterboxes; use "contain" for screen recordings and interfaces whose edges matter, "cover" for people and scenery), zoom (1 to 1.5; more than 1 when a clip carries its own bars or the subject is small), visual (one sentence: what is on screen besides the words, only for text scenes that show something besides the words; empty for a plain text card), why (one sentence: what the scene does for the viewer).
 
 Sound: "audio" is a list of sound assets placed under the film: {asset, kind ("voice" for a spoken recording, "music" for a bed), at (the id of the scene where it starts), in (seconds into the asset to start from, optional), gain (0 to 1, voice about 1, music under voice about 0.25), loop (music only)}. Place a recorded voice so its sentences land on the scenes that show what they say; do not put a music bed and a voice at the same gain.
 
@@ -87,7 +91,9 @@ export const normalizeScript = (s: Script, assets?: Asset[]): Script => {
     let seconds = Math.max(1.5, Math.min(12, Number(sc.seconds) || 3));
     const inAt = kind === "clip" ? Math.max(0, Number(sc.in) || 0) : undefined;
     if (a?.seconds && kind === "clip" && inAt !== undefined && inAt + seconds > a.seconds) seconds = Math.max(1.5, Math.floor((a.seconds - inAt) * 10) / 10);
-    return { id, seconds, kind, ground, headline: String(sc.headline ?? "").trim(), body: sc.body ? String(sc.body).trim() : undefined, asset, in: inAt, focus, visual: sc.visual ? String(sc.visual).trim() : undefined, why: sc.why ? String(sc.why).trim() : undefined } as ScriptScene;
+    const fit = sc.fit === "contain" ? "contain" : sc.fit === "cover" ? "cover" : undefined;
+    const zoom = sc.zoom !== undefined && Number.isFinite(Number(sc.zoom)) ? Math.min(2, Math.max(1, Number(sc.zoom))) : undefined;
+    return { id, seconds, kind, ground, headline: String(sc.headline ?? "").trim(), body: sc.body ? String(sc.body).trim() : undefined, asset, in: inAt, focus, fit, zoom, visual: sc.visual ? String(sc.visual).trim() : undefined, why: sc.why ? String(sc.why).trim() : undefined } as ScriptScene;
   });
   const sceneIds = new Set(scenes.map((x) => x.id));
   const audio: ScriptAudio[] = (Array.isArray(s.audio) ? s.audio : [])
@@ -120,7 +126,7 @@ export const scriptMarkdown = (s: Script): string => {
     L.push(`## ${i + 1}. ${sc.id} (${sc.seconds}s, ${sc.kind}, ${sc.ground})`, "");
     if (sc.headline) L.push(sc.headline);
     if (sc.body) L.push(sc.body);
-    if (sc.asset) L.push("", `Asset: ${sc.asset}${sc.in !== undefined ? ` @ ${sc.in}s` : ""}${sc.focus ? ` focus ${sc.focus[0]},${sc.focus[1]}` : ""}`);
+    if (sc.asset) L.push("", `Asset: ${sc.asset}${sc.in !== undefined ? ` @ ${sc.in}s` : ""}${sc.focus ? ` focus ${sc.focus[0]},${sc.focus[1]}` : ""}${sc.fit ? ` fit ${sc.fit}` : ""}${sc.zoom ? ` zoom ${sc.zoom}` : ""}`);
     if (sc.visual) L.push(sc.asset ? `Visual: ${sc.visual}` : "", ...(sc.asset ? [] : [`Visual: ${sc.visual}`]));
     if (sc.why) L.push(`Why: ${sc.why}`);
     L.push("");
@@ -169,11 +175,13 @@ export const parseScriptMarkdown = (md: string, assets?: Asset[]): Script => {
     }
     if (!cur) continue;
     if (raw.startsWith("Asset:")) {
-      const m = raw.slice(6).trim().match(/^([\w.-]+)(?:\s*@\s*([\d.]+)s)?(?:\s*focus\s*([\d.]+),([\d.]+))?/);
+      const m = raw.slice(6).trim().match(/^([\w.-]+)(?:\s*@\s*([\d.]+)s)?(?:\s*focus\s*([\d.]+),([\d.]+))?(?:\s*fit\s*(cover|contain))?(?:\s*zoom\s*([\d.]+))?/);
       if (m) {
         cur.asset = m[1];
         if (m[2]) cur.in = parseFloat(m[2]);
         if (m[3] && m[4]) cur.focus = [parseFloat(m[3]), parseFloat(m[4])];
+        if (m[5]) cur.fit = m[5] as "cover" | "contain";
+        if (m[6]) cur.zoom = parseFloat(m[6]);
       }
     } else if (raw.startsWith("Visual:")) cur.visual = raw.slice(7).trim();
     else if (raw.startsWith("Why:")) cur.why = raw.slice(4).trim();
@@ -208,8 +216,9 @@ export const scaffoldFiles = (script: Script, opts: { harnessImport: string; for
     })
     .filter(Boolean)
     .join("\n");
-  const assetLines = assets.map((a) => `  ${ts(a.id)}: { file: ${ts(a.file.replace(/^public\//, ""))}, kind: ${ts(a.kind)}, seconds: ${a.seconds ?? 0}, width: ${a.width ?? 0}, height: ${a.height ?? 0} },`).join("\n");
-  const sceneLines = script.scenes.map((sc) => `  ${ts(sc.id)}: { dur: ${Math.round(sc.seconds * fps)}, kind: ${ts(sc.kind)}, ground: ${ts(sc.ground)}, headline: ${ts(sc.headline)}, body: ${ts(sc.body ?? "")}, asset: ${ts(sc.asset ?? "")}, inAt: ${sc.in ?? 0}, focus: [${sc.focus ? sc.focus.join(", ") : "0.5, 0.5"}], visual: ${ts(sc.visual ?? "")}, why: ${ts(sc.why ?? "")} },`).join("\n");
+  const edges = (a: Asset) => a.darkEdges ?? { left: 0, right: 0, top: 0, bottom: 0 };
+  const assetLines = assets.map((a) => `  ${ts(a.id)}: { file: ${ts(a.file.replace(/^public\//, ""))}, kind: ${ts(a.kind)}, seconds: ${a.seconds ?? 0}, width: ${a.width ?? 0}, height: ${a.height ?? 0}, darkEdges: { left: ${edges(a).left}, right: ${edges(a).right}, top: ${edges(a).top}, bottom: ${edges(a).bottom} } },`).join("\n");
+  const sceneLines = script.scenes.map((sc) => `  ${ts(sc.id)}: { dur: ${Math.round(sc.seconds * fps)}, kind: ${ts(sc.kind)}, ground: ${ts(sc.ground)}, headline: ${ts(sc.headline)}, body: ${ts(sc.body ?? "")}, asset: ${ts(sc.asset ?? "")}, inAt: ${sc.in ?? 0}, focus: [${sc.focus ? sc.focus.join(", ") : "0.5, 0.5"}], fit: ${ts(sc.fit ?? "auto")}, zoom: ${sc.zoom ?? 0}, visual: ${ts(sc.visual ?? "")}, why: ${ts(sc.why ?? "")} },`).join("\n");
   const timeline = `/**
  * ${script.title}: the timeline as data. Generated by mh new from the brief; edit here, never in the components.
  */
@@ -220,12 +229,12 @@ export const FPS = ${fps};
 /** the design the script chose: change here, every scene follows */
 export const DESIGN = { ink: ${ts(d.ink)}, paper: ${ts(d.paper)}, accent: ${ts(d.accent)}, muted: ${ts(d.muted)}, fontDisplay: ${ts(d.fontDisplay)}, fontBody: ${ts(d.fontBody)} };
 
-export type AssetSpec = { file: string; kind: "video" | "audio" | "image"; seconds: number; width: number; height: number };
+export type AssetSpec = { file: string; kind: "video" | "audio" | "image"; seconds: number; width: number; height: number; darkEdges: { left: number; right: number; top: number; bottom: number } };
 export const ASSETS: Record<string, AssetSpec> = {
 ${assetLines}
 };
 
-export type SceneSpec = { dur: number; kind: "text" | "clip" | "image"; ground: "dark" | "light"; headline: string; body: string; asset: string; inAt: number; focus: [number, number]; visual: string; why: string };
+export type SceneSpec = { dur: number; kind: "text" | "clip" | "image"; ground: "dark" | "light"; headline: string; body: string; asset: string; inAt: number; focus: [number, number]; fit: "cover" | "contain" | "auto"; zoom: number; visual: string; why: string };
 
 export const SCENES: Record<string, SceneSpec> = {
 ${sceneLines}
@@ -274,9 +283,12 @@ ${cueLines}
 import React from "react";
 import { AbsoluteFill, Easing, Img, OffthreadVideo, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { compile } from ${ts(opts.harnessImport + "/timeline/schema.ts")};
-import { timeline, SCENES, ASSETS, DESIGN, FADE, FPS, type SceneId } from "./timeline.ts";
+import { timeline, SCENES, ASSETS, DESIGN, FADE, FPS, type SceneId, type SceneSpec, type AssetSpec } from "./timeline.ts";
 
 const c = compile(timeline);
+
+/** the dashed boxes that describe a text scene's missing visual: set false once every scene has its real picture */
+export const SHOW_VISUAL_NOTES = true;
 
 const DISPLAY = DESIGN.fontDisplay ? \`'\${DESIGN.fontDisplay}', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif\` : "-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif";
 const BODY = DESIGN.fontBody ? \`'\${DESIGN.fontBody}', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif\` : DISPLAY;
@@ -287,10 +299,25 @@ const rise = (frame: number, at: number, dur = 14) => {
   return { opacity: p, transform: \`translateY(\${(1 - p) * 18}px)\` };
 };
 
-const Fade: React.FC<{ dur: number; children: React.ReactNode }> = ({ dur, children }) => {
+/** in through the timeline's enter (none on a cut), out through the declared exit fade */
+const Fade: React.FC<{ dur: number; enterDur: number; children: React.ReactNode }> = ({ dur, enterDur, children }) => {
   const f = useCurrentFrame();
-  const o = interpolate(f, [0, 10, dur - FADE.dur, dur - 1], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const o = interpolate(f, [0, Math.max(1, enterDur), Math.max(enterDur + 1, dur - FADE.dur), dur - 1], [enterDur > 0 ? 0 : 1, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return <AbsoluteFill style={{ opacity: o }}>{children}</AbsoluteFill>;
+};
+
+/** how a picture sits in the frame: cover by default, contain when a wide interface would lose its edges in a vertical frame; zoom hides a source's own bars */
+const mediaFit = (s: SceneSpec, a: AssetSpec | undefined, width: number, height: number) => {
+  const targetAspect = width / height;
+  const assetAspect = a && a.width && a.height ? a.width / a.height : targetAspect;
+  const fit = s.fit === "auto" || !s.fit ? (targetAspect < 1 && assetAspect > 1.4 ? "contain" : "cover") : s.fit;
+  // cover already crops one axis: only the axis the picture is scaled by needs the bars pushed out, and never more than 1.3
+  const hFrac = a && a.width ? (a.darkEdges.left + a.darkEdges.right) / a.width : 0;
+  const vFrac = a && a.height ? (a.darkEdges.top + a.darkEdges.bottom) / a.height : 0;
+  const scaledByWidth = assetAspect <= targetAspect;
+  const edgeZoom = Math.min(1.3, 1 + (scaledByWidth ? hFrac : vFrac) * 1.1);
+  const zoom = Math.max(s.zoom || 1, fit === "cover" ? edgeZoom : 1);
+  return { fit, zoom } as const;
 };
 
 const Lines: React.FC<{ id: SceneId; story: boolean; onMedia?: boolean }> = ({ id, story, onMedia }) => {
@@ -320,7 +347,7 @@ const TextScene: React.FC<{ id: SceneId; story: boolean }> = ({ id, story }) => 
   const dark = s.ground === "dark";
   return (
     <AbsoluteFill style={{ backgroundColor: dark ? DESIGN.ink : DESIGN.paper, justifyContent: "center", alignItems: "center", padding: story ? "0 110px" : "0 200px", boxSizing: "border-box", gap: 40 }}>
-      {s.visual ? (
+      {s.visual && SHOW_VISUAL_NOTES ? (
         <div data-probe="visual" data-lines={4} data-lint="no-collision" style={{ ...rise(f, 2), width: story ? 760 : 900, height: story ? 400 : 380, borderRadius: 18, border: \`2px dashed \${dark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.25)"}\`, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 32, fontFamily: BODY, fontSize: 26, lineHeight: 1.3, color: dark ? "rgba(255,255,255,0.7)" : DESIGN.muted }}>
           {s.visual}
         </div>
@@ -336,11 +363,12 @@ const ClipScene: React.FC<{ id: SceneId; story: boolean }> = ({ id, story }) => 
   const { width, height } = useVideoConfig();
   const s = SCENES[id];
   const a = ASSETS[s.asset];
-  const push = 1 + Math.min(0.06, f / (s.dur * 12));
+  const { fit, zoom } = mediaFit(s, a, width, height);
+  const push = zoom * (1 + Math.min(0.06, f / (s.dur * 12)));
   return (
     <AbsoluteFill style={{ backgroundColor: DESIGN.ink }}>
       {a ? (
-        <OffthreadVideo src={staticFile(a.file)} muted startFrom={Math.round(s.inAt * FPS)} style={{ position: "absolute", inset: 0, width, height, objectFit: "cover", objectPosition: \`\${s.focus[0] * 100}% \${s.focus[1] * 100}%\`, transform: \`scale(\${push})\` }} />
+        <OffthreadVideo src={staticFile(a.file)} muted startFrom={Math.round(s.inAt * FPS)} style={{ position: "absolute", inset: 0, width, height, objectFit: fit, objectPosition: \`\${s.focus[0] * 100}% \${s.focus[1] * 100}%\`, transform: \`scale(\${push})\`, transformOrigin: \`\${s.focus[0] * 100}% \${s.focus[1] * 100}%\` }} />
       ) : null}
       {s.headline ? <AbsoluteFill style={{ background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.0) 55%)" }} /> : null}
       <AbsoluteFill style={{ justifyContent: "flex-end", padding: story ? "0 90px 360px" : "0 140px 110px", boxSizing: "border-box" }}>
@@ -356,10 +384,11 @@ const ImageScene: React.FC<{ id: SceneId; story: boolean }> = ({ id, story }) =>
   const { width, height } = useVideoConfig();
   const s = SCENES[id];
   const a = ASSETS[s.asset];
-  const zoom = interpolate(f, [0, s.dur], [1.0, 1.08], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const m = mediaFit(s, a, width, height);
+  const zoom = m.zoom * interpolate(f, [0, s.dur], [1.0, 1.08], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return (
     <AbsoluteFill style={{ backgroundColor: DESIGN.ink }}>
-      {a ? <Img src={staticFile(a.file)} style={{ position: "absolute", inset: 0, width, height, objectFit: "cover", objectPosition: \`\${s.focus[0] * 100}% \${s.focus[1] * 100}%\`, transform: \`scale(\${zoom})\`, transformOrigin: \`\${s.focus[0] * 100}% \${s.focus[1] * 100}%\` }} /> : null}
+      {a ? <Img src={staticFile(a.file)} style={{ position: "absolute", inset: 0, width, height, objectFit: m.fit, objectPosition: \`\${s.focus[0] * 100}% \${s.focus[1] * 100}%\`, transform: \`scale(\${zoom})\`, transformOrigin: \`\${s.focus[0] * 100}% \${s.focus[1] * 100}%\` }} /> : null}
       {s.headline ? <AbsoluteFill style={{ background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.0) 55%)" }} /> : null}
       <AbsoluteFill style={{ justifyContent: "flex-end", padding: story ? "0 90px 360px" : "0 140px 110px", boxSizing: "border-box" }}>
         <Lines id={id} story={story} onMedia />
@@ -379,7 +408,7 @@ export const Film: React.FC<{ story?: boolean }> = ({ story = false }) => {
         const C = kind === "clip" ? ClipScene : kind === "image" ? ImageScene : TextScene;
         return (
           <Sequence key={sc.id} from={sc.start} durationInFrames={sc.dur}>
-            <Fade dur={sc.dur}>
+            <Fade dur={sc.dur} enterDur={sc.enter.dur ?? 0}>
               <C id={sc.id as SceneId} story={s} />
             </Fade>
           </Sequence>

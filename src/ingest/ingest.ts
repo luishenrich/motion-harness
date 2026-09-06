@@ -31,6 +31,8 @@ export type Asset = {
   /** spans without speech or sound */
   silences?: { start: number; end: number }[];
   colour?: { first: { luma: number }; mid: { luma: number }; last: { luma: number } };
+  /** pixels of near-black at each edge of the mid frame: a clip that carries its own bars */
+  darkEdges?: { left: number; right: number; top: number; bottom: number };
   transcript?: string;
   /** a one-line summary for the script model: first sentence of the transcript, or the shot count */
   summary?: string;
@@ -48,6 +50,33 @@ const AUDIO = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".aiff"]
 export const kindOf = (file: string): AssetKind => {
   const e = extname(file).toLowerCase();
   return IMAGE.has(e) ? "image" : AUDIO.has(e) ? "audio" : "video";
+};
+
+/** how many pixels from each edge are near black (luma under 32) all the way along that edge */
+export const darkEdges = async (png: string): Promise<{ left: number; right: number; top: number; bottom: number }> => {
+  if (!existsSync(png)) return { left: 0, right: 0, top: 0, bottom: 0 };
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const W = info.width, H = info.height;
+  const px = (x: number, y: number) => {
+    const i = (y * W + x) * 3;
+    return 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+  };
+  const colDark = (x: number) => {
+    let s = 0;
+    for (let y = 0; y < H; y++) s += px(x, y);
+    return s / H < 26;
+  };
+  const rowDark = (y: number) => {
+    let s = 0;
+    for (let x = 0; x < W; x++) s += px(x, y);
+    return s / W < 26;
+  };
+  let left = 0, right = 0, top = 0, bottom = 0;
+  while (left < W / 2 && colDark(left)) left++;
+  while (right < W / 2 && colDark(W - 1 - right)) right++;
+  while (top < H / 2 && rowDark(top)) top++;
+  while (bottom < H / 2 && rowDark(H - 1 - bottom)) bottom++;
+  return { left, right, top, bottom };
 };
 
 const streams = async (file: string) => {
@@ -97,6 +126,11 @@ export const ingestFile = async (cfg: LoadedConfig, file: string, opts: { id?: s
     asset.fps = p.fps;
     asset.colour = { first: { luma: p.colour.first.luma }, mid: { luma: p.colour.mid.luma }, last: { luma: p.colour.last.luma } };
     if (opts.shots !== false) asset.shots = await detectShots(abs);
+    // measured on the 160 px probe frame, scaled to the clip's own pixels
+    const e = await darkEdges(join(work, `${basename(abs)}-mid.png`));
+    const meta = await sharp(join(work, `${basename(abs)}-mid.png`)).metadata().catch(() => ({ width: 160, height: 90 }));
+    const sx = (p.width || 1) / (meta.width || 160), sy = (p.height || 1) / (meta.height || 90);
+    asset.darkEdges = { left: Math.round(e.left * sx), right: Math.round(e.right * sx), top: Math.round(e.top * sy), bottom: Math.round(e.bottom * sy) };
   }
   if (a) {
     try {

@@ -71,7 +71,8 @@ export const probeClip = async (file: string, workDir: string): Promise<Pick<Cli
     await run(["ffmpeg", "-y", "-v", "error", "-ss", t.toFixed(3), "-i", file, "-frames:v", "1", "-vf", "scale=160:-2", png]);
     return meanColour(png);
   };
-  return { width: st.width, height: st.height, fps: Math.round((num / (den || 1)) * 100) / 100, seconds, bytes: parseInt(j.format.size, 10), colour: { first: await at(0.05, "first"), mid: await at(Math.max(0.05, seconds / 2), "mid"), last: await at(Math.max(0.05, seconds - 0.1), "last") } };
+  const colour = { first: await at(0.05, "first"), mid: await at(Math.max(0.05, seconds / 2), "mid"), last: await at(Math.max(0.05, seconds - 0.1), "last") };
+  return { width: st.width, height: st.height, fps: Math.round((num / (den || 1)) * 100) / 100, seconds, bytes: parseInt(j.format.size, 10), colour };
 };
 
 export const addClip = async (cfg: LoadedConfig, file: string, meta: Partial<Pick<Clip, "id" | "prompt" | "model" | "seed" | "credits" | "cost" | "currency" | "attempts" | "tags" | "license">>, workDir: string): Promise<Clip> => {

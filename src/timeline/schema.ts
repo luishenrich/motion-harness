@@ -25,7 +25,7 @@ export type Scene = {
   dur: number;
   enter?: string | Transition;
   exit?: string | Transition;
-  /** free label for the background, used in sheets and lint (e.g. "dark", "cream") */
+  /** free label for the background, used in sheets and the review player (e.g. "dark", "light"; "cream" reads as light) */
   ground?: string;
   /** free label for the kind of scene; "demo" scenes share the stage top per format (lint `same-top`) */
   stage?: string;
