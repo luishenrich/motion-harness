@@ -288,9 +288,15 @@ const GroupView: React.FC<{ ctx: Ctx; layer: GroupLayer }> = ({ ctx, layer }) =>
   const kids = layer.layers ?? [];
   const delays = childDelays(film, ctx.scene, layer, ctx.delay);
   const child: Ctx = { ...ctx, fr: inner, path: `${ctx.path}${layer.id}.` };
+  const paint: React.CSSProperties = {
+    background: layer.fill ? colorOf(film.design, layer.fill) : undefined,
+    borderRadius: layer.radius ? layer.radius * fr.u : undefined,
+    border: layer.stroke ? `${(layer.thickness ?? 2) * fr.u}px solid ${colorOf(film.design, layer.stroke)}` : undefined,
+    boxSizing: "border-box",
+  };
   return (
     <Box ctx={ctx} layer={layer} pose={p} origin={anchorOrigin(layer.anchor)} extra={{ width: inner.width, height: inner.height }}>
-      <div style={{ position: "relative", width: inner.width, height: inner.height }}>
+      <div style={{ position: "relative", width: inner.width, height: inner.height, ...paint }}>
         {kids.map((c, i) => <LayerView key={c.id} ctx={{ ...child, delay: delays[i] }} layer={layerFor(c, ctx.format)} />)}
       </div>
     </Box>
@@ -395,10 +401,11 @@ export const transitionStyles = (type: TransitionType, p: number, fr: Frame): { 
       return { prev: rest, next: { clipPath: `inset(${(1 - q) * 100}% 0 0 0)` }, dip: false };
     case "wipe-down":
       return { prev: rest, next: { clipPath: `inset(0 0 ${(1 - q) * 100}% 0)` }, dip: false };
+    // both scenes stay at or above scale 1, so neither ever uncovers the frame's edge
     case "zoom":
-      return { prev: { transform: `scale(${(1 + 0.35 * q).toFixed(4)})`, opacity: 1 - q }, next: { transform: `scale(${(0.92 + 0.08 * q).toFixed(4)})`, opacity: q }, dip: false };
+      return { prev: { transform: `scale(${(1 + 0.35 * q).toFixed(4)})`, opacity: 1 - q }, next: { transform: `scale(${(1.08 - 0.08 * q).toFixed(4)})`, opacity: q }, dip: false };
     case "blur":
-      return { prev: { filter: `blur(${(q * 18 * fr.u).toFixed(2)}px)`, opacity: 1 - q }, next: { filter: `blur(${((1 - q) * 18 * fr.u).toFixed(2)}px)`, opacity: q }, dip: false };
+      return { prev: { filter: `blur(${(q * 18 * fr.u).toFixed(2)}px)`, transform: `scale(${(1 + 0.04 * q).toFixed(4)})`, opacity: 1 - q }, next: { filter: `blur(${((1 - q) * 18 * fr.u).toFixed(2)}px)`, transform: `scale(${(1 + 0.04 * (1 - q)).toFixed(4)})`, opacity: q }, dip: false };
     default:
       return { prev: rest, next: rest, dip: false };
   }

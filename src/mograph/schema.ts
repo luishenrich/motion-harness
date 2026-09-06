@@ -173,6 +173,11 @@ export type GroupLayer = LayerBase & {
   /** the box the children live in, u pixels */
   w?: number;
   h?: number;
+  /** the box may paint itself, which is what turns a group into a card */
+  fill?: ColorRef;
+  radius?: number;
+  stroke?: ColorRef;
+  thickness?: number;
   layers: Layer[];
 };
 
