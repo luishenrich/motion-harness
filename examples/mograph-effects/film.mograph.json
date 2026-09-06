@@ -230,11 +230,11 @@
           "text": "THREE RINGS, THREE NUMBERS",
           "size": 62,
           "color": "ink",
-          "at": { "x": 0.5, "y": 0.18 },
+          "at": { "x": 0.5, "y": 0.22 },
           "maxWidth": 0.8,
           "lines": 1,
           "in": { "preset": "scramble", "at": 2, "dur": 30 },
-          "formats": { "vertical": { "size": 46, "maxWidth": 0.9, "at": { "x": 0.5, "y": 0.3 } } }
+          "formats": { "vertical": { "size": 46, "maxWidth": 0.9, "at": { "x": 0.5, "y": 0.34 } } }
         },
         {
           "id": "dials",
@@ -254,7 +254,7 @@
           "trackColor": "muted",
           "at": { "x": 0.5, "y": 0.58 },
           "in": { "preset": "fade", "at": 14, "dur": 22, "stagger": { "by": "item", "each": 6 } },
-          "formats": { "vertical": { "d": 300, "labelSize": 32, "at": { "x": 0.5, "y": 0.56 } } }
+          "formats": { "vertical": { "d": 300, "labelSize": 32, "at": { "x": 0.5, "y": 0.57 } } }
         }
       ]
     },
@@ -301,7 +301,7 @@
           "type": "text",
           "text": "one path, one progress track",
           "role": "body",
-          "size": 38,
+          "size": 42,
           "weight": 500,
           "color": "muted",
           "at": { "x": 0.5, "y": 0.85 },
