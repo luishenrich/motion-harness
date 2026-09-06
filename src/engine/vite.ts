@@ -47,7 +47,9 @@ const tailwindPlugins = async (cfg: LoadedConfig, log: (s: string) => void): Pro
   return plugins;
 };
 
-export const startVite = async (cfg: LoadedConfig, opts: { log?: (s: string) => void; port?: number } = {}): Promise<ViteHost> => {
+type Middleware = (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse, next: () => void) => void | Promise<void>;
+
+export const startVite = async (cfg: LoadedConfig, opts: { log?: (s: string) => void; port?: number; /** handlers that run before the host page (the editor's routes) */ before?: Middleware[] } = {}): Promise<ViteHost> => {
   const log = opts.log ?? (() => {});
   const port = opts.port ?? nextPort();
   const postcssPlugins = await tailwindPlugins(cfg, log);
@@ -73,6 +75,15 @@ export const startVite = async (cfg: LoadedConfig, opts: { log?: (s: string) => 
     css: postcssPlugins.length ? { postcss: { plugins: postcssPlugins as never } } : undefined,
     optimizeDeps: { entries: [join(HOST_DIR, "main.tsx")], include: ["react", "react-dom", "react-dom/client"] },
     plugins: [
+      // a project outside the harness repo imports the harness by absolute path (mh new writes such imports): serve those files from disk
+      {
+        name: "mh-absolute-imports",
+        enforce: "pre" as const,
+        resolveId(source: string) {
+          if (source.startsWith("/") && !source.startsWith("/@") && !source.startsWith(cfg.projectDir + "/") && existsSync(source)) return source;
+          return null;
+        },
+      },
       {
         name: "mh-root",
         resolveId: (id) => (id === "virtual:mh-root" ? "\0mh-root" : null),
@@ -80,6 +91,7 @@ export const startVite = async (cfg: LoadedConfig, opts: { log?: (s: string) => 
       },
     ],
   });
+  for (const m of opts.before ?? []) server.middlewares.use((req, res, next) => void m(req, res, next));
   server.middlewares.use(async (req, res, next) => {
     if (!req.url || !req.url.startsWith("/__mh")) return next();
     try {

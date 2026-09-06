@@ -1,0 +1,532 @@
+{
+  "title": "Eyes and hands",
+  "fps": 30,
+  "design": {
+    "ink": "#12151A",
+    "paper": "#F2EEE6",
+    "accent": "#F2B441",
+    "muted": "#5F6670",
+    "colors": {
+      "teal": "#3FB9A8",
+      "rose": "#E86F7A"
+    },
+    "fontDisplay": "Sora",
+    "fontBody": "Inter Tight",
+    "fontMono": "JetBrains Mono"
+  },
+  "formats": {
+    "wide": {
+      "width": 1920,
+      "height": 1080
+    },
+    "vertical": {
+      "width": 1080,
+      "height": 1920
+    }
+  },
+  "easings": {
+    "settle": "cubic-bezier(0.2, 0.9, 0.1, 1)"
+  },
+  "defaults": {
+    "enterFrames": 0,
+    "layerIn": {
+      "preset": "rise",
+      "dur": 14,
+      "ease": "out"
+    }
+  },
+  "scenes": [
+    {
+      "id": "hook",
+      "dur": 96,
+      "ground": "ink",
+      "exit": {
+        "type": "fade",
+        "dur": 8
+      },
+      "why": "the claim, one word at a time",
+      "layers": [
+        {
+          "id": "line",
+          "type": "text",
+          "text": "An agent cannot *see* its own video.",
+          "size": 104,
+          "color": "paper",
+          "at": {
+            "x": 0.5,
+            "y": 0.47
+          },
+          "maxWidth": 0.8,
+          "in": {
+            "preset": "rise",
+            "at": 4,
+            "dur": 16,
+            "stagger": {
+              "by": "word",
+              "each": 3
+            }
+          },
+          "formats": {
+            "vertical": {
+              "size": 92,
+              "maxWidth": 0.86
+            }
+          }
+        },
+        {
+          "id": "rule",
+          "type": "shape",
+          "shape": "line",
+          "w": 220,
+          "thickness": 6,
+          "fill": "accent",
+          "at": {
+            "x": 0.5,
+            "y": 0.6
+          },
+          "in": {
+            "preset": "grow",
+            "at": 30,
+            "dur": 14
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.5,
+                "y": 0.58
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "stat",
+      "dur": 96,
+      "ground": "paper",
+      "exit": {
+        "type": "fade",
+        "dur": 8
+      },
+      "why": "one number that says how fast a look is",
+      "layers": [
+        {
+          "id": "big",
+          "type": "counter",
+          "from": 0,
+          "to": 40,
+          "suffix": " ms",
+          "dur": 36,
+          "size": 220,
+          "color": "ink",
+          "at": {
+            "x": 0.5,
+            "y": 0.44
+          },
+          "in": {
+            "preset": "pop",
+            "at": 0,
+            "dur": 14,
+            "ease": "back"
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.5,
+                "y": 0.46
+              }
+            }
+          }
+        },
+        {
+          "id": "what",
+          "type": "text",
+          "text": "for one frame, rendered and measured",
+          "role": "body",
+          "size": 44,
+          "weight": 500,
+          "color": "muted",
+          "at": {
+            "x": 0.5,
+            "y": 0.62
+          },
+          "in": {
+            "preset": "fade",
+            "at": 16,
+            "dur": 12
+          }
+        },
+        {
+          "id": "dot",
+          "type": "shape",
+          "shape": "circle",
+          "d": 28,
+          "fill": "accent",
+          "at": {
+            "x": 0.5,
+            "y": 0.72
+          },
+          "in": {
+            "preset": "pop",
+            "at": 24,
+            "dur": 10,
+            "ease": "bouncy"
+          }
+        }
+      ]
+    },
+    {
+      "id": "loop",
+      "dur": 132,
+      "ground": "ink",
+      "exit": {
+        "type": "fade",
+        "dur": 8
+      },
+      "why": "the four moves of one edit round",
+      "layers": [
+        {
+          "id": "title",
+          "type": "text",
+          "text": "One round",
+          "size": 56,
+          "color": "accent",
+          "uppercase": true,
+          "letterSpacing": 0.12,
+          "weight": 600,
+          "at": {
+            "x": 0.5,
+            "y": 0.2
+          },
+          "in": {
+            "preset": "drop",
+            "at": 0,
+            "dur": 12
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.5,
+                "y": 0.3
+              }
+            }
+          }
+        },
+        {
+          "id": "steps",
+          "type": "list",
+          "items": [
+            "*resolve* the moment",
+            "*frame* it and look",
+            "*edit* the data",
+            "*check* both formats"
+          ],
+          "marker": "number",
+          "size": 58,
+          "color": "paper",
+          "maxWidth": 0.6,
+          "at": {
+            "x": 0.5,
+            "y": 0.55
+          },
+          "in": {
+            "preset": "rise",
+            "at": 12,
+            "dur": 14,
+            "stagger": {
+              "by": "item",
+              "each": 8
+            }
+          },
+          "formats": {
+            "vertical": {
+              "maxWidth": 0.84,
+              "size": 54,
+              "at": {
+                "x": 0.5,
+                "y": 0.58
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "speed",
+      "dur": 120,
+      "ground": "paper",
+      "exit": {
+        "type": "fade",
+        "dur": 8
+      },
+      "why": "the benchmark as bars",
+      "layers": [
+        {
+          "id": "head",
+          "type": "text",
+          "text": "Seconds for one still",
+          "size": 60,
+          "color": "ink",
+          "at": {
+            "x": 0.5,
+            "y": 0.2
+          },
+          "in": {
+            "preset": "rise",
+            "at": 0,
+            "dur": 12
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.5,
+                "y": 0.3
+              },
+              "size": 56
+            }
+          }
+        },
+        {
+          "id": "bars",
+          "type": "bars",
+          "values": [
+            {
+              "label": "Remotion",
+              "value": 0.57,
+              "color": "muted"
+            },
+            {
+              "label": "native",
+              "value": 0.06,
+              "color": "teal"
+            }
+          ],
+          "max": 0.6,
+          "format": "0.00",
+          "w": 1100,
+          "thickness": 44,
+          "gap": 28,
+          "labelSize": 34,
+          "color": "ink",
+          "at": {
+            "x": 0.5,
+            "y": 0.52
+          },
+          "in": {
+            "preset": "grow",
+            "at": 14,
+            "dur": 22,
+            "ease": "settle",
+            "stagger": {
+              "by": "item",
+              "each": 6
+            }
+          },
+          "formats": {
+            "vertical": {
+              "w": 900,
+              "at": {
+                "x": 0.5,
+                "y": 0.52
+              }
+            }
+          }
+        },
+        {
+          "id": "note",
+          "type": "text",
+          "text": "measured on the same film, same pixels",
+          "role": "body",
+          "size": 34,
+          "color": "muted",
+          "at": {
+            "x": 0.5,
+            "y": 0.78
+          },
+          "in": {
+            "preset": "fade",
+            "at": 40,
+            "dur": 12
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.5,
+                "y": 0.7
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "cmd",
+      "dur": 96,
+      "ground": "ink",
+      "exit": {
+        "type": "fade",
+        "dur": 8
+      },
+      "why": "the command, typed",
+      "layers": [
+        {
+          "id": "ring",
+          "type": "shape",
+          "shape": "ring",
+          "d": 260,
+          "thickness": 14,
+          "fill": "teal",
+          "stroke": "#232830",
+          "at": {
+            "x": 0.5,
+            "y": 0.38
+          },
+          "in": {
+            "preset": "fade",
+            "at": 0,
+            "dur": 6
+          },
+          "tracks": {
+            "progress": [
+              {
+                "at": 6,
+                "v": 0
+              },
+              {
+                "at": 60,
+                "v": 1,
+                "ease": "inOut"
+              }
+            ]
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.5,
+                "y": 0.4
+              }
+            }
+          }
+        },
+        {
+          "id": "typed",
+          "type": "text",
+          "text": "mh check --format all",
+          "role": "mono",
+          "size": 60,
+          "weight": 500,
+          "color": "paper",
+          "at": {
+            "x": 0.5,
+            "y": 0.64
+          },
+          "in": {
+            "preset": "typewriter",
+            "at": 6,
+            "dur": 40
+          },
+          "formats": {
+            "vertical": {
+              "size": 48
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "end",
+      "dur": 120,
+      "ground": "accent",
+      "layers": [
+        {
+          "id": "mark",
+          "type": "image",
+          "src": "mark.svg",
+          "w": 180,
+          "at": {
+            "x": 0.5,
+            "y": 0.38
+          },
+          "in": {
+            "preset": "pop",
+            "at": 0,
+            "dur": 16,
+            "ease": "spring"
+          },
+          "formats": {
+            "vertical": {
+              "at": {
+                "x": 0.5,
+                "y": 0.42
+              }
+            }
+          }
+        },
+        {
+          "id": "name",
+          "type": "text",
+          "text": "motion-harness",
+          "size": 72,
+          "color": "ink",
+          "at": {
+            "x": 0.5,
+            "y": 0.58
+          },
+          "in": {
+            "preset": "mask",
+            "at": 10,
+            "dur": 16
+          },
+          "out": {
+            "preset": "sink",
+            "at": -14,
+            "dur": 12
+          },
+          "formats": {
+            "vertical": {
+              "size": 64,
+              "at": {
+                "x": 0.5,
+                "y": 0.6
+              }
+            }
+          }
+        },
+        {
+          "id": "tag",
+          "type": "text",
+          "text": "Eyes and hands for agents that make video",
+          "role": "body",
+          "size": 38,
+          "weight": 500,
+          "color": "ink",
+          "at": {
+            "x": 0.5,
+            "y": 0.66
+          },
+          "maxWidth": 0.8,
+          "in": {
+            "preset": "rise",
+            "at": 18,
+            "dur": 14
+          },
+          "out": {
+            "preset": "sink",
+            "at": -14,
+            "dur": 12
+          },
+          "formats": {
+            "vertical": {
+              "size": 34,
+              "at": {
+                "x": 0.5,
+                "y": 0.66
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "audio": []
+}

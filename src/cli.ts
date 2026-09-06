@@ -38,6 +38,11 @@ import { measureReference, compareCurves } from "./motion/metrics.ts";
 import { writeScript, parseScriptMarkdown, scriptMarkdown, scaffoldFiles, writeScaffold } from "./script/script.ts";
 import { ingestFiles, loadAssets, assetsForModel, spokenSpans, type Asset } from "./ingest/ingest.ts";
 import { lookAtFrame } from "./ingest/look.ts";
+import { loadFilm, saveFilm, parseValue, getValue, setValue, unsetValue, setKey, unsetKey, addLayer, addScene, remove as mgRemove, move as mgMove, duplicate as mgDuplicate, rename as mgRename, lintFilm, describe as describeFilm, autoLayout } from "./mograph/edit.ts";
+import type { Layer as MgLayer, MgScene } from "./mograph/schema.ts";
+import { writeFilm, scaffoldMgFiles, normalizeFilm } from "./mograph/script.ts";
+import { editMiddleware } from "./mograph/serve.ts";
+import { startVite } from "./engine/vite.ts";
 import { transcribeFile, saveTranscript, transcriptSrt } from "./transcribe/transcribe.ts";
 import { makeImage, loadImages } from "./image/image.ts";
 import { otioDocument } from "./otio/otio.ts";
@@ -1587,10 +1592,43 @@ const cmdScript = async (args: Args) => {
   if (flag(args, "json")) out2(JSON.stringify(r.script));
 };
 
+/** a motion graphics project: the model writes film.mograph.json from the brief (or --film takes an existing one), the scaffold draws it */
+const cmdNewMograph = async (args: Args, target: string) => {
+  const filmFile = str(args, "film");
+  let film;
+  if (filmFile) film = normalizeFilm(JSON.parse(readFileSync(resolvePath(filmFile), "utf8")), { formats: list(args, "formats") });
+  else {
+    const brief = str(args, "brief");
+    if (!brief) die("mh new --mograph needs --brief or --film film.mograph.json");
+    const t0 = performance.now();
+    const r = await writeFilm(brief!, { seconds: num(args, "seconds", 20), model: str(args, "model"), language: str(args, "language"), formats: list(args, "formats") ?? ["wide", "vertical"], log });
+    film = r.film;
+    const moved = autoLayout(film);
+    if (moved.length) log(`layout: ${moved.length} block${moved.length === 1 ? "" : "s"} moved apart (${[...new Set(moved.map((m) => `${m.scene}.${m.layer}`))].join(", ")})`);
+    log(`film: ${film.scenes.length} scenes, ${(film.scenes.reduce((a, s) => a + s.dur, 0) / film.fps).toFixed(1)}s from ${r.provider} ${r.model} in ${ms(t0)}; design ink ${film.design.ink} paper ${film.design.paper} accent ${film.design.accent}, ${film.design.fontDisplay ?? "system"} / ${film.design.fontBody ?? "system"}`);
+    if (r.findings.length) log(formatFindings(r.findings));
+  }
+  const files = scaffoldMgFiles(film, { harnessImport: str(args, "harness-import") ?? harnessImportFor(target), name: str(args, "name") });
+  const written = writeScaffold(target, files, { force: flag(args, "force") });
+  for (const f of written) produced(f);
+  log(written.map((f) => `  ${f.replace(target + "/", "")}`).join("\n"));
+  if (!flag(args, "no-install")) {
+    log("bun install");
+    await run(["bun", "install"], { cwd: target });
+  }
+  log(`project -> ${target}`);
+  if (!flag(args, "no-check")) {
+    log("");
+    await cmdCheck({ _: [], project: target, format: "all", scene: film.scenes.map((s) => s.id).join(",") });
+  }
+  log(`next: mh layers --project ${target}   mh set <scene>.<layer>.<prop> <value>   mh edit --project ${target}`);
+};
+
 const cmdNew = async (args: Args) => {
   const dir = args._[0];
-  if (!dir) die('usage: mh new <dir> (--brief "..." | --script script.md) [--seconds 30] [--formats wide,vertical] [--language English] [--force]');
+  if (!dir) die('usage: mh new <dir> (--brief "..." | --script script.md | --mograph --brief "..." | --mograph --film film.mograph.json) [--seconds 30] [--formats wide,vertical] [--language English] [--force]');
   const target = resolvePath(dir);
+  if (flag(args, "mograph")) return cmdNewMograph(args, target);
   const scriptFile = str(args, "script");
   // footage first: copied into public/assets, probed (shots, silences, loudness, transcript on request), listed for the model
   const assetArgs = list(args, "assets") ?? [];
@@ -1669,6 +1707,176 @@ const cmdLook = async (args: Args) => {
   if (L.text) log(`text: ${L.text}`);
   log(`${L.model}, ${L.ms} ms`);
   if (flag(args, "json")) out2(JSON.stringify(L));
+};
+
+/* ---------- motion graphics as data: mh layers, set, unset, key, unkey, add, remove, move, dup, rename ---------- */
+
+/** the film.mograph.json of the project: config films.<film>.mograph, else the file next to the config */
+const mgCtx = async (args: Args) => {
+  const x = await ctx(args);
+  const film = x.cfg.films[x.filmName] as { mograph?: string };
+  const rel = film.mograph ?? "film.mograph.json";
+  const path = join(x.cfg.projectDir, rel);
+  if (!existsSync(path)) die(`no motion graphics film at ${path}; mh new <dir> --mograph --brief "..." makes one, or set films.${x.filmName}.mograph in harness.config.ts`);
+  return { x, path, rel, film: loadFilm(path) };
+};
+
+const mgReport = (findings: ReturnType<typeof lintFilm>, path: string, hint?: string) => {
+  produced(path);
+  if (findings.length) log(formatFindings(findings));
+  const errors = findings.filter((f) => f.level === "error").length;
+  log(`${errors ? `${errors} error${errors === 1 ? "" : "s"} in ` : "saved "}${path}${hint ? `   verify: ${hint}` : ""}`);
+  if (errors) process.exitCode = 2;
+};
+
+const cmdLayers = async (args: Args) => {
+  const { film, x } = await mgCtx(args);
+  const only = args._[0];
+  const rows = describeFilm(film).filter((r) => !only || r.scene === only);
+  if (flag(args, "json")) return out2(JSON.stringify(only ? film.scenes.find((s) => s.id === only) : film, null, 2));
+  log(`${film.title}: ${film.scenes.length} scenes, ${film.scenes.reduce((a, s) => a + s.dur, 0)} frames at ${film.fps} fps, formats ${Object.keys(film.formats).join(", ")}`);
+  log(`design ink ${film.design.ink} paper ${film.design.paper} accent ${film.design.accent}${film.design.colors ? " " + Object.entries(film.design.colors).map(([k, v]) => `${k} ${v}`).join(" ") : ""}; fonts ${[film.design.fontDisplay, film.design.fontBody, film.design.fontMono].filter(Boolean).join(", ") || "system"}`);
+  log(table(rows.map((r) => [`${r.scene} (${r.dur}f)`, r.layer, r.type, r.at, r.in, r.out, r.text]), ["scene", "layer", "type", "at", "in", "out", "content"]));
+  log(`addresses: <scene>.<layer>.<prop> (hook.line.size), <scene>.dur, design.accent, audio.<id>.gain; frames: mh frame ${rows[0]?.scene ?? "scene"}.${rows[0]?.layer ?? "layer"}Settled --format all`);
+  void x;
+};
+
+const cmdSet = async (args: Args) => {
+  const { film, path, x } = await mgCtx(args);
+  const [addr, ...rest] = args._;
+  if (!addr || !rest.length) die('usage: mh set <address> <value>   e.g. mh set hook.line.size 110 | mh set hook.line.at \'{"x":0.5,"y":0.42}\' | mh set hook.dur 96 | mh set design.accent "#FF6B35"');
+  const value = parseValue(rest.join(" "));
+  const { before } = setValue(film, addr, value);
+  saveFilm(path, film);
+  log(`${addr}: ${JSON.stringify(before)} -> ${JSON.stringify(value)}`);
+  const t = addr.split(".");
+  mgReport(lintFilm(film, x.cfg.projectDir), path, t.length >= 2 && film.scenes.some((s) => s.id === t[0]) ? `mh frame ${t[0]}.${t[1]}Settled --format all` : undefined);
+};
+
+const cmdUnset = async (args: Args) => {
+  const { film, path, x } = await mgCtx(args);
+  const addr = args._[0];
+  if (!addr) die("usage: mh unset <address>   removes a property (mh remove takes whole scenes and layers)");
+  const before = unsetValue(film, addr);
+  saveFilm(path, film);
+  log(`${addr}: ${JSON.stringify(before)} -> (default)`);
+  mgReport(lintFilm(film, x.cfg.projectDir), path);
+};
+
+const cmdGet = async (args: Args) => {
+  const { film } = await mgCtx(args);
+  const addr = args._[0];
+  if (!addr) die("usage: mh get <address>");
+  out2(JSON.stringify(getValue(film, addr), null, 2));
+};
+
+const cmdKey = async (args: Args) => {
+  const { film, path, x } = await mgCtx(args);
+  const [addr, at, v] = args._;
+  if (!addr || at === undefined || v === undefined) die("usage: mh key <scene.layer.prop> <frame> <value> [--ease out]   tracks: opacity x y scale rotate blur progress wipe w h");
+  const keys = setKey(film, addr, parseFloat(at), parseFloat(v), str(args, "ease"));
+  saveFilm(path, film);
+  log(`${addr}: ${keys.map((k) => `@${k.at} ${k.v}${k.ease ? ` ${typeof k.ease === "string" ? k.ease : "spring"}` : ""}`).join("  ")}`);
+  const t = addr.split(".");
+  mgReport(lintFilm(film, x.cfg.projectDir), path, `mh frame ${t[0]}+${at} --format all`);
+};
+
+const cmdUnkey = async (args: Args) => {
+  const { film, path, x } = await mgCtx(args);
+  const [addr, at] = args._;
+  if (!addr || at === undefined) die("usage: mh unkey <scene.layer.prop> <frame>");
+  const keys = unsetKey(film, addr, parseFloat(at));
+  saveFilm(path, film);
+  log(`${addr}: ${keys.length ? keys.map((k) => `@${k.at} ${k.v}`).join("  ") : "(no track, the preset applies)"}`);
+  mgReport(lintFilm(film, x.cfg.projectDir), path);
+};
+
+const cmdAdd = async (args: Args) => {
+  const { film, path, x } = await mgCtx(args);
+  const [what, a, b] = args._;
+  const pos = { after: str(args, "after"), before: str(args, "before") };
+  if (what === "scene" && a) {
+    const scene = parseValue(a) as MgScene;
+    if (typeof scene !== "object") die("usage: mh add scene '{\"id\":\"x\",\"dur\":90,\"ground\":\"ink\",\"layers\":[]}' [--after id]");
+    addScene(film, scene, pos);
+    saveFilm(path, film);
+    log(`scene ${scene.id} added (${scene.dur}f, ${scene.layers?.length ?? 0} layers)`);
+    mgReport(lintFilm(film, x.cfg.projectDir), path, `mh check --scene ${scene.id} --format all`);
+  } else if (what === "layer" && a && b) {
+    const layer = parseValue(b) as MgLayer;
+    if (typeof layer !== "object") die("usage: mh add layer <scene> '{\"id\":\"x\",\"type\":\"text\",\"text\":\"...\"}' [--after id|--before id]");
+    addLayer(film, a, layer, pos);
+    saveFilm(path, film);
+    log(`layer ${a}.${layer.id} added (${layer.type})`);
+    mgReport(lintFilm(film, x.cfg.projectDir), path, `mh frame ${a}.${layer.id}Settled --format all`);
+  } else die("usage: mh add scene <json> [--after id] | mh add layer <scene> <json> [--after id|--before id]");
+};
+
+const cmdRemove = async (args: Args) => {
+  const { film, path, x } = await mgCtx(args);
+  const addr = args._[0];
+  if (!addr) die("usage: mh remove <scene>|<scene.layer>");
+  const kind = mgRemove(film, addr);
+  saveFilm(path, film);
+  log(`${kind} ${addr} removed`);
+  mgReport(lintFilm(film, x.cfg.projectDir), path);
+};
+
+const cmdMove = async (args: Args) => {
+  const { film, path, x } = await mgCtx(args);
+  const addr = args._[0];
+  if (!addr || (!str(args, "after") && !str(args, "before"))) die("usage: mh move <scene>|<scene.layer> --after <id>|--before <id>");
+  mgMove(film, addr, { after: str(args, "after"), before: str(args, "before") });
+  saveFilm(path, film);
+  log(`${addr} moved ${str(args, "after") ? `after ${str(args, "after")}` : `before ${str(args, "before")}`}`);
+  mgReport(lintFilm(film, x.cfg.projectDir), path);
+};
+
+const cmdDup = async (args: Args) => {
+  const { film, path, x } = await mgCtx(args);
+  const addr = args._[0];
+  if (!addr) die("usage: mh dup <scene>|<scene.layer> [--as id]");
+  const id = mgDuplicate(film, addr, str(args, "as"));
+  saveFilm(path, film);
+  log(`${addr} duplicated as ${id}`);
+  mgReport(lintFilm(film, x.cfg.projectDir), path);
+};
+
+const cmdRename = async (args: Args) => {
+  const { film, path, x } = await mgCtx(args);
+  const [addr, id] = args._;
+  if (!addr || !id) die("usage: mh rename <scene>|<scene.layer> <new-id>");
+  mgRename(film, addr, id);
+  saveFilm(path, film);
+  log(`${addr} is now ${id}`);
+  mgReport(lintFilm(film, x.cfg.projectDir), path);
+};
+
+/** stacked blocks pushed apart and kept in the safe band, per format; the film is saved */
+const cmdLayout = async (args: Args) => {
+  const { film, path, x } = await mgCtx(args);
+  const moved = autoLayout(film, args._[0]);
+  if (!moved.length) return log("nothing overlaps; nothing moved");
+  saveFilm(path, film);
+  log(table(moved.map((m) => [m.scene, m.layer, m.format, m.from.toFixed(3), m.to.toFixed(3)]), ["scene", "layer", "format", "y before", "y after"]));
+  mgReport(lintFilm(film, x.cfg.projectDir), path, `mh check --scene ${[...new Set(moved.map((m) => m.scene))].join(",")} --format all`);
+};
+
+/** the editor: the native engine's host page on a stage, a scrubber, layers, an inspector; every change lands in film.mograph.json */
+const cmdEdit = async (args: Args) => {
+  const { x, path, rel } = await mgCtx(args);
+  if (engineKindOf(x.cfg, str(args, "engine")) !== "native") log("the editor draws with the native engine (vite), whatever the config's engine says");
+  const { handler } = editMiddleware(x.cfg, x.filmName, path, { log: (m) => log(`  ${m}`) });
+  const v = await startVite(x.cfg, { log: () => {}, port: str(args, "port") ? num(args, "port", 0) : undefined, before: [handler] });
+  const url = `${v.url}/__mh/edit`;
+  log(`editor on ${url}   (${rel}; ctrl-c stops it)`);
+  log("keys: arrows nudge, [ ] in earlier/later, - = size, , . frame, space play, d duplicate, backspace remove, z undo; window.mhEdit.state() reads everything as text");
+  if (!flag(args, "no-open") && process.platform === "darwin") Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
+  await new Promise<void>((resolve) => {
+    process.on("SIGINT", () => resolve());
+    process.on("SIGTERM", () => resolve());
+  });
+  await v.close();
 };
 
 const cmdTranscribe = async (args: Args) => {
@@ -1813,6 +2021,8 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
   script --brief "..." [--seconds 30] [--out script.md]
                                     a model writes the script (scenes with headline, body, visual, seconds); Azure, OpenRouter or OpenAI from the environment
   new <dir> (--brief "..." | --script script.md) [--assets dir|files] [--transcribe] [--look] [--formats wide,vertical]
+  new <dir> --mograph (--brief "..." | --film film.mograph.json) [--seconds 20] [--formats wide,vertical] [--name spot]
+                                    pure motion graphics as data: a model writes film.mograph.json, the scaffold draws it, mh check runs
                                     a project the harness can check right away: footage ingested and listed for the model, the script (kinds text, clip, image;
                                     a design of palette and fonts), timeline as data, one component per scene kind, Root, config, react installed
   ingest <file|dir...> [--copy public/assets] [--transcribe] [--look] [--language de]
@@ -1820,6 +2030,20 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
                                     footage in, facts out: streams, length, loudness, shot changes, silences, colour, transcript into assets.json
   transcribe <file> [--srt out.srt] [--spans] [--from --to] [--language de]
   look <image|clip> [--at 3.5] [--json]   the subject of one frame, its kind, its box and readable text (Gemini)
+
+motion graphics as data (film.mograph.json, see docs/mograph.md):
+  layers [scene] [--json]           every scene and layer with its address, timing and content
+  get <address>                     one value as JSON (hook.line, hook.line.in, design)
+  set <address> <value>             hook.line.size 110 | hook.line.at '{"x":0.5,"y":0.42}' | hook.dur 96 | design.accent "#FF6B35"
+  unset <address>                   back to the default
+  key <scene.layer.prop> <frame> <value> [--ease out]
+                                    a keyframe on a track (opacity x y scale rotate blur progress wipe w h); explicit tracks win over presets
+  unkey <scene.layer.prop> <frame>
+  add scene <json> [--after id]     add layer <scene> <json> [--after id|--before id]
+  remove <scene>|<scene.layer>      move <addr> --after id|--before id    dup <addr> [--as id]    rename <addr> <id>
+  layout [scene]                    stacked blocks pushed apart and kept in the safe band, per format
+  edit [--port 4850] [--no-open]    the editor in the browser: stage, scrubber, layers, inspector, keyboard; every change lands in the file
+                                    every edit lints the film and names the frame to look at
                                     words with times (Gemini listens, silences sharpen the edges); --spans lists the spoken spans a silence cut would keep
   image "<prompt>" [--width --height] [--provider azure-mai|azure-flux|openai] [--out file]
                                     an image plate from a prompt (config.imageStyle appended, no text asked of the model), fitted to the size, registered in images.json
@@ -1875,6 +2099,19 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   ingest: cmdIngest,
   transcribe: cmdTranscribe,
   look: cmdLook,
+  layers: cmdLayers,
+  get: cmdGet,
+  set: cmdSet,
+  unset: cmdUnset,
+  key: cmdKey,
+  unkey: cmdUnkey,
+  add: cmdAdd,
+  remove: cmdRemove,
+  move: cmdMove,
+  dup: cmdDup,
+  rename: cmdRename,
+  layout: cmdLayout,
+  edit: cmdEdit,
   image: cmdImage,
   otio: cmdOtio,
 };

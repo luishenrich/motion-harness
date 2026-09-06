@@ -9,7 +9,7 @@
  */
 import { readFileSync } from "node:fs";
 import type { LoadedConfig } from "../config.ts";
-import type { Compiled } from "../timeline/schema.ts";
+import { probeSpec, type Compiled } from "../timeline/schema.ts";
 import { resolve, resolveUnclamped } from "../timeline/resolve.ts";
 import type { ProbeItem, ProbeResult } from "../render/frames.ts";
 
@@ -311,7 +311,9 @@ export const lintProbe = (cfg: LoadedConfig, c: Compiled, format: string, frames
     if (scene?.probes.length) {
       // inside a declared exit transition the scene is leaving: an element fading out there is not missing
       const leaving = scene.exit?.dur ? localHere >= scene.dur - scene.exit.dur : false;
-      for (const key of scene.probes) {
+      for (const spec of scene.probes) {
+        const { key, from, to } = probeSpec(spec);
+        if (localHere < from || localHere > to) continue;
         const it = f.probe.items.find((i) => i.key === key);
         if (!it) out.push({ level: "error", rule: "probe-present", where: `${f.label} ${key}`, message: "expected data-probe element not in the DOM" });
         else if (!it.visible && !leaving) out.push({ level: "warn", rule: "probe-visible", where: `${f.label} ${key}`, message: `present but not visible (opacity ${it.opacity}, ${it.w}x${it.h} at ${it.x},${it.y})` });

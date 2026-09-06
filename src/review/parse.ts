@@ -5,7 +5,7 @@
  * names; phrases that look like a reference but resolve to nothing are listed
  * so the agent asks instead of guessing.
  */
-import type { Compiled, CompiledScene } from "../timeline/schema.ts";
+import { probeSpec, type Compiled, CompiledScene } from "../timeline/schema.ts";
 import { resolve, locate, type Location } from "../timeline/resolve.ts";
 
 export type Hit = {
@@ -227,7 +227,8 @@ export const parseSentence = (c: Compiled, sentence: string): ParsedSentence => 
     }
   }
   for (const s of c.scenes) {
-    for (const key of s.probes) {
+    for (const spec of s.probes) {
+      const key = probeSpec(spec).key;
       const ph = phraseHits(sentence, key).filter((p) => !taken.some((t) => overlaps(t, p.span)));
       if (!ph.length) continue;
       add(ph[0].span, { kind: "element", via: `${s.id} probe ${key}`, ref: s.id, location: resolve(c, s.id) });

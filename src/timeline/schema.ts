@@ -38,7 +38,7 @@ export type Scene = {
   events?: Record<string, number>;
   /** state markers, in local frames (a demo that changes state at `at`) */
   states?: { id: string; at: number }[];
-  /** data-probe keys that must be visible in this scene (lint + probe) */
+  /** data-probe keys that must be visible in this scene (lint + probe); "key@12-80" only between those local frames */
   probes?: string[];
   /** extra local frames worth a look */
   checkFrames?: number[];
@@ -269,6 +269,12 @@ export const compositionFor = (part: CompiledPart | Part, format: string): strin
   const id = part.composition[format];
   if (!id) throw new Error(`part "${part.id}" has no composition for format "${format}" (has: ${Object.keys(part.composition).join(", ")})`);
   return id;
+};
+
+/** a probe spec "key@from-to" split into its key and its window (local frames, inclusive); no window means the whole scene */
+export const probeSpec = (spec: string): { key: string; from: number; to: number } => {
+  const m = spec.match(/^(.*)@(-?\d+)-(-?\d+)$/);
+  return m ? { key: m[1], from: parseInt(m[2], 10), to: parseInt(m[3], 10) } : { key: spec, from: 0, to: Infinity };
 };
 
 export const fmtTime = (frame: number, fps: number): string => {

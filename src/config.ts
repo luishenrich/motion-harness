@@ -19,6 +19,8 @@ export type Film = {
   cursor?: Cursor;
   /** A/B variants of stills: still id -> variant name -> props merged over the still's defaultProps (mh still <id> --variants) */
   stills?: Record<string, Record<string, Record<string, unknown>>>;
+  /** motion graphics as data: the film.mograph.json the compositions draw and mh set / key / add edit (project-relative) */
+  mograph?: string;
 };
 
 export type CursorLegOpts = {
