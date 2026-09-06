@@ -205,9 +205,11 @@ behind it and a legend beside it (`"legend": false` drops the legend).
 ```
 
 Dots and lines drift up, confetti falls and turns. Every particle is placed from the seed and the
-frame number alone, so the same frame always draws the same field and two renders match. 400 is the
-cap the lint enforces; `probe: false` keeps the field out of the layout rules it would otherwise
-cover.
+frame number alone, so the same frame always draws the same field and two renders match (the same
+frame rendered twice is the same file, byte for byte). 400 is the cap the lint enforces;
+`probe: false` keeps the field out of the layout rules it would otherwise cover. A scene with
+particles never stops moving, so `mh motion` reports no settle for it: read the layers' own
+`<layer>Settled` events instead.
 
 ## Tracks
 
