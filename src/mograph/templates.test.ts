@@ -33,7 +33,9 @@ describe("templates", () => {
     for (const name of templateNames()) {
       const scene = buildScene(name);
       const f = findings(scene);
-      expect(`${name}: ${f.map((x) => `${x.level} ${x.rule} ${x.where} ${x.message}`).join("; ") || "clean"}`).toBe(`${name}: clean`);
+      // a template is one scene of a film: whether the film opens or ends empty is the film's business, not the template's
+      const own = f.filter((x) => x.rule !== "opens-empty" && x.rule !== "ends-empty");
+      expect(`${name}: ${own.map((x) => `${x.level} ${x.rule} ${x.where} ${x.message}`).join("; ") || "clean"}`).toBe(`${name}: clean`);
       expect(scene.layers.length).toBeGreaterThan(0);
       expect(scene.dur).toBeGreaterThanOrEqual(20);
     }
