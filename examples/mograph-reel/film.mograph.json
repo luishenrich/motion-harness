@@ -67,10 +67,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 26,
+              "size": 34,
               "at": {
                 "x": 0.5,
-                "y": 0.36
+                "y": 0.3
               }
             }
           }
@@ -100,8 +100,12 @@
           },
           "formats": {
             "vertical": {
-              "size": 83,
-              "maxWidth": 0.86
+              "size": 100,
+              "maxWidth": 0.9,
+              "at": {
+                "x": 0.5,
+                "y": 0.46
+              }
             }
           },
           "lines": 2
@@ -125,10 +129,10 @@
           },
           "formats": {
             "vertical": {
-              "w": 200,
+              "w": 260,
               "at": {
                 "x": 0.5,
-                "y": 0.575
+                "y": 0.6
               }
             }
           }
@@ -175,13 +179,16 @@
         },
         "ease": "linear"
       },
-      "sound": "swell",
       "ground": {
         "gradient": [
           "ink",
           "deep"
         ],
         "angle": 160
+      },
+      "sound": {
+        "name": "swell",
+        "gain": 1.4
       }
     },
     {
@@ -223,11 +230,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 80,
-              "maxWidth": 0.88,
+              "size": 88,
+              "maxWidth": 0.9,
               "at": {
                 "x": 0.5,
-                "y": 0.38
+                "y": 0.32
               }
             }
           }
@@ -253,11 +260,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 42,
+              "size": 44,
               "maxWidth": 0.9,
               "at": {
                 "x": 0.5,
-                "y": 0.58
+                "y": 0.66
               }
             }
           }
@@ -269,7 +276,10 @@
         "dur": 14,
         "ease": "inOut"
       },
-      "sound": "whoosh"
+      "sound": {
+        "name": "whoosh",
+        "gain": 0.8
+      }
     },
     {
       "id": "file",
@@ -301,10 +311,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 60,
+              "size": 62,
               "at": {
                 "x": 0.5,
-                "y": 0.27
+                "y": 0.2
               }
             }
           }
@@ -321,7 +331,6 @@
             "y": 0.5
           },
           "anchor": "center",
-          "sound": "pop",
           "effects": {
             "shadow": {
               "y": 26,
@@ -400,13 +409,25 @@
           ],
           "formats": {
             "vertical": {
-              "w": 880,
-              "h": 460,
+              "w": 900,
+              "h": 560,
               "at": {
                 "x": 0.5,
                 "y": 0.5
               }
             }
+          },
+          "sound pop 1": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            "{\"name\":\"\",\"gain\":}"
+          ],
+          "sound": {
+            "name": "pop",
+            "gain": 0.9
           }
         },
         {
@@ -433,9 +454,9 @@
               "size": 38,
               "at": {
                 "x": 0.5,
-                "y": 0.74
+                "y": 0.8
               },
-              "maxWidth": 0.88
+              "maxWidth": 0.9
             }
           }
         }
@@ -472,11 +493,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 64,
-              "maxWidth": 0.9,
+              "size": 68,
+              "maxWidth": 0.92,
               "at": {
                 "x": 0.5,
-                "y": 0.32
+                "y": 0.22
               }
             }
           }
@@ -490,11 +511,6 @@
           "weight": 500,
           "color": "ink",
           "lines": 1,
-          "sound": {
-            "name": "tick",
-            "at": 6,
-            "gain": 2.6
-          },
           "at": {
             "x": 0.5,
             "y": 0.52
@@ -512,13 +528,18 @@
           },
           "formats": {
             "vertical": {
-              "size": 40,
+              "size": 42,
               "maxWidth": 0.94,
               "at": {
                 "x": 0.5,
                 "y": 0.5
               }
             }
+          },
+          "sound": {
+            "name": "tick",
+            "at": 6,
+            "gain": 0.9
           }
         },
         {
@@ -545,7 +566,7 @@
               "size": 38,
               "at": {
                 "x": 0.5,
-                "y": 0.68
+                "y": 0.76
               }
             }
           }
@@ -561,7 +582,6 @@
         "dur": 16,
         "ease": "inOut"
       },
-      "sound": "whoosh",
       "camera": {
         "tracks": {
           "x": [
@@ -880,7 +900,11 @@
             }
           }
         }
-      ]
+      ],
+      "sound": {
+        "name": "whoosh",
+        "gain": 0.8
+      }
     },
     {
       "id": "pass",
@@ -913,11 +937,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 62,
+              "size": 64,
               "maxWidth": 0.92,
               "at": {
                 "x": 0.5,
-                "y": 0.28
+                "y": 0.22
               }
             }
           }
@@ -935,11 +959,6 @@
           "h": 220,
           "thickness": 14,
           "stroke": "iris",
-          "sound": {
-            "name": "ding",
-            "at": 30,
-            "gain": 1.2
-          },
           "at": {
             "x": 0.5,
             "y": 0.56
@@ -954,13 +973,18 @@
           },
           "formats": {
             "vertical": {
-              "w": 300,
-              "h": 220,
+              "w": 400,
+              "h": 300,
               "at": {
                 "x": 0.5,
                 "y": 0.5
               }
             }
+          },
+          "sound": {
+            "name": "ding",
+            "at": 30,
+            "gain": 1.3
           }
         },
         {
@@ -988,7 +1012,7 @@
               "maxWidth": 0.94,
               "at": {
                 "x": 0.5,
-                "y": 0.72
+                "y": 0.78
               }
             }
           }
@@ -1025,10 +1049,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 60,
+              "size": 62,
               "at": {
                 "x": 0.5,
-                "y": 0.26
+                "y": 0.2
               }
             }
           }
@@ -1056,7 +1080,6 @@
           "labelSize": 34,
           "color": "paper",
           "showValues": true,
-          "sound": "thud",
           "at": {
             "x": 0.475,
             "y": 0.5
@@ -1073,12 +1096,22 @@
           },
           "formats": {
             "vertical": {
-              "w": 860,
+              "w": 880,
               "at": {
                 "x": 0.5,
-                "y": 0.48
+                "y": 0.5
               }
             }
+          },
+          "sound thud 1": [
+            null,
+            null,
+            null,
+            "{\"name\":\"\",\"gain\":}"
+          ],
+          "sound": {
+            "name": "thud",
+            "gain": 0.85
           }
         },
         {
@@ -1105,7 +1138,7 @@
               "size": 38,
               "at": {
                 "x": 0.5,
-                "y": 0.72
+                "y": 0.78
               }
             }
           }
@@ -1144,11 +1177,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 46,
+              "size": 48,
               "maxWidth": 0.94,
               "at": {
                 "x": 0.5,
-                "y": 0.24
+                "y": 0.19
               }
             }
           }
@@ -1181,7 +1214,6 @@
           "labelSize": 34,
           "labelColor": "ink",
           "trackColor": "muted",
-          "sound": "rise",
           "at": {
             "x": 0.5,
             "y": 0.54
@@ -1197,13 +1229,25 @@
           },
           "formats": {
             "vertical": {
-              "d": 300,
-              "labelSize": 30,
+              "d": 330,
+              "labelSize": 32,
               "at": {
                 "x": 0.5,
                 "y": 0.5
               }
             }
+          },
+          "sound rise 1": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            "{\"name\":\"\",\"gain\":}"
+          ],
+          "sound": {
+            "name": "rise",
+            "gain": 1.6
           }
         },
         {
@@ -1230,7 +1274,7 @@
               "size": 38,
               "at": {
                 "x": 0.5,
-                "y": 0.76
+                "y": 0.8
               }
             }
           }
@@ -1255,10 +1299,9 @@
           "to": 1594,
           "format": "0",
           "roll": true,
-          "dur": 52,
+          "dur": 34,
           "size": 200,
           "color": "paper",
-          "sound": "click",
           "effects": {
             "shadow": {
               "y": 24,
@@ -1278,12 +1321,24 @@
           },
           "formats": {
             "vertical": {
-              "size": 170,
+              "size": 190,
               "at": {
                 "x": 0.5,
-                "y": 0.44
+                "y": 0.4
               }
             }
+          },
+          "sound click 1": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            "{\"name\":\"\",\"gain\":}"
+          ],
+          "sound": {
+            "name": "click",
+            "gain": 0.9
           }
         },
         {
@@ -1306,10 +1361,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 46,
+              "size": 48,
               "at": {
                 "x": 0.5,
-                "y": 0.58
+                "y": 0.6
               }
             }
           }
@@ -1338,7 +1393,7 @@
               "size": 38,
               "at": {
                 "x": 0.5,
-                "y": 0.68
+                "y": 0.72
               }
             }
           }
@@ -1375,10 +1430,10 @@
           },
           "formats": {
             "vertical": {
-              "size": 60,
+              "size": 64,
               "at": {
                 "x": 0.5,
-                "y": 0.25
+                "y": 0.24
               }
             }
           }
@@ -1418,7 +1473,7 @@
               "w": 220,
               "at": {
                 "x": 0.5,
-                "y": 0.32
+                "y": 0.31
               }
             }
           }
@@ -1435,11 +1490,9 @@
           "marker": "number",
           "size": 52,
           "color": "ink",
-          "accent": "iris",
-          "markerColor": "muted",
+          "markerColor": "iris",
           "gap": 22,
           "maxWidth": 0.52,
-          "sound": "tick",
           "at": {
             "x": 0.5,
             "y": 0.58
@@ -1455,13 +1508,25 @@
           },
           "formats": {
             "vertical": {
-              "size": 52,
-              "maxWidth": 0.84,
+              "size": 62,
+              "maxWidth": 0.88,
               "at": {
                 "x": 0.5,
-                "y": 0.57
+                "y": 0.58
               }
             }
+          },
+          "sound tick 1": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            "{\"name\":\"\",\"gain\":}"
+          ],
+          "sound": {
+            "name": "tick",
+            "gain": 0.9
           }
         }
       ]
@@ -1511,7 +1576,6 @@
           "thickness": 16,
           "fill": "accent",
           "progress": 1,
-          "sound": "rise",
           "effects": {
             "glow": {
               "color": "accent",
@@ -1537,6 +1601,18 @@
                 "y": 0.42
               }
             }
+          },
+          "sound rise 1": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            "{\"name\":\"\",\"gain\":}"
+          ],
+          "sound": {
+            "name": "rise",
+            "gain": 1.6
           }
         },
         {
@@ -1633,11 +1709,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 64,
-              "maxWidth": 0.86,
+              "size": 88,
+              "maxWidth": 0.9,
               "at": {
                 "x": 0.5,
-                "y": 0.45
+                "y": 0.42
               }
             }
           }
@@ -1661,10 +1737,10 @@
           },
           "formats": {
             "vertical": {
-              "w": 160,
+              "w": 240,
               "at": {
                 "x": 0.5,
-                "y": 0.55
+                "y": 0.53
               }
             }
           }
@@ -1691,12 +1767,11 @@
           },
           "formats": {
             "vertical": {
-              "size": 28,
+              "size": 40,
               "at": {
                 "x": 0.5,
-                "y": 0.63
-              },
-              "maxWidth": 0.86
+                "y": 0.62
+              }
             }
           }
         }
@@ -1715,7 +1790,10 @@
         "dur": 16,
         "ease": "inOut"
       },
-      "sound": "ding"
+      "sound": {
+        "name": "ding",
+        "gain": 1.3
+      }
     }
   ],
   "audio": []
