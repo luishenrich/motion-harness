@@ -1527,7 +1527,8 @@
           "sound": {
             "name": "tick",
             "gain": 0.9
-          }
+          },
+          "accent": "iris"
         }
       ]
     },
