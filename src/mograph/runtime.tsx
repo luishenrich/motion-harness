@@ -335,7 +335,7 @@ const ListView: React.FC<{ ctx: Ctx; layer: ListLayer }> = ({ ctx, layer }) => {
           return (
             <div key={i} data-probe={ctx.under || layer.probe === false ? undefined : `${layer.id}-${i + 1}`} data-lint={quiet(ctx)} style={{ display: "flex", gap: 0.55 * size, alignItems: "baseline", ...poseStyle(p, fr) }}>
               {marker(i) ? <span style={{ color: mc, minWidth: 0.9 * size, fontWeight: 700 }}>{marker(i)}</span> : null}
-              <span>{marked(it, mc, `i${i}`)}</span>
+              <span>{marked(it, colorOf(film.design, layer.accent ?? "accent", film.design.accent), `i${i}`)}</span>
             </div>
           );
         })}

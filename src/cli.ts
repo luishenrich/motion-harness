@@ -1727,6 +1727,8 @@ const cmdLook = async (args: Args) => {
 
 /** the film.mograph.json of the project: config films.<film>.mograph, else the file next to the config */
 const mgCtx = async (args: Args) => {
+  const { from } = resolveProjectDir(str(args, "project"));
+  if (from === "last" && !["layers", "get"].includes(String(args._cmd ?? ""))) die("no --project given and no harness.config.ts in the current directory; an edit never lands in the last project used by accident (pass --project <dir> or set MH_PROJECT)");
   const x = await ctx(args);
   const film = x.cfg.films[x.filmName] as { mograph?: string };
   const rel = film.mograph ?? "film.mograph.json";
@@ -1779,7 +1781,7 @@ const cmdSet = async (args: Args) => {
   let value = parseValue(raw);
   // a string field keeps a string: the copy "true" or "42" is copy, not a boolean or a number
   const cur = getValue(film, addr);
-  if (typeof cur === "string" && typeof value !== "string") value = raw;
+  if (typeof cur === "string" && (typeof value === "number" || typeof value === "boolean" || value === null)) value = raw;
   const { before } = setValue(film, addr, value);
   log(`${addr}: ${JSON.stringify(before)} -> ${JSON.stringify(value)}`);
   const t = addr.split(".");
@@ -2157,6 +2159,7 @@ const main = async () => {
   if (!cmd || cmd === "help" || flag(args, "help")) return log(help);
   const fn = commands[cmd];
   if (!fn) die(`unknown command "${cmd}"\n${help}`);
+  args._cmd = cmd;
   const { _: positional, ...rest } = args;
   startReceipt(cmd, positional, rest);
   try {

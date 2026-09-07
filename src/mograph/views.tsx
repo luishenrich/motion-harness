@@ -275,7 +275,8 @@ export const RingsView: React.FC<{ ctx: VCtx; layer: RingsLayer; pose: Pose }> =
 /** a counter whose digits roll: one column per place, each showing its own place continuously */
 export const Odometer: React.FC<{ ctx: VCtx; layer: CounterLayer; value: number; text: string; size: number; paint: Paint }> = ({ ctx, layer, value, text, size, paint }) => {
   const cells = odometerCells(value, padDigits(text, layer.pad));
-  const h = size * 1.06;
+  // a digit's ink is about three quarters of the em: a tighter cell keeps a rolling column from showing two half digits with a gap
+  const h = size * 0.86;
   return (
     <div style={{ display: "flex", alignItems: "flex-start", ...textStyle(paint) }}>
       {cells.map((c, i) =>

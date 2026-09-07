@@ -163,22 +163,25 @@ export const writeFilm = async (brief: string, opts: { seconds?: number; model?:
 /** the files of a motion graphics project around a film.mograph.json */
 export const scaffoldMgFiles = (film: MgFilm, opts: { harnessImport: string; name?: string }): Record<string, string> => {
   const name = opts.name ?? kebab(film.title, "film");
+  // harness.config.ts sits in the project root, src/* one level deeper: a relative harness import needs one more step there
+  const deeper = opts.harnessImport.startsWith(".") ? `../${opts.harnessImport}` : opts.harnessImport;
   const h = (p: string) => JSON.stringify(`${opts.harnessImport}/${p}`);
+  const hs = (p: string) => JSON.stringify(`${deeper}/${p}`);
   const timeline = `/**
  * ${film.title}: the film is data (film.mograph.json). This module types it and
  * compiles it into the timeline the harness checks; the compositions draw the same data.
  * Edit the JSON (mh set, mh key, mh add, or the editor: mh edit), never this file.
  */
 import raw from "../film.mograph.json";
-import type { MgFilm } from ${h("mograph/schema.ts")};
-import { mographTimeline } from ${h("mograph/timeline.ts")};
+import type { MgFilm } from ${hs("mograph/schema.ts")};
+import { mographTimeline } from ${hs("mograph/timeline.ts")};
 
 export const film = raw as MgFilm;
 export const timeline = mographTimeline(film, { film: ${JSON.stringify(name)} });
 `;
   const root = `import React from "react";
 import { Composition } from "remotion";
-import { MgFilmView, filmDuration } from ${h("mograph/runtime.tsx")};
+import { MgFilmView, filmDuration } from ${hs("mograph/runtime.tsx")};
 import { film } from "./timeline.ts";
 
 export const Root: React.FC = () => (
