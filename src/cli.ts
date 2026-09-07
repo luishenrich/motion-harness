@@ -43,6 +43,8 @@ import type { Layer as MgLayer, MgScene } from "./mograph/schema.ts";
 import { writeFilm, scaffoldMgFiles, normalizeFilm } from "./mograph/script.ts";
 import { editMiddleware } from "./mograph/serve.ts";
 import { soundsCommand, HELP as SOUNDS_HELP } from "./mograph/cli-sound.ts";
+import { designSounds, soundsUsed } from "./mograph/sound.ts";
+import { ensureSoundBank } from "./mograph/sound-make.ts";
 import { commands as templateCommands, HELP as TEMPLATES_HELP } from "./mograph/cli-templates.ts";
 import { startVite } from "./engine/vite.ts";
 import { transcribeFile, saveTranscript, transcriptSrt } from "./transcribe/transcribe.ts";
@@ -377,7 +379,7 @@ const cmdFrames = async (args: Args) => {
       if (!ps.length) continue;
       const compId = compositionFor(part, x.format);
       const jobs = ps.flatMap((s) =>
-        [...checkFramesFor(s, { dense }), ...extra.filter((e) => e.sceneId === s.id).map((e) => ({ local: e.partFrame - s.start, partFrame: e.partFrame, filmFrame: s.filmStart + e.partFrame - s.start, kind: "check" as const, label: `at ${e.ref}` }))].map((cf) => ({
+        [...(flag(args, "only-at") ? [] : checkFramesFor(s, { dense })), ...extra.filter((e) => e.sceneId === s.id).map((e) => ({ local: e.partFrame - s.start, partFrame: e.partFrame, filmFrame: s.filmStart + e.partFrame - s.start, kind: "check" as const, label: `at ${e.ref}` }))].map((cf) => ({
           frame: cf.partFrame,
           file: frameFile(dir, part.id, s.id, cf.local),
           scene: s,
@@ -415,6 +417,14 @@ const cmdFrames = async (args: Args) => {
   log(`${manifest.frames.length} frames in ${ms(t0)} -> ${join(runsDir(x), tag)}`);
   if (!flag(args, "quiet")) log(table(manifest.frames.map((f) => [f.scene, `+${f.local}`, `f${f.partFrame}`, fmtTime(f.filmFrame, x.c.fps), f.kind, f.label, `${f.ms}ms`, f.file.replace(x.cfg.cachePath + "/", "")]), ["scene", "local", "part", "film", "kind", "label", "took", "file"]));
   if (flag(args, "sheet")) await cmdSheet({ ...args, from: tag });
+};
+
+/** the whole film on one sheet: every scene's settled frame, in order, so rhythm, grounds and repetition show at a glance */
+const cmdOverview = async (args: Args) => {
+  const x = await ctx(args);
+  const refs = x.c.scenes.map((s) => `${s.id}.settled`);
+  await cmdFrames({ ...args, at: refs.join(","), "only-at": true, tag: str(args, "tag") ?? "overview", sheet: true, columns: String(num(args, "columns", x.c.scenes.length > 8 ? 5 : 4)), quiet: true });
+  log(`overview: ${x.c.scenes.length} scenes, one settled frame each -> ${join(runsDir(x), str(args, "tag") ?? "overview", "sheets")}`);
 };
 
 const cmdSheet = async (args: Args) => {
@@ -1319,7 +1329,9 @@ const cmdRender = async (args: Args) => {
   if (formats.length > 1 && str(args, "out")) die("--out names one file; with --format all use --out-dir <dir> (files are named <film>-<format>.mp4)");
   for (const format of formats) {
     if (formats.length > 1) log(`\n== render ${format}`);
-    await renderOne({ ...args, format, ...(outDir ? { out: join(ensureDir(resolvePath(outDir)), `${(await ctx({ ...args, format })).filmName}-${format}.mp4`) } : {}) });
+    const xf = await ctx({ ...args, format });
+    // a relative --out-dir is inside the project, not wherever the shell happens to be
+    await renderOne({ ...args, format, ...(outDir ? { out: join(ensureDir(outDir.startsWith("/") ? outDir : join(xf.cfg.projectDir, outDir)), `${xf.filmName}-${format}.mp4`) } : {}) });
   }
 };
 
@@ -1367,6 +1379,12 @@ const renderOne = async (args: Args) => {
   produced(res.master);
   if (res.web) produced(res.web);
   const st = await mediaStats(res.master);
+  const master = join(x.cfg.cachePath, "out", `${x.filmName}-${x.format}.mp4`);
+  if (str(args, "out") && resolvePath(res.master) !== resolvePath(master)) {
+    ensureDir(join(x.cfg.cachePath, "out"));
+    cpSync(res.master, master);
+    log(`master -> ${master}  (where mh audio, mh deliver and mh review look)`);
+  }
   log(`film -> ${res.master}  ${statsLine(st, Math.round(st.seconds * x.c.fps))}${res.web ? `\nweb  -> ${res.web}  ${statsLine(await mediaStats(res.web))}` : ""}  (${ms(t0)})`);
 };
 
@@ -1536,7 +1554,10 @@ const cmdCheck = async (args: Args) => {
   if (existsSync(tsconfig)) {
     await step("typecheck", async () => {
       const r = await run(["bunx", "tsc", "--noEmit", "-p", first.cfg.projectDir], { quiet: true });
-      if (r.code !== 0) throw new Error(`tsc: ${r.out.trim().split("\n").slice(0, 8).join("\n")}`);
+      // a type error inside node_modules (a newer @types package than the installed TypeScript reads) is not the project's
+      const own = r.out.trim().split("\n").filter((l) => /error TS\d+/.test(l) && !l.includes("node_modules/"));
+      if (r.code !== 0 && own.length) throw new Error(`tsc: ${own.slice(0, 8).join("\n")}`);
+      if (r.code !== 0) return "clean (type errors inside node_modules ignored)";
     });
   } else rows.push(["typecheck", "skip", "no tsconfig.json in the project", ""]);
   await step("bundle", async () => {
@@ -1621,13 +1642,19 @@ const cmdNewMograph = async (args: Args, target: string) => {
     const r = await writeFilm(brief!, { seconds: num(args, "seconds", 20), model: str(args, "model"), language: str(args, "language"), formats: list(args, "formats") ?? ["wide", "vertical"], log });
     film = r.film;
     // the model's own scenes get the layout pass; a template placed its layers itself
-    const moved = autoLayout(film, undefined, { skipTemplates: true });
+    const moved = autoLayout(film);
     if (moved.length) log(`layout: ${moved.length} block${moved.length === 1 ? "" : "s"} moved apart (${[...new Set(moved.map((m) => `${m.scene}.${m.layer}`))].join(", ")})`);
-    log(`film: ${film.scenes.length} scenes, ${(film.scenes.reduce((a, s) => a + s.dur, 0) / film.fps).toFixed(1)}s from ${r.provider} ${r.model} in ${ms(t0)}; design ink ${film.design.ink} paper ${film.design.paper} accent ${film.design.accent}, ${film.design.fontDisplay ?? "system"} / ${film.design.fontBody ?? "system"}`);
+    // a brief that asks for sound gets the light default when the model wrote none (mh sounds --design does the same later)
+    if (/\b(sound|sfx|audio|ton|klang|klänge|geräusch)/i.test(brief!) && !soundsUsed(film).length) {
+      const added = designSounds(film);
+      if (added.length) log(`sound design: ${added.length} cue${added.length === 1 ? "" : "s"} from the bank (${[...new Set(added.map((a) => a.sound))].join(", ")}); mh sounds lists them`);
+    }
+    log(`film: ${film.scenes.length} scenes, ${(film.scenes.reduce((a, s) => a + s.dur, 0) / film.fps).toFixed(1)}s from ${r.provider} ${r.model} in ${ms(t0)}${r.tokens ? `, ${r.tokens} tokens` : ""}; design ink ${film.design.ink} paper ${film.design.paper} accent ${film.design.accent}, ${film.design.fontDisplay ?? "system"} / ${film.design.fontBody ?? "system"}`);
     if (r.findings.length) log(formatFindings(r.findings));
   }
   const files = scaffoldMgFiles(film, { harnessImport: str(args, "harness-import") ?? harnessImportFor(target), name: str(args, "name") });
   const written = writeScaffold(target, files, { force: flag(args, "force") });
+  if (soundsUsed(film).length) await ensureSoundBank(target, soundsUsed(film), { log: (m) => log(`  ${m}`) });
   for (const f of written) produced(f);
   log(written.map((f) => `  ${f.replace(target + "/", "")}`).join("\n"));
   if (!flag(args, "no-install")) {
@@ -1786,8 +1813,18 @@ const cmdSet = async (args: Args) => {
   // a string field keeps a string: the copy "true" or "42" is copy, not a boolean or a number
   const cur = getValue(film, addr);
   if (typeof cur === "string" && (typeof value === "number" || typeof value === "boolean" || value === null)) value = raw;
-  const { before } = setValue(film, addr, value);
+  const { before, target } = setValue(film, addr, value);
   log(`${addr}: ${JSON.stringify(before)} -> ${JSON.stringify(value)}`);
+  // a format override or an anchor can still beat what was just set: say so, the film would otherwise disagree with the edit
+  if (target.kind === "layer" && target.layer && target.path.length) {
+    const head = target.path[0];
+    const fmts = (target.layer as { formats?: Record<string, Record<string, unknown>> }).formats ?? {};
+    for (const [f, over] of Object.entries(fmts)) if (over && head in over && head !== "formats") log(`note: ${f} still overrides ${head} (${JSON.stringify(over[head])}); mh unset ${addr.split(".").slice(0, -target.path.length).join(".")}.formats.${f}.${head} or set it there too`);
+    const anchor = (target.layer as { anchor?: string }).anchor;
+    if (head === "at" && anchor && anchor !== "center") log(`note: anchor is ${anchor}, so the box's ${anchor} edge sits at this point; mh set ...anchor center to centre it`);
+    const align = (target.layer as { align?: string }).align;
+    if (head === "at" && align && align !== "center") log(`note: align is ${align}; the lines stay ${align} aligned inside the block`);
+  }
   const t = addr.split(".");
   mgSave(args, film, path, x.cfg.projectDir, t.length >= 2 && film.scenes.some((s) => s.id === t[0]) ? `mh frame ${t[0]}.${t[1]}Settled --format all` : undefined);
 };
@@ -1910,7 +1947,9 @@ const cmdEdit = async (args: Args) => {
 
 const cmdSounds = async (args: Args) => {
   const { film, x } = await mgCtx(args);
-  const files = await soundsCommand({ film, projectDir: x.cfg.projectDir, make: flag(args, "make"), all: flag(args, "all"), force: flag(args, "force"), log, table });
+  const { path } = await mgCtx(args);
+  const files = await soundsCommand({ film, projectDir: x.cfg.projectDir, make: flag(args, "make"), all: flag(args, "all"), force: flag(args, "force"), design: flag(args, "design"), bed: str(args, "bed"), seconds: str(args, "seconds") ? num(args, "seconds", 64) : undefined, gain: str(args, "gain") ? num(args, "gain", 0.35) : undefined, save: (f) => saveFilm(path, f), log, table });
+  if (flag(args, "design") || str(args, "bed")) produced(path);
   for (const f of files) produced(f);
 };
 
@@ -2006,6 +2045,7 @@ const help = `mh <command> [--project dir] [--film name] [--format wide|all]
   still [<id,...>|all] [--jpg] [--width 1280] [--sheet] [--variants] [--out dir] [--no-fail]
                                     every <Still> the Root registers (no args lists them): rendered through the probe, linted (overflow, wrap, collision, contrast), jpg copies, one sheet;
                                     --variants renders each still once per variant declared in films.<film>.stills (A/B thumbnails, <id>--<variant>.png)
+  overview [--format all] [--columns 4]   the whole film on one sheet: every scene's settled frame in order
   sheet [--scene a,b] [--from tag] [--all] [--columns 4] [--zoom key]
                                     contact sheets with frame numbers, scene addresses and transition marks; --zoom crops 480x320 at 1:1 around the probed element
   approve [--from tag]              copy a run (default latest) to "approved", the fixed side of every later diff
@@ -2138,6 +2178,7 @@ const commands: Record<string, (a: Args) => Promise<void>> = {
   ingest: cmdIngest,
   transcribe: cmdTranscribe,
   look: cmdLook,
+  overview: cmdOverview,
   layers: cmdLayers,
   get: cmdGet,
   set: cmdSet,

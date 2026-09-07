@@ -335,6 +335,7 @@ export const lintProbe = (cfg: LoadedConfig, c: Compiled, format: string, frames
         const it = f.probe.items.find((i) => i.key === key);
         if (!it) out.push({ level: "error", rule: "probe-present", where: `${f.label} ${key}`, message: "expected data-probe element not in the DOM" });
         else if (!it.visible && !leaving) out.push({ level: "warn", rule: "probe-visible", where: `${f.label} ${key}`, message: `present but not visible (opacity ${it.opacity}, ${it.w}x${it.h} at ${it.x},${it.y})` });
+        else if (it.visible && (it.w < 4 || it.h < 4)) out.push({ level: "error", rule: "probe-tiny", where: `${f.label} ${key}`, message: `on screen but ${it.w}x${it.h}px: nothing to see (a size written as a fraction? sizes are pixels at a 1080 px short side)` });
       }
     }
     // during a part's overlap the previous scene is still rendered under this one: its elements are not this scene's
@@ -419,7 +420,29 @@ export const lintFormatParity = (c: Compiled, runs: Record<string, ProbeFrame[]>
   return out;
 };
 
+/** the same finding at many check frames is one finding: "scene+12" becomes "scene (7 frames, first +12)" */
+export const foldFindings = (fs: Finding[]): Finding[] => {
+  const groups = new Map<string, { f: Finding; frames: string[] }>();
+  for (const f of fs) {
+    const m = f.where.match(/^([\w-]+)\+(\d+)(\s.*)?$/);
+    const key = m ? `${f.level}|${f.rule}|${m[1]}${m[3] ?? ""}|${f.message}` : `${f.level}|${f.rule}|${f.where}|${f.message}`;
+    const g = groups.get(key);
+    if (g) g.frames.push(m ? m[2] : "");
+    else groups.set(key, { f, frames: [m ? m[2] : ""] });
+  }
+  return [...groups.values()].map(({ f, frames }) => {
+    if (frames.length < 2) return f;
+    const m = f.where.match(/^([\w-]+)\+(\d+)(\s.*)?$/);
+    return m ? { ...f, where: `${m[1]}${m[3] ?? ""}`, message: `${f.message} (${frames.length} frames, first +${m[2]})` } : f;
+  });
+};
+
 export const formatFindings = (fs: Finding[]): string => {
   if (!fs.length) return "no findings";
-  return fs.map((f) => `${f.level === "error" ? "ERROR" : "warn "}  ${f.rule.padEnd(24)} ${f.where.padEnd(40)} ${f.message}`).join("\n");
+  const folded = foldFindings(fs);
+  const lines = folded.map((f) => `${f.level === "error" ? "ERROR" : "warn "}  ${f.rule.padEnd(24)} ${f.where.padEnd(40)} ${f.message}`);
+  const collided = [...new Set(folded.filter((f) => f.rule === "collision").map((f) => f.where.split(/[+ ]/)[0]))];
+  if (collided.length) lines.push(`hint   collision: mh layout ${collided.join(",")} pushes the stacked blocks apart; mh set <scene>.<layer>.at moves one by hand`);
+  if (fs.length > folded.length) lines.push(`(${fs.length} findings folded into ${folded.length})`);
+  return lines.join("\n");
 };

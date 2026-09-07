@@ -103,6 +103,13 @@ export const normalizeFilm = (input: Partial<MgFilm>, opts: { fps?: number; form
           if (L.size !== undefined) L.size = clamp(L.size, 24, 400, 160);
           if (L.dur !== undefined) L.dur = clamp(L.dur, 6, 150, 30);
         }
+        // a size written as a fraction (0.7 for "most of the width") is meant as a share of the frame, not as 0.7 of a pixel
+        if (L.type === "shape" || L.type === "image" || L.type === "group") {
+          for (const k of ["w", "h", "d"] as const) {
+            const v = (L as Record<string, unknown>)[k];
+            if (typeof v === "number" && v > 0 && v <= 1.5) (L as Record<string, unknown>)[k] = Math.round(v * (k === "w" ? 1920 : 1080));
+          }
+        }
         if (L.type === "bars") L.values = (Array.isArray(L.values) ? L.values : []).filter((v) => v && typeof v === "object").map((v) => ({ label: String(v.label ?? ""), value: clamp(v.value, -1e12, 1e12, 0), color: v.color })).slice(0, 8);
         return L as Layer;
       });
@@ -127,7 +134,7 @@ export const normalizeFilm = (input: Partial<MgFilm>, opts: { fps?: number; form
 
 const findingsText = (f: MgFinding[]) => f.map((x) => `- ${x.level} ${x.rule} at ${x.where}: ${x.message}`).join("\n");
 
-export const writeFilm = async (brief: string, opts: { seconds?: number; model?: string; language?: string; formats?: string[]; log?: (s: string) => void } = {}): Promise<{ film: MgFilm; provider: string; model: string; ms: number; findings: MgFinding[] }> => {
+export const writeFilm = async (brief: string, opts: { seconds?: number; model?: string; language?: string; formats?: string[]; log?: (s: string) => void } = {}): Promise<{ film: MgFilm; provider: string; model: string; ms: number; tokens: number; findings: MgFinding[] }> => {
   const seconds = opts.seconds ?? 20;
   const log = opts.log ?? (() => {});
   const user = `Brief: ${brief}\n\nTarget length: ${seconds} seconds (${seconds * 30} frames at 30 fps, the scene durations add up to it). Language of the on-screen lines: ${opts.language ?? "English"}. Formats: ${(opts.formats ?? ["wide", "vertical"]).join(", ")}.`;
@@ -136,28 +143,35 @@ export const writeFilm = async (brief: string, opts: { seconds?: number; model?:
   if (!film.scenes.length) throw new Error("the model returned no scenes");
   let findings = lintFilm(film);
   let ms = r.ms;
+  let tokens = r.tokens ?? 0;
   const errors = findings.filter((f) => f.level === "error");
   if (errors.length) {
     log(`${errors.length} error${errors.length === 1 ? "" : "s"} in the first draft, asking the model to fix them`);
-    const fix = await chatJson<Partial<MgFilm>>(
-      [
-        { role: "system", content: MG_SYSTEM },
-        { role: "user", content: user },
-        { role: "assistant", content: JSON.stringify(film) },
-        { role: "user", content: `The film has these problems. Return the whole corrected film as JSON, nothing else:\n${findingsText(findings)}` },
-      ],
-      { model: opts.model, maxTokens: 6000 },
-    );
-    const fixed = normalizeFilm(fix.data, { formats: opts.formats });
-    ms += fix.ms;
-    if (fixed.scenes.length && lintFilm(fixed).filter((f) => f.level === "error").length <= errors.length) {
-      film = fixed;
-      findings = lintFilm(film);
+    // a failed repair (bad JSON, a timeout) keeps the draft: the lint findings stay visible and one mh set fixes a line
+    try {
+      const fix = await chatJson<Partial<MgFilm>>(
+        [
+          { role: "system", content: MG_SYSTEM },
+          { role: "user", content: user },
+          { role: "assistant", content: JSON.stringify(film) },
+          { role: "user", content: `The film has these problems. Return the whole corrected film as JSON, nothing else:\n${findingsText(findings)}` },
+        ],
+        { model: opts.model, maxTokens: 6000 },
+      );
+      const fixed = normalizeFilm(fix.data, { formats: opts.formats });
+      ms += fix.ms;
+      tokens += fix.tokens ?? 0;
+      if (fixed.scenes.length && lintFilm(fixed).filter((f) => f.level === "error").length <= errors.length) {
+        film = fixed;
+        findings = lintFilm(film);
+      }
+    } catch (e) {
+      log(`the repair round failed (${String((e as Error).message ?? e).slice(0, 120)}); keeping the first draft, its findings follow`);
     }
   }
   // the design's colours become tokens; anything else painted is a mistake the rendered lint reports
   void designColors;
-  return { film, provider: r.provider, model: r.model, ms, findings };
+  return { film, provider: r.provider, model: r.model, ms, tokens, findings };
 };
 
 /** the files of a motion graphics project around a film.mograph.json */

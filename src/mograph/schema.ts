@@ -202,6 +202,12 @@ export type LineChartLayer = LayerBase & {
   areaColor?: ColorValue;
   /** a dot on every point */
   dots?: boolean;
+  /** print the value at the last point ("last"), at every point ("all") or not at all */
+  showValues?: "last" | "all" | "none";
+  /** number format for the values: 0, 0,0, 0.0, 0% */
+  format?: string;
+  prefix?: string;
+  suffix?: string;
   smooth?: boolean;
   min?: number;
   max?: number;

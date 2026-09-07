@@ -455,3 +455,12 @@ lists the bank and what the film uses; `mh sounds --make` writes the files the f
 `public/sfx` with ffmpeg (synthesised, no rights to clear); `--all` writes the whole bank. A name
 nothing provides is a lint error.
 
+## From an agent through MCP
+
+`mh mcp` serves the same commands as tools (`mh_layers`, `mh_get`, `mh_set`, `mh_unset`, `mh_key`,
+`mh_add`, `mh_remove`, `mh_move`, `mh_layout`, `mh_new_mograph`, plus the general `mh_frame`,
+`mh_check`, `mh_render`, `mh_deliver`). The answers are the CLI's own output, so a lint hint or a
+"verify: mh frame ..." line reads the same in both. A client in twenty lines:
+`scripts/mcp-client-example.ts` (run `bun run scripts/mcp-client-example.ts <project> hook.line.size 104`
+from the harness repo).
+

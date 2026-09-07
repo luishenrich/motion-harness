@@ -11,6 +11,7 @@
 import React from "react";
 import type { CounterLayer, LineChartLayer, MgFilm, MgScene, ParticlesLayer, ShapeLayer, TextLayer, Layer, RingsLayer } from "./schema.ts";
 import { colorOf, layerTiming } from "./schema.ts";
+import { formatNumber } from "./runtime.tsx";
 import { flatOf, isGradient, layerPaint, paintOf, textStyle, type ColorValue, type Gradient, type Paint } from "./colour.ts";
 import { effectStyle, gradientTextOf, inProgress, scrambleText } from "./effects.ts";
 import { arrowBox, arrowPath, chartGeometry, drawnProgress, odometerCells, padDigits, polygonPath, ringGeometry, starPath } from "./shapes.ts";
@@ -212,6 +213,20 @@ export const LineChartView: React.FC<{ ctx: VCtx; layer: LineChartLayer; pose: P
         <path d={geom.line} fill="none" stroke={line.paint} strokeWidth={th} strokeLinecap={layer.effects?.roundCaps === false ? "butt" : "round"} strokeLinejoin="round" pathLength={1} strokeDasharray={1} strokeDashoffset={1 - drawn} />
         {layer.dots
           ? geom.points.slice(0, shown).map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={th * 0.85} fill={line.paint} />)
+          : null}
+        {layer.showValues && layer.showValues !== "none"
+          ? geom.points.slice(0, shown).map((p, i) => {
+              if (layer.showValues === "last" && i !== geom.points.length - 1) return null;
+              const v = layer.points[i];
+              const val = typeof v === "number" ? v : Array.isArray(v) ? (v[1] as number) : ((v as { y?: number }).y ?? 0);
+              const txt = `${layer.prefix ?? ""}${formatNumber(val, layer.format)}${layer.suffix ?? ""}`;
+              const above = p.y > h * 0.25;
+              return (
+                <text key={`v${i}`} x={p.x} y={above ? p.y - th * 2.2 : p.y + th * 2.2 + labelSize} textAnchor={i === geom.points.length - 1 ? "end" : "middle"} fontFamily={fontFor(film)} fontSize={labelSize} fontWeight={600} fill={colorOf(film.design, layer.labelColor ?? "ink", film.design.ink)} style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {txt}
+                </text>
+              );
+            })
           : null}
       </svg>
       {layer.labels?.length ? (

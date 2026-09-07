@@ -23,7 +23,7 @@ export const chatProvider = (model?: string): ChatProvider => {
 };
 
 /** one chat completion; `json` asks for a JSON object and parses it */
-export const chat = async (messages: ChatMessage[], opts: { model?: string; json?: boolean; maxTokens?: number; temperature?: number } = {}): Promise<{ text: string; provider: string; model: string; ms: number }> => {
+export const chat = async (messages: ChatMessage[], opts: { model?: string; json?: boolean; maxTokens?: number; temperature?: number } = {}): Promise<{ text: string; provider: string; model: string; ms: number; tokens?: number }> => {
   const p = chatProvider(opts.model);
   const t0 = performance.now();
   const r = await fetch(`${p.base}/chat/completions`, {
@@ -32,20 +32,20 @@ export const chat = async (messages: ChatMessage[], opts: { model?: string; json
     body: JSON.stringify({ model: p.model, messages, max_tokens: opts.maxTokens ?? 4000, temperature: opts.temperature ?? 0.4, ...(opts.json ? { response_format: { type: "json_object" } } : {}) }),
   });
   if (!r.ok) throw new Error(`${p.name} ${p.model}: ${r.status} ${(await r.text()).slice(0, 300)}`);
-  const j = (await r.json()) as { choices?: { message?: { content?: string } }[] };
+  const j = (await r.json()) as { choices?: { message?: { content?: string } }[]; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number } };
   const text = j.choices?.[0]?.message?.content ?? "";
-  return { text, provider: p.name, model: p.model, ms: Math.round(performance.now() - t0) };
+  return { text, provider: p.name, model: p.model, ms: Math.round(performance.now() - t0), tokens: j.usage?.total_tokens };
 };
 
-export const chatJson = async <T,>(messages: ChatMessage[], opts: { model?: string; maxTokens?: number } = {}): Promise<{ data: T; provider: string; model: string; ms: number }> => {
+export const chatJson = async <T,>(messages: ChatMessage[], opts: { model?: string; maxTokens?: number } = {}): Promise<{ data: T; provider: string; model: string; ms: number; tokens?: number }> => {
   const r = await chat(messages, { ...opts, json: true, temperature: 0.2 });
   const text = r.text.replace(/^```json\s*|```\s*$/g, "").trim();
   try {
-    return { data: JSON.parse(text) as T, provider: r.provider, model: r.model, ms: r.ms };
+    return { data: JSON.parse(text) as T, provider: r.provider, model: r.model, ms: r.ms, tokens: r.tokens };
   } catch {
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) throw new Error(`${r.provider} ${r.model} did not return JSON: ${text.slice(0, 200)}`);
-    return { data: JSON.parse(m[0]) as T, provider: r.provider, model: r.model, ms: r.ms };
+    return { data: JSON.parse(m[0]) as T, provider: r.provider, model: r.model, ms: r.ms, tokens: r.tokens };
   }
 };
 

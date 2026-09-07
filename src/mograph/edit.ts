@@ -78,6 +78,7 @@ export const resolveAddress = (film: MgFilm, addr: string): Target => {
     return { kind: head === "design" ? "design" : head === "defaults" ? "defaults" : head === "easings" ? "easings" : "film", object: (film as unknown as Record<string, Record<string, unknown>>)[head], path: parts.slice(1), label: addr };
   }
   if (!named && (head === "title" || head === "fps")) return { kind: "film", object: film as unknown as Record<string, unknown>, path: parts, label: addr };
+  if (!named && head === "audio" && parts.length === 1) return { kind: "film", object: film as unknown as Record<string, unknown>, path: ["audio"], label: addr };
   if (!named && head === "audio") {
     const cue = (film.audio ?? []).find((a) => a.id === parts[1]);
     if (!cue) throw new Error(`no audio cue "${parts[1]}" (have: ${(film.audio ?? []).map((a) => a.id).join(", ") || "none"})`);
@@ -93,7 +94,6 @@ export const resolveAddress = (film: MgFilm, addr: string): Target => {
   let holder: Layer[] = list;
   let i = 1;
   while (i < parts.length) {
-    if (i > 1 && LAYER_PROPS.has(parts[i])) break;
     const next = list.find((l) => l.id === parts[i]);
     if (!next) break;
     if (layer?.type === "group") group = layer;
@@ -383,6 +383,7 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
         const L = l as unknown as Record<string, unknown>;
         const num = (k: string) => (typeof L[k] === "number" ? (L[k] as number) : undefined);
         for (const k of ["size", "w", "h", "d", "thickness", "labelSize"]) if (num(k) !== undefined && (num(k) as number) <= 0) out.push({ level: "error", rule: "size", where: `${lw}.${k}`, message: `${k} must be above 0` });
+        for (const k of ["w", "h", "d"]) if ((l.type === "shape" || l.type === "image" || l.type === "group") && num(k) !== undefined && (num(k) as number) < 2) out.push({ level: "warn", rule: "size", where: `${lw}.${k}`, message: `${k} is ${num(k)} u: under two pixels nothing is visible (sizes are pixels at a 1080 px short side, not fractions)` });
         if (num("maxWidth") !== undefined && ((num("maxWidth") as number) <= 0 || (num("maxWidth") as number) > 1)) out.push({ level: "warn", rule: "max-width", where: `${lw}.maxWidth`, message: "maxWidth is a fraction of the frame width (0..1)" });
         if (l.type === "list" && l.items?.length > 12) out.push({ level: "warn", rule: "long-list", where: lw, message: `${l.items.length} items: a viewer reads five, seven at most` });
         if (l.type === "counter" && (l.to === undefined || !Number.isFinite(l.to))) out.push({ level: "error", rule: "counter", where: `${lw}.to`, message: "a counter needs a number to count to" });
@@ -504,6 +505,10 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
       }
       if (l.type === "counter" && l.roll && /\./.test(l.format ?? "")) out.push({ level: "warn", rule: "counter", where: `${lw}.roll`, message: "an odometer rolls whole numbers; a decimal format counts the plain way" });
     }
+  }
+  {
+    const grounds = (film.scenes ?? []).map((s) => JSON.stringify(s.ground ?? "ink"));
+    if (grounds.length > 4 && new Set(grounds).size === 1) out.push({ level: "warn", rule: "grounds", where: "scenes", message: `every scene sits on the same ground (${grounds[0]}): the film reads as one long scene; alternate ink and paper or a named colour` });
   }
   for (const u of unknownSounds(film)) out.push({ level: "error", rule: "sound", where: u.where, message: `"${u.name}" is neither in the sound bank (mh sounds) nor in the film's sounds map` });
   for (const a of film.audio ?? []) if (projectDir && !existsSync(join(projectDir, a.file.startsWith("public/") ? a.file : `public/${a.file}`))) out.push({ level: "warn", rule: "asset", where: `audio.${a.id}.file`, message: `${a.file} does not exist under public/ (mh voice writes voice cues)` });

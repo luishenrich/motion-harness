@@ -100,7 +100,8 @@ const Box: React.FC<{ ctx: Ctx; layer: Layer; pose: Pose; children: React.ReactN
 const splitUnits = (text: string, by: "word" | "char" | "line" | "item" | undefined): { units: string[]; joiner: string; lines: boolean } => {
   if (by === "line") return { units: text.split("\n"), joiner: "\n", lines: true };
   if (by === "char") return { units: [...text.replace(/\*/g, "")], joiner: "", lines: false };
-  if (by === "word") return { units: text.split(/(\s+)/).filter((w) => w.length), joiner: "", lines: false };
+  // *two words* becomes *two* *words* so every unit keeps its mark
+  if (by === "word") return { units: text.replace(/\*([^*]+)\*/g, (_, inner: string) => inner.split(/(\s+)/).map((w) => (/^\s+$/.test(w) || !w ? w : `*${w}*`)).join("")).split(/(\s+)/).filter((w) => w.length), joiner: "", lines: false };
   return { units: [text], joiner: "", lines: false };
 };
 
@@ -163,7 +164,7 @@ const TextView: React.FC<{ ctx: Ctx; layer: TextLayer }> = ({ ctx, layer }) => {
   const mask = (layer.in?.preset ?? film.defaults?.layerIn?.preset) === "mask";
   return (
     <Box ctx={ctx} layer={layer} pose={{ ...whole, opacity: whole.visible ? 1 : 0, x: 0, y: 0, scale: 1, blur: 0, wipe: 1 }} lines={expectLines}>
-      <div style={style}>
+      <div style={style} data-lines={expectLines}>
         {units.map((u, i) => {
           // whitespace units keep their neighbour's delay: only real units count for the stagger
           const space = /^\s+$/.test(u);
@@ -231,7 +232,7 @@ const ImageView: React.FC<{ ctx: Ctx; layer: ImageLayer }> = ({ ctx, layer }) =>
   );
 };
 
-const formatNumber = (v: number, format: string | undefined): string => {
+export const formatNumber = (v: number, format: string | undefined): string => {
   if (!format || format === "0") return Math.round(v).toString();
   if (format === "0,0") return Math.round(v).toLocaleString("en-US");
   if (format === "0%") return `${Math.round(v * 100)}%`;

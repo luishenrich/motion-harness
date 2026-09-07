@@ -92,3 +92,39 @@ export const soundsUsed = (film: MgFilm): string[] => {
   }
   return [...names];
 };
+
+/**
+ * A light default sound design: a swell under the first scene's first text, a pop on every
+ * counter and on layers that pop in, a whoosh on slides and wipes, a tick on the first item
+ * of a list, one hit per scene at most beyond the swell. Layers that already carry a sound
+ * are left alone. Returns what was added, as addresses.
+ */
+export const designSounds = (film: MgFilm): { address: string; sound: string }[] => {
+  const added: { address: string; sound: string }[] = [];
+  film.scenes.forEach((s, si) => {
+    let hits = 0;
+    const put = (l: Layer, addr: string, name: string) => {
+      if ((l as { sound?: SoundRef }).sound || hits >= 1) return;
+      (l as { sound?: SoundRef }).sound = name;
+      added.push({ address: `${s.id}.${addr}.sound`, sound: name });
+      hits++;
+    };
+    if (si === 0) {
+      const first = s.layers.find((l) => l.type === "text");
+      if (first && !(first as { sound?: SoundRef }).sound) {
+        (first as { sound?: SoundRef }).sound = "swell";
+        added.push({ address: `${s.id}.${first.id}.sound`, sound: "swell" });
+      }
+    }
+    walk(s.layers, "", (l, addr) => {
+      const preset = l.in?.preset;
+      if (l.type === "counter") put(l, addr, "pop");
+      else if (preset === "pop") put(l, addr, "pop");
+      else if (preset === "slide" || preset === "wipe") put(l, addr, "whoosh");
+      else if (l.type === "list") put(l, addr, "tick");
+      else if (l.type === "bars" || l.type === "rings" || l.type === "line") put(l, addr, "rise");
+    });
+  });
+  return added;
+};
+
