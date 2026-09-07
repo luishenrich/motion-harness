@@ -581,11 +581,12 @@ const spanOf = (l: Layer, h: number, frameH: number, u: number): [number, number
  * layers that moved with their new y, per format. Only layers on the same column (x within 0.2)
  * are treated as a stack.
  */
-export const autoLayout = (film: MgFilm, sceneId?: string): { scene: string; layer: string; format: string; from: number; to: number }[] => {
+export const autoLayout = (film: MgFilm, sceneId?: string, opts: { /** leave scenes a template placed alone (their layout is the template's) */ skipTemplates?: boolean } = {}): { scene: string; layer: string; format: string; from: number; to: number }[] => {
   // groups move as one block; what sits inside a group is the group's business
   const moved: { scene: string; layer: string; format: string; from: number; to: number }[] = [];
   for (const s of film.scenes) {
     if (sceneId && s.id !== sceneId) continue;
+    if (opts.skipTemplates && s.template && !sceneId) continue;
     for (const [format, size] of Object.entries(film.formats)) {
       const u = Math.min(size.width, size.height) / 1080;
       const H = size.height;

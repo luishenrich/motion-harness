@@ -1620,7 +1620,8 @@ const cmdNewMograph = async (args: Args, target: string) => {
     const t0 = performance.now();
     const r = await writeFilm(brief!, { seconds: num(args, "seconds", 20), model: str(args, "model"), language: str(args, "language"), formats: list(args, "formats") ?? ["wide", "vertical"], log });
     film = r.film;
-    const moved = autoLayout(film);
+    // the model's own scenes get the layout pass; a template placed its layers itself
+    const moved = autoLayout(film, undefined, { skipTemplates: true });
     if (moved.length) log(`layout: ${moved.length} block${moved.length === 1 ? "" : "s"} moved apart (${[...new Set(moved.map((m) => `${m.scene}.${m.layer}`))].join(", ")})`);
     log(`film: ${film.scenes.length} scenes, ${(film.scenes.reduce((a, s) => a + s.dur, 0) / film.fps).toFixed(1)}s from ${r.provider} ${r.model} in ${ms(t0)}; design ink ${film.design.ink} paper ${film.design.paper} accent ${film.design.accent}, ${film.design.fontDisplay ?? "system"} / ${film.design.fontBody ?? "system"}`);
     if (r.findings.length) log(formatFindings(r.findings));
