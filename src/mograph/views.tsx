@@ -276,13 +276,14 @@ export const RingsView: React.FC<{ ctx: VCtx; layer: RingsLayer; pose: Pose }> =
 export const Odometer: React.FC<{ ctx: VCtx; layer: CounterLayer; value: number; text: string; size: number; paint: Paint }> = ({ ctx, layer, value, text, size, paint }) => {
   const cells = odometerCells(value, padDigits(text, layer.pad));
   // a digit's ink is about three quarters of the em: a tighter cell keeps a rolling column from showing two half digits with a gap
-  const h = size * 0.86;
+  // whole pixels: a fractional cell height or offset rasterises differently per engine (found by the parity scan)
+  const h = Math.round(size * 0.86);
   return (
     <div style={{ display: "flex", alignItems: "flex-start", ...textStyle(paint) }}>
       {cells.map((c, i) =>
         c.digit ? (
           <span key={i} style={{ display: "inline-block", height: h, overflow: "hidden", lineHeight: `${h}px`, width: size * 0.62, textAlign: "center" }}>
-            <span style={{ display: "block", transform: `translateY(${-(c.offset % 10) * h}px)`, willChange: "transform" }}>
+            <span style={{ display: "block", transform: `translateY(${-Math.round((c.offset % 10) * h)}px)` }}>
               {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((d, j) => (
                 <span key={j} style={{ display: "block", height: h, lineHeight: `${h}px` }}>{d}</span>
               ))}
