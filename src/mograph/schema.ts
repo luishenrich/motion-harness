@@ -175,6 +175,8 @@ export type BarsLayer = LayerBase & {
 export type ListLayer = LayerBase & {
   type: "list";
   items: string[];
+  /** the colour of *marked* words, like a text layer's */
+  accent?: ColorRef;
   marker?: "dot" | "number" | "check" | "dash" | "none";
   size?: number;
   weight?: number | string;

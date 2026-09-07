@@ -65,7 +65,7 @@ describe("script", () => {
     const { join, resolve } = await import("node:path");
     const dir = mkdtempSync(join(tmpdir(), "mh-scaffold-"));
     mkdirSync(join(dir, "src"));
-    const src = files["src/timeline.ts"].replace('"../../src/timeline/schema.ts"', JSON.stringify(resolve(import.meta.dir, "../timeline/schema.ts")));
+    const src = files["src/timeline.ts"].replace('"../../../src/timeline/schema.ts"', JSON.stringify(resolve(import.meta.dir, "../timeline/schema.ts")));
     writeFileSync(join(dir, "src/timeline.ts"), src);
     const mod = await import(join(dir, "src/timeline.ts"));
     const c = compile(mod.timeline);
