@@ -372,8 +372,9 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
           if (k === "in" || k === "out") {
             const o = over[k] as { at?: number } | undefined;
             const b = (l as unknown as Record<string, { at?: number } | undefined>)[k];
-            if (o && o.at !== undefined && o.at !== b?.at) out.push({ level: "warn", rule: "format", where: `${lw}.formats.${fmt}.${k}.at`, message: `${fmt} moves the ${k} to ${o.at}; events and probes follow the base timing (${b?.at ?? 0})` });
-          } else if (k === "span") out.push({ level: "warn", rule: "format", where: `${lw}.formats.${fmt}.span`, message: "events and probes follow the base span" });
+            void o;
+            void b;
+          }
           else if (!LAYER_PROPS.has(k) && !["effects", "colorTracks", "sound", "layers", "d", "sides", "inner", "head", "roll", "pad", "points", "labels", "area", "dots", "smooth", "axis", "count", "speed", "spread", "seed", "shape", "legend"].includes(k)) out.push({ level: "warn", rule: "format", where: `${lw}.formats.${fmt}.${k}`, message: `"${k}" is not a layer field` });
         }
       }
@@ -465,9 +466,15 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
       if (l.type === "text") {
         if (!l.text) out.push({ level: "warn", rule: "empty-text", where: lw, message: "no text" });
         const words = l.text.replace(/\*/g, "").split(/\s+/).filter(Boolean).length;
-        const settledAt = inAt + t.inDur + (st ? staggerDelay(st, unitsOf(l, st) - 1, unitsOf(l, st)) : 0);
-        const gone = t.outAt ?? s.dur;
-        const secs = (gone - settledAt) / film.fps;
+        // the hold is the shortest one across the formats: a vertical override that moves the in shortens it
+        const holds = (Object.keys(film.formats).length ? Object.keys(film.formats) : ["wide"]).map((fmt) => {
+          const lf = layerFor(l, fmt);
+          const tf = layerTiming(film, s, lf);
+          const stf = lf.in?.stagger ?? film.defaults?.layerIn?.stagger;
+          const settledF = node.delay + tf.inAt + tf.inDur + (stf ? staggerDelay(stf, unitsOf(lf, stf) - 1, unitsOf(lf, stf)) : 0);
+          return ((tf.outAt ?? s.dur) - settledF) / film.fps;
+        });
+        const secs = Math.min(...holds);
         if (secs < readSeconds(words)) out.push({ level: "warn", rule: "reading-time", where: lw, message: `${words} words hold ${secs.toFixed(2)} s once settled, ${readSeconds(words).toFixed(2)} s reads comfortably` });
         if (l.maxWidth !== undefined && (l.maxWidth <= 0 || l.maxWidth > 1)) out.push({ level: "warn", rule: "max-width", where: `${lw}.maxWidth`, message: "maxWidth is a fraction of the frame width (0..1)" });
       }

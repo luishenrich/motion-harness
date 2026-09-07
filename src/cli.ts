@@ -1527,6 +1527,9 @@ const cmdCheck = async (args: Args) => {
   };
   const formats = await formatsOf(args);
   const first = await ctx({ ...args, format: formats[0] });
+  // a motion graphics film is cheap to check whole: every scene unless --scene says otherwise
+  const mgFilm = (first.cfg.films[first.filmName] as { mograph?: string }).mograph ?? "film.mograph.json";
+  if (!list(args, "scene") && existsSync(join(first.cfg.projectDir, mgFilm))) args = { ...args, scene: first.c.scenes.map((s) => s.id).join(",") };
   const scenes = list(args, "scene");
   if (scenes) scenesOf(first.c, args);
   const tsconfig = join(first.cfg.projectDir, "tsconfig.json");

@@ -406,3 +406,24 @@ describe("groups hold the newer layer kinds", () => {
     expect(lintFilm(f)).toEqual([]);
   });
 });
+
+describe("format overrides reach the timeline", () => {
+  test("a vertical in later than wide: In is the first arrival, Settled the last, the probe window the intersection", () => {
+    const f: MgFilm = {
+      title: "t",
+      fps: 30,
+      design: { ink: "#101010", paper: "#F5F1E8", accent: "#F2B441" },
+      formats: { wide: { width: 1920, height: 1080 }, vertical: { width: 1080, height: 1920 } },
+      scenes: [{ id: "s", dur: 120, layers: [{ id: "line", type: "text", text: "One two three", in: { preset: "rise", at: 4, dur: 16 }, formats: { vertical: { in: { preset: "rise", at: 40, dur: 16 } } } }] }],
+    };
+    const ev = sceneEvents(f, f.scenes[0]);
+    expect(ev.lineIn).toBe(4);
+    expect(ev.lineSettled).toBe(56);
+    const c = compile(mographTimeline(f, { film: "x" }));
+    expect(c.scenes[0].probes).toEqual(["line@56-119"]);
+    // the reading-time lint takes the shortest hold across the formats
+    f.scenes[0].dur = 80;
+    const rules = lintFilm(f).map((x) => x.rule);
+    expect(rules).toContain("reading-time");
+  });
+});

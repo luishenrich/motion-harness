@@ -28,7 +28,10 @@ mh edit                                              the editor in the browser: 
 - `maxWidth` of a text is a fraction of the frame width.
 - Colours are design names (`ink`, `paper`, `accent`, `muted`, `white`, `black`, any key of
   `design.colors`), a hex, or a gradient (see Colour).
-- Per format overrides: `formats: { vertical: { size: 80, at: { y: 0.4 } } }` on any layer.
+- Per format overrides: `formats: { vertical: { size: 80, at: { y: 0.4 } } }` on any layer. An
+  override may also restyle or move the in and out; the timeline then takes the first arrival as
+  `<layer>In`, the last settle as `<layer>Settled`, the first leaving as `<layer>Out`, and a probe
+  window where the layer is on screen in every format, so a check frame reads in wide and in vertical.
 - Addresses: `<scene>`, `<scene>.<prop>`, `<scene>.<layer>`, `<scene>.<layer>.<path.to.prop>`,
   `design.<prop>`, `defaults.<prop>`, `easings.<name>`, `audio.<id>.<prop>`.
 - Moments: every layer gives the scene the events `<layer>In`, `<layer>Settled` and, when it has
