@@ -136,7 +136,14 @@ export const mographTimeline = (film: MgFilm, opts: { film?: string; formats?: s
   const formats = opts.formats ?? Object.keys(film.formats);
   return {
     fps: film.fps,
-    rules: { minSceneDur: 20, maxEnterFrames: 30, holdFrames: [10, 240], ...(film.rules ?? {}) },
+    rules: {
+      minSceneDur: 20,
+      maxEnterFrames: 30,
+      holdFrames: [10, 240],
+      // a taller-than-wide format is a story or a reel: platform chrome covers the top and the bottom
+      safeZone: Object.fromEntries(Object.entries(film.formats).filter(([, f]) => f.height > f.width).map(([name, f]) => [name, { top: Math.round(f.height * 0.12), bottom: Math.round(f.height * 0.17), x: Math.round(f.width * 0.04) }])),
+      ...(film.rules ?? {}),
+    },
     // the compositions carry no sound of their own: every cue is mixed by the harness from the timeline
     parts: [{ id: "film", composition: Object.fromEntries(formats.map((f) => [f, `${name}-${f}`])), enterFrames: film.defaults?.enterFrames ?? 10, audio: false, scenes: film.scenes.map((s, i) => toScene(film, s, i)) }],
     audio: [...soundCues(film), ...(film.audio ?? []).map((a) => ({ id: a.id, kind: a.kind, file: a.file.startsWith("public/") ? a.file : `public/${a.file}`, at: a.at, gain: a.gain, fadeOut: a.fadeOut, loop: a.loop, trim: a.trim, text: a.text, license: a.license, ramps: a.ramps }))],

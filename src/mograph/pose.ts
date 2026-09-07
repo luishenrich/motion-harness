@@ -183,7 +183,9 @@ export const settleFrame = (film: MgFilm, scene: MgScene, layer: Layer, units = 
   const st = layer.in?.stagger ?? film.defaults?.layerIn?.stagger;
   const last = st ? staggerDelay(st, units - 1, units) : 0;
   const r = resolveEase(layer.in?.ease ?? film.defaults?.layerIn?.ease, film.easings ?? {});
-  const dur = r.kind === "spring" ? Math.max(t.inDur, springFrames(r, film.fps, t.inDur)) : t.inDur;
+  let dur = r.kind === "spring" ? Math.max(t.inDur, springFrames(r, film.fps, t.inDur)) : t.inDur;
+  // a counter is still moving until its count ends
+  if (layer.type === "counter" && !layer.tracks?.progress) dur = Math.max(dur, Math.max(1, layer.dur ?? Math.max(t.inDur, 30)));
   return Math.min(t.to - 1, t.inAt + last + dur);
 };
 

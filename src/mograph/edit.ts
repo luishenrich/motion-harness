@@ -17,6 +17,8 @@ import { COLOR_TRACKS, isGradient, type ColorKey, type ColorTrackProp, type Colo
 import { BLEND_MODES, EFFECT_KEYS } from "./effects.ts";
 import { MAX_PARTICLES } from "./particles.ts";
 import { unknownSounds } from "./sound.ts";
+import { contrastRatio } from "../lint/lint.ts";
+import { colorOf } from "./schema.ts";
 
 export type MgFinding = { level: "error" | "warn"; rule: string; where: string; message: string };
 
@@ -507,8 +509,26 @@ export const lintFilm = (film: MgFilm, projectDir?: string): MgFinding[] => {
     }
   }
   {
-    const grounds = (film.scenes ?? []).map((s) => JSON.stringify(s.ground ?? "ink"));
+    const scenes = film.scenes ?? [];
+    const last = scenes[scenes.length - 1];
+    if (last && last.exit && last.exit !== "cut") out.push({ level: "warn", rule: "ends-empty", where: `${last.id}.exit`, message: "the last scene fades out, so the film ends on an empty frame; a film ends held on its last card (mh unset " + last.id + ".exit)" });
+    const first = scenes[0];
+    if (first && first.layers?.length) {
+      const visibleAtZero = first.layers.some((l) => {
+        const t = layerTiming(film, first, l);
+        const preset = l.in?.preset ?? film.defaults?.layerIn?.preset ?? "rise";
+        return t.inAt === 0 && (preset === "cut" || t.inDur === 0);
+      });
+      if (!visibleAtZero) out.push({ level: "warn", rule: "opens-empty", where: `${first.id}`, message: "nothing is on screen at frame 0 (every layer arrives after it); platforms take frame 0 as the thumbnail: give one layer in.preset cut, or put a mark or a rule in the ground" });
+    }
+    const grounds = scenes.map((s) => JSON.stringify(s.ground ?? "ink"));
     if (grounds.length > 4 && new Set(grounds).size === 1) out.push({ level: "warn", rule: "grounds", where: "scenes", message: `every scene sits on the same ground (${grounds[0]}): the film reads as one long scene; alternate ink and paper or a named colour` });
+    // two grounds a viewer cannot tell apart are one ground
+    const flat = (g: unknown) => (typeof g === "string" ? colorOf(film.design, g, film.design.ink) : null);
+    for (let i = 1; i < scenes.length; i++) {
+      const a = flat(scenes[i - 1].ground ?? "ink"), b = flat(scenes[i].ground ?? "ink");
+      if (a && b && a !== b && /^#[0-9a-f]{6}$/i.test(a) && /^#[0-9a-f]{6}$/i.test(b) && contrastRatio(a, b) < 1.3) out.push({ level: "warn", rule: "grounds", where: `${scenes[i].id}.ground`, message: `${scenes[i - 1].ground} and ${scenes[i].ground} are ${contrastRatio(a, b).toFixed(2)}:1 apart: the handover reads as no change; pick grounds a viewer can tell apart` });
+    }
   }
   for (const u of unknownSounds(film)) out.push({ level: "error", rule: "sound", where: u.where, message: `"${u.name}" is neither in the sound bank (mh sounds) nor in the film's sounds map` });
   for (const a of film.audio ?? []) if (projectDir && !existsSync(join(projectDir, a.file.startsWith("public/") ? a.file : `public/${a.file}`))) out.push({ level: "warn", rule: "asset", where: `audio.${a.id}.file`, message: `${a.file} does not exist under public/ (mh voice writes voice cues)` });

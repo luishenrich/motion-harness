@@ -163,7 +163,7 @@ describe("edit by address", () => {
     expect(rules).toContain("ease:hook.rule.in.ease");
     expect(rules).toContain("preset:stat.n.in.preset");
     expect(rules).toContain("reading-time:stat.long");
-    expect(lintFilm(film())).toEqual([]);
+    expect(lintFilm(film()).filter((x) => x.rule !== "opens-empty")).toEqual([]);
   });
 });
 
@@ -239,8 +239,8 @@ describe("groups", () => {
     expect(ev.boxIn).toBe(10);
     expect(ev.titleIn).toBe(20);
     expect(ev.nIn).toBe(24);
-    // the group settles when the last thing inside it has settled (the counter, 24 + 10)
-    expect(ev.boxSettled).toBe(34);
+    // the group settles when the last thing inside it has settled: the counter keeps counting for 30 frames after its in (24 + 30)
+    expect(ev.boxSettled).toBe(54);
     expect(ev.cameraSettled).toBe(60);
     const c = compile(mographTimeline(f, { film: "g" }));
     expect(c.scenes[0].text).toEqual(["Plan", "12"]);
@@ -270,7 +270,7 @@ describe("groups", () => {
     rename(f, "card.box.rule", "line-2");
     expect((f.scenes[0].layers[0] as GroupLayer).layers[2].id).toBe("line-2");
     expect(() => addLayer(f, "card.box.title", { id: "x", type: "text", text: "x" })).toThrow(/not a group/);
-    expect(lintFilm(f)).toEqual([]);
+    expect(lintFilm(f).filter((x) => x.rule !== "opens-empty")).toEqual([]);
   });
 
   test("lint sees the layers inside a group", () => {
@@ -403,7 +403,7 @@ describe("groups hold the newer layer kinds", () => {
     expect(c.scenes[0].probes).toContain("trend@32-119");
     expect(c.scenes[0].probes).toContain("wheels@38-119");
     expect(c.scenes[0].probes.some((p) => p.startsWith("dust@"))).toBe(false);
-    expect(lintFilm(f)).toEqual([]);
+    expect(lintFilm(f).filter((x) => x.rule !== "opens-empty")).toEqual([]);
   });
 });
 

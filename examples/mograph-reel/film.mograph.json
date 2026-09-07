@@ -101,7 +101,7 @@
           "formats": {
             "vertical": {
               "size": 100,
-              "maxWidth": 0.9,
+              "maxWidth": 0.88,
               "at": {
                 "x": 0.5,
                 "y": 0.46

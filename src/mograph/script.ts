@@ -119,6 +119,8 @@ export const normalizeFilm = (input: Partial<MgFilm>, opts: { fps?: number; form
     const extra = s as unknown as Record<string, unknown>;
     return { id, dur: Math.round(dur), ground, enter: s.enter, exit: s.exit, layers, events: s.events, why: typeof s.why === "string" ? s.why : undefined, caption: s.caption, template: typeof s.template === "string" ? s.template : undefined, params: s.params , ...(extra.groundTracks ? { groundTracks: extra.groundTracks } : {}), ...(extra.sound ? { sound: extra.sound } : {}), ...(extra.camera ? { camera: extra.camera } : {}), ...(extra.transition ? { transition: extra.transition } : {}) } as MgScene;
   });
+  // a film ends held on its last card, whatever the model wrote
+  if (scenes.length && scenes[scenes.length - 1].exit) delete scenes[scenes.length - 1].exit;
   return {
     title: String(raw.title ?? "Untitled").trim() || "Untitled",
     fps,
